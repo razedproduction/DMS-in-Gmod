@@ -290,7 +290,9 @@ return DMS_HomerReport(ent) .. "\njoints " .. joints .. " " .. ent:GetPhysicsObj
             return Err(format!("the game's part {} where NM's {} is", g.name, p.name));
         }
         wpos.add("frame position (m)", vgap(g.pos, *pos), p.name);
-        wpos.add("centre of mass off the origin (m)", vgap(g.pos, g.origin), p.name);
+        // The bone (the PhysObj's origin) sits on the joint's pivot, the centre of mass on the part's centre.
+        let k = body.parts.iter().position(|q| q.name == p.name).unwrap_or(0);
+        wpos.add("bone origin off NM's pivot (m)", vgap(g.origin, *pos + *rot * body.bone_offset(k)), p.name);
         wrot.add("frame rotation (rad)", qgap(g.rot, *rot), p.name);
         wmass.add("mass (relative)", ((g.mass - p.mass) / p.mass).abs(), p.name);
         wmass.add("damping", g.damping[0].abs().max(g.damping[1].abs()), p.name);
@@ -334,11 +336,19 @@ for i = 0, ent:GetPhysicsObjectCount() - 1 do
 	fastest = math.max(fastest, ent:GetPhysicsObjectNum(i):GetVelocity():Length() * 0.0254)
 end
 out[#out + 1] = "speed " .. fastest
+-- Where Source draws each bone (its ragdoll bone setup) against its physics object.
+local drawn = 0
+for i = 0, ent:GetPhysicsObjectCount() - 1 do
+	local at = ent:GetBonePosition(ent:TranslatePhysBoneToBone(i))
+	drawn = math.max(drawn, at:Distance(ent:GetPhysicsObjectNum(i):GetPos()) * 0.0254)
+end
+out[#out + 1] = "drawn " .. drawn
 ent:Remove()
 return table.concat(out, "\n")
 "#, Duration::from_secs(30))?;
     let (_, parts) = report(&text)?;
     let speed: f32 = text.lines().find_map(|l| l.strip_prefix("speed ")).and_then(|s| s.trim().parse().ok()).unwrap_or(f32::NAN);
+    let drawn: f32 = text.lines().find_map(|l| l.strip_prefix("drawn ")).and_then(|s| s.trim().parse().ok()).unwrap_or(f32::NAN);
     let poses: Vec<(Vec3, Quat)> = parts.iter().map(|g| (g.pos, g.rot)).collect();
     let finite = poses.iter().all(|(p, q)| p.is_finite() && q.is_finite());
     let mut w = Worst::default();
@@ -369,9 +379,11 @@ return table.concat(out, "\n")
                 j.limits[1].to_degrees(), j.limits[2].to_degrees(), beyond.to_degrees());
         }
     }
-    println!("    every body finite: {}; fastest body {speed:.3} m/s", if finite { "yes" } else { "NO" });
+    println!("    every body finite: {}; fastest body {speed:.3} m/s; bones drawn off their bodies by {:.4} m at most",
+             if finite { "yes" } else { "NO" }, drawn);
     let a = w.report(0.02);
     // Box3D's soft limits and NM's own margins: 5 degrees.
     let b = over.report(5.0f32.to_radians());
-    Ok(finite && speed < 0.5 && a && b)
+    // Source draws a ragdoll's child bone at a fixed offset from its parent's: off the body if the bone isn't on the pivot.
+    Ok(finite && speed < 0.5 && drawn < 0.005 && a && b)
 }

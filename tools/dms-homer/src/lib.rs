@@ -15,13 +15,20 @@ pub const MATERIALS: &str = "models/dms/homer";
 /// The surface Homer's parts are (Source's, for sounds and impacts only: friction is NM's business).
 pub const SURFACE: &str = "flesh";
 
-/// The bones: NM's parts, in part order, standing as `nm_agent_create` puts an agent at the origin facing yaw 0
-/// (model space, metres: the model's origin is on the floor under the pelvis).
-pub fn bones(body: &Body) -> Vec<smd::Bone> {
+/// NM's parts' frames standing as `nm_agent_create` puts an agent at the origin facing yaw 0 (model space,
+/// metres: the model's origin is on the floor under the pelvis).
+pub fn part_frames(body: &Body) -> Vec<(Vec3, Quat)> {
     body.placed(Vec3::ZERO, 0.0)
+}
+
+/// The bones: NM's parts in part order, each in its part's frame turned but with its origin on the pivot of its
+/// joint to its parent (`Body::bone_offset`), where Source's ragdoll drawing keeps it.
+pub fn bones(body: &Body) -> Vec<smd::Bone> {
+    part_frames(body)
         .into_iter()
         .zip(&body.parts)
-        .map(|((pos, rot), p)| smd::Bone { name: p.name.to_string(), parent: p.parent, pos, rot })
+        .enumerate()
+        .map(|(k, ((pos, rot), p))| smd::Bone { name: p.name.to_string(), parent: p.parent, pos: pos + rot * body.bone_offset(k), rot })
         .collect()
 }
 
@@ -34,11 +41,11 @@ pub fn hulls(body: &Body) -> Vec<(Vec<Vec3>, Vec<[usize; 3]>)> {
     }).collect()
 }
 
-/// The hulls as triangles skinned to their bones, in model space.
-pub fn hull_triangles(bones: &[smd::Bone], hulls: &[(Vec<Vec3>, Vec<[usize; 3]>)], material: &str) -> Vec<smd::Triangle> {
+/// The hulls as triangles skinned to their bones (part `k` to bone `k`), in model space; `parts` the parts' frames.
+pub fn hull_triangles(parts: &[(Vec3, Quat)], hulls: &[(Vec<Vec3>, Vec<[usize; 3]>)], material: &str) -> Vec<smd::Triangle> {
     let mut out = vec![];
     for (k, (pts, tris)) in hulls.iter().enumerate() {
-        let (bp, br) = (bones[k].pos, bones[k].rot);
+        let (bp, br) = parts[k];
         for t in tris {
             let [a, b, c] = t.map(|i| bp + br * pts[i]);
             let n = (b - a).cross(c - a).normalize_or_zero();
@@ -143,17 +150,18 @@ pub fn phy_text(body: &Body, compiled: &[phy::Block]) -> Result<String, String> 
     Ok(phy::text(&out))
 }
 
-/// Each solid's centre of mass on its bone's origin (NM's part centre) and its inertia NM's tensor's diagonal in
+/// Each solid's centre of mass on NM's part centre (off its bone's origin by `Body::bone_offset`) and its inertia
+/// NM's tensor's diagonal in
 /// the part's frame: VPhysics keeps a body's inertia diagonal in its own frame, so the tensor's off-diagonal
 /// terms can't be given (docs/adr/0013).
 pub fn set_mass_properties(body: &Body, phy: &mut phy::Phy) -> Result<(), String> {
     let blocks = phy::blocks(&phy.text);
-    for p in &body.parts {
+    for (k, p) in body.parts.iter().enumerate() {
         let i: usize = blocks.iter().find(|b| b.name == "solid" && b.get("name") == Some(p.name))
             .and_then(|b| b.get("index")?.parse().ok()).ok_or(format!(".phy: no solid {}", p.name))?;
         let t = p.inertia;
         let block = phy.blocks.get_mut(i).ok_or(format!(".phy: no solid {i}"))?;
-        phy::set_mass_properties(block, Vec3::new(t.x_axis.x, t.y_axis.y, t.z_axis.z) / p.mass)?;
+        phy::set_mass_properties(block, -body.bone_offset(k), Vec3::new(t.x_axis.x, t.y_axis.y, t.z_axis.z) / p.mass)?;
     }
     phy.solids = phy.blocks.iter().map(|b| phy::solid(b)).collect::<Result<_, _>>()?;
     Ok(())
@@ -181,14 +189,17 @@ pub struct PhyCheck {
 pub fn check_phy(body: &Body, phy: &phy::Phy) -> Result<Vec<PhyCheck>, String> {
     let blocks = phy::blocks(&phy.text);
     let solids: Vec<&phy::Block> = blocks.iter().filter(|b| b.name == "solid").collect();
-    body.parts.iter().map(|p| {
+    body.parts.iter().enumerate().map(|(k, p)| {
         let b = solids.iter().find(|b| b.get("name") == Some(p.name)).ok_or(format!(".phy: no solid {}", p.name))?;
         let i: usize = b.get("index").and_then(|i| i.parse().ok()).ok_or(".phy: a solid without an index")?;
         let s = phy.solids.get(i).ok_or(format!(".phy: no solid {i}"))?;
-        let centre = s.points.iter().copied().sum::<Vec3>() / s.points.len().max(1) as f32;
+        // The solid's points are in its bone's frame, NM's shape in the part's.
+        let offset = body.bone_offset(k);
+        let points: Vec<Vec3> = s.points.iter().map(|&q| q + offset).collect();
+        let centre = points.iter().copied().sum::<Vec3>() / points.len().max(1) as f32;
         let (mut out, mut inside, mut area) = (f32::MIN, f32::MAX, 0.0f64);
         for t in &s.triangles {
-            let [a, b2, c] = t.map(|k| s.points[k]);
+            let [a, b2, c] = t.map(|k| points[k]);
             let cr = (b2 - a).cross(c - a);
             if cr.length() < 1e-12 {
                 continue;
@@ -201,11 +212,11 @@ pub fn check_phy(body: &Body, phy: &phy::Phy) -> Result<Vec<PhyCheck>, String> {
         }
         Ok(PhyCheck {
             name: p.name,
-            com: s.mass_center.length(),
+            com: (s.mass_center + offset).length(),
             face_out: out,
             face_in: -inside,
             points: s.points.len(),
-            volume: hull::volume(&s.points, &s.triangles).abs() + area * hull::INFLATION as f64,
+            volume: hull::volume(&points, &s.triangles).abs() + area * hull::INFLATION as f64,
             nm_volume: hull::shape_volume(&p.shape),
             mass: b.get("mass").and_then(|m| m.parse().ok()),
             nm_mass: p.mass,

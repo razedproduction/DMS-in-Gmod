@@ -115,11 +115,11 @@ fn surface(shape: &Shape) -> Vec<[(Vec3, Vec3); 3]> {
     out
 }
 
-/// Every part's shape on its bone in `bones` (model space), in its side's material.
-pub fn triangles(body: &Body, bones: &[smd::Bone]) -> Vec<smd::Triangle> {
+/// Every part's shape on its bone (model space; `parts` the parts' frames), in its side's material.
+pub fn triangles(body: &Body, parts: &[(Vec3, Quat)]) -> Vec<smd::Triangle> {
     let mut out = vec![];
     for (k, p) in body.parts.iter().enumerate() {
-        let (bp, br) = (bones[k].pos, bones[k].rot);
+        let (bp, br) = parts[k];
         let material = BASE[side(p.name)].name;
         for tri in surface(&p.shape) {
             let v = tri.map(|(pos, n)| smd::Vertex { pos: bp + br * pos, normal: br * n, uv: [0.0, 0.0], weights: vec![(k, 1.0)] });

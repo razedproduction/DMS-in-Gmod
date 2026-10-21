@@ -27,7 +27,8 @@ cargo build --release -p dms-homer
 - `dms_homer` (суперадмин) — Homer стоит в позе Playroom перед игроком, лицом к нему; суставы сразу получают пивоты,
   кадры и лимиты NM и тензоры инерции NM (`DMS.BindHomer`). NM им пока не управляет (FOLLOW — M4): он падает как обычный ragdoll.
 - Lua: `DMS_SpawnHomer(pos, yaw)`, `DMS_HomerParts(ent)`, `DMS_HomerReport(ent)`; натив `DMS.HomerBody([pos, yaw])`.
-- Заспавненная из меню модель не связана с NM (пивоты в центрах частей) — спавнить через `dms_homer`.
+- Заспавненная из меню модель не связана с NM: пивоты на месте (начала костей — в суставах NM), но лимиты, кадры
+  суставов и тензоры инерции NM ставит только `DMS.BindHomer` — спавнить через `dms_homer`.
 
 ## Проверка
 

@@ -55,16 +55,17 @@ fn run() -> Result<(), String> {
     let body = homer_body(&game)?;
     std::fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;
     let bones = dms_homer::bones(&body);
+    let parts = dms_homer::part_frames(&body);
     let hulls = dms_homer::hulls(&body);
     let write = |name: &str, text: &str| std::fs::write(work.join(name), text).map_err(|e| format!("{name}: {e}"));
-    write("homer_phys.smd", &smd::write(&bones, &dms_homer::hull_triangles(&bones, &hulls, "phys")))?;
+    write("homer_phys.smd", &smd::write(&bones, &dms_homer::hull_triangles(&parts, &hulls, "phys")))?;
     // The Playroom's look: NM's capsules and boxes in its colours, its other colour schemes as skins.
     let materials = garrysmod.join("materials").join(dms_homer::MATERIALS.replace('/', "\\"));
     std::fs::create_dir_all(&materials).map_err(|e| format!("{}: {e}", materials.display()))?;
     for m in dms_homer::visual::BASE.iter().chain(dms_homer::visual::SKINS.iter().flat_map(|(_, ms)| ms.iter())) {
         std::fs::write(materials.join(format!("{}.vmt", m.name)), dms_homer::visual::vmt(m)).map_err(|e| e.to_string())?;
     }
-    write("homer_ref.smd", &smd::write(&bones, &dms_homer::visual::triangles(&body, &bones)))?;
+    write("homer_ref.smd", &smd::write(&bones, &dms_homer::visual::triangles(&body, &parts)))?;
     write("homer.qc", &dms_homer::qc(&body, "homer_ref.smd", "homer_phys.smd"))?;
 
     println!("dms-homer: studiomdl ({})", studiomdl.display());

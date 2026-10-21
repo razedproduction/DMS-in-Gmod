@@ -92,12 +92,12 @@ fn ledge_into(b: &[u8], ledge: usize, points: &mut Vec<Vec3>, triangles: &mut Ve
     Ok(())
 }
 
-/// Sets a solid's mass centre to its bone's origin and its unit rotation inertia (per kg, Source's axes in the
-/// bone frame): `IVP_Compact_Surface`'s first two vectors, which VPhysics takes the body's mass properties from.
-pub fn set_mass_properties(block: &mut [u8], unit_inertia: Vec3) -> Result<(), String> {
+/// Sets a solid's mass centre (metres, Source's axes in the bone frame) and its unit rotation inertia (per kg,
+/// same axes): `IVP_Compact_Surface`'s first two vectors, which VPhysics takes the body's mass properties from.
+pub fn set_mass_properties(block: &mut [u8], center: Vec3, unit_inertia: Vec3) -> Result<(), String> {
     let s = if block.get(0..4) == Some(b"VPHY") { 28 } else { 0 };
-    // IVP's axes: Source's (x, y, z) are IVP's (x, z, y) up to sign, which inertia doesn't have.
-    let values = [0.0f32, 0.0, 0.0, unit_inertia.x, unit_inertia.z, unit_inertia.y];
+    // IVP's axes: Source's (x, y, z) are IVP's (x, -z, y) (`source` the other way); inertia has no sign.
+    let values = [center.x, -center.z, center.y, unit_inertia.x, unit_inertia.z, unit_inertia.y];
     let dst = block.get_mut(s..s + 24).ok_or(".phy: truncated solid")?;
     for (chunk, v) in dst.chunks_mut(4).zip(values) {
         chunk.copy_from_slice(&v.to_le_bytes());

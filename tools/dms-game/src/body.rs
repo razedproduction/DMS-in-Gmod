@@ -133,6 +133,13 @@ impl Body {
         self.parts.iter().map(|p| (pos + turn * (p.pos - r), turn * p.rot)).collect()
     }
 
+    /// Where part `k`'s bone has its origin in the part's frame: the pivot of its joint to its parent (the root's:
+    /// its centre). Source draws a ragdoll's child bone at a fixed offset from its parent's, so the bone has to
+    /// turn about the joint's pivot; the body's centre of mass stays the part's centre.
+    pub fn bone_offset(&self, k: usize) -> Vec3 {
+        self.joints.iter().find(|j| j.part == k).map_or(Vec3::ZERO, |j| j.anchor_child)
+    }
+
     /// The joint's pivot (world) and its frames on the parent and on the part (world), the bodies posed in
     /// `poses` (frame position and rotation per part).
     pub fn joint_world(&self, j: &Joint, poses: &[(Vec3, Quat)]) -> (Vec3, [Quat; 2]) {
