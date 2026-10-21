@@ -4,13 +4,7 @@
 local METRES_PER_UNIT = 0.0254
 DMS_HOMER_MODEL = "models/dms/homer.mdl"
 
-local function say(ply, text)
-	if IsValid(ply) then
-		ply:PrintMessage(HUD_PRINTCONSOLE, text)
-	else
-		print(text)
-	end
-end
+local say = DMS_Say
 
 -- The ragdoll's PhysObj in NM's part order (its bones are named as NM's parts), or nil and why.
 function DMS_HomerParts(ent)
