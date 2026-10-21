@@ -20,6 +20,7 @@ pub const GLOBALSINDEX: c_int = -10002;
 pub const TNIL: c_int = 0;
 pub const TBOOLEAN: c_int = 1;
 pub const TNUMBER: c_int = 3;
+pub const TSTRING: c_int = 4;
 pub const TTABLE: c_int = 5;
 pub const TUSERDATA: c_int = 7;
 
@@ -42,9 +43,11 @@ pub struct Api {
     pub tonumber: unsafe extern "C" fn(*mut LuaState, c_int) -> c_double,
     pub toboolean: unsafe extern "C" fn(*mut LuaState, c_int) -> c_int,
     pub touserdata: unsafe extern "C" fn(*mut LuaState, c_int) -> *mut c_void,
+    pub tolstring: unsafe extern "C" fn(*mut LuaState, c_int, *mut usize) -> *const c_char,
     pub getfield: unsafe extern "C" fn(*mut LuaState, c_int, *const c_char),
     pub setfield: unsafe extern "C" fn(*mut LuaState, c_int, *const c_char),
     pub rawgeti: unsafe extern "C" fn(*mut LuaState, c_int, c_int),
+    pub rawseti: unsafe extern "C" fn(*mut LuaState, c_int, c_int),
     pub createtable: unsafe extern "C" fn(*mut LuaState, c_int, c_int),
     pub pushnil: unsafe extern "C" fn(*mut LuaState),
     pub pushnumber: unsafe extern "C" fn(*mut LuaState, c_double),
@@ -81,9 +84,11 @@ fn load() -> Result<Api, String> {
         tonumber: get!("lua_tonumber"),
         toboolean: get!("lua_toboolean"),
         touserdata: get!("lua_touserdata"),
+        tolstring: get!("lua_tolstring"),
         getfield: get!("lua_getfield"),
         setfield: get!("lua_setfield"),
         rawgeti: get!("lua_rawgeti"),
+        rawseti: get!("lua_rawseti"),
         createtable: get!("lua_createtable"),
         pushnil: get!("lua_pushnil"),
         pushnumber: get!("lua_pushnumber"),
@@ -157,6 +162,61 @@ impl Api {
             (self.pushnumber)(l, n);
             (self.setfield)(l, -2, name.as_ptr());
         }
+    }
+
+    /// Sets `t[name] = s` on the table at the top of the stack.
+    ///
+    /// # Safety
+    /// `l` is a live Lua state with a table on top.
+    pub unsafe fn set_str(&self, l: *mut LuaState, name: &CStr, s: &str) {
+        unsafe {
+            self.push_str(l, s);
+            (self.setfield)(l, -2, name.as_ptr());
+        }
+    }
+
+    /// Sets `t[name] = b` on the table at the top of the stack.
+    ///
+    /// # Safety
+    /// `l` is a live Lua state with a table on top.
+    pub unsafe fn set_bool(&self, l: *mut LuaState, name: &CStr, b: bool) {
+        unsafe {
+            (self.pushboolean)(l, b.into());
+            (self.setfield)(l, -2, name.as_ptr());
+        }
+    }
+
+    /// Sets `t[name] = {x, y, z[, w]}` on the table at the top of the stack.
+    ///
+    /// # Safety
+    /// `l` is a live Lua state with a table on top.
+    pub unsafe fn set_vector(&self, l: *mut LuaState, name: &CStr, v: &[f32]) {
+        unsafe {
+            self.push_vector(l, v);
+            (self.setfield)(l, -2, name.as_ptr());
+        }
+    }
+
+    /// Pops the value on top into `t[i]` of the table under it.
+    ///
+    /// # Safety
+    /// `l` is a live Lua state with a table under the value on top.
+    pub unsafe fn append(&self, l: *mut LuaState, i: usize) {
+        unsafe { (self.rawseti)(l, -2, i as c_int) };
+    }
+
+    /// The string at `arg`.
+    ///
+    /// # Safety
+    /// `l` is a live Lua state, called from its own thread.
+    pub unsafe fn check_string(&self, l: *mut LuaState, arg: c_int) -> Result<String, String> {
+        if unsafe { (self.type_)(l, arg) } != TSTRING {
+            return Err(format!("bad argument #{arg} (string expected)"));
+        }
+        let mut len = 0;
+        let p = unsafe { (self.tolstring)(l, arg, &mut len) };
+        // SAFETY: Lua's string of `len` bytes, alive while it's on the stack.
+        Ok(String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(p.cast::<u8>(), len) }).into_owned())
     }
 
     /// Pushes `{x =, y =, z = [, w =]}` from 3 or 4 components.

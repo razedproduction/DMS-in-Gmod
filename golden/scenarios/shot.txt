@@ -1,0 +1,4 @@
+# Выстрел в грудь: headless жмёт "balance" на шаге 0 и "shot" (часть 9 Spine2, оружие по умолчанию — pistol
+# из weaponinfo.xml, ShotTask Playroom) на шаге 60 (1.00 с). 10 с. Детерминированно, бит в бит (.frames).
+# Встаёт Playroom анимацией (не NM) после 2 с лежания: get-up дважды = режим off.
+#! headless 600 press=get-up,get-up

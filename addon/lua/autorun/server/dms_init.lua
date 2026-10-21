@@ -19,3 +19,4 @@ hook.Add("ShutDown", "DMS_Shutdown", function()
 end)
 
 include("dms/debug_commands.lua")
+include("dms/nm_commands.lua")

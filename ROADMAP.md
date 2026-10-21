@@ -113,21 +113,23 @@ DMS in Gmod/
 
 ### M2. Delirium внутри модуля — 2–3 дня (параллельно с M1)
 
-- [ ] Path-зависимость на `delirium-sdk`, вызовы SDK как Rust-функций (обёртки с проверкой кодов `NM_E_*`
-      и `nm_last_error`).
-- [ ] Загрузка данных из `garrysmod/data/dms/`: `character.json` (предпочтительно) или `fred.xrt`, `build.txt`,
-      `taskparams.txt`. Конвары путей. Для PC-версии `Fred.art` (little-endian) — проверка порядка байт
-      или требование `character.json`.
-- [ ] Утилита (`tools/`, cargo example) «сделать `character.json` из файлов игры» + `docs/data-setup.md`.
-- [ ] Офлайн-самопроверка внутри модуля: агент в LEAD на плоском полу, 2 с `bodyBalance` — стоит
-      (команда `dms_selftest`).
-- [ ] Справочные нативы: имена частей, список сообщений/параметров, `nm_build_part_info`, `nm_agent_get_joint`.
-- [ ] Входные данные NM — те же, что у Playroom (ADR 0008): тот же `fred.xrt` и `taskparams.txt` из игры; если
-      используется `character.json`, сверить, что агент из него идентичен агенту из `fred.xrt`.
-- [ ] Golden-стенд (`tools/golden`, ADR 0008): сборка Playroom из каталога SDK без записи в него (`--locked`,
-      `--target-dir` в этом репозитории), `NM_DUMP` build'а Homer, прогоны `--headless --script --rec` по
-      сценариям `golden/scenarios/` (стойка `bodyBalance` 60 с, выстрел в грудь, толчок, `catchFall` с высоты,
-      `relax`) → `golden/out/` (не в git).
+- [x] Path-зависимость на `delirium-sdk`, вызовы SDK как Rust-функций (обёртки с проверкой кодов `NM_E_*`
+      и `nm_last_error`) — `module/src/nm.rs`.
+- [x] ~~Загрузка данных из `garrysmod/data/dms/`~~ → по ADR 0010 данные читаются прямо из копии игры (конвар
+      `dms_game_dir`) общим крейтом `tools/dms-game` — кодом Playroom: PC (`Fred.art` little-endian через
+      `delirium_data::LE`, как в Playroom) и Xbox 360.
+- [x] ~~Утилита «сделать `character.json`»~~ не нужна (ADR 0010); `docs/data-setup.md`.
+- [x] Офлайн-самопроверка внутри модуля: агент в LEAD на плоском полу, 2 с `bodyBalance` — стоит
+      (команда `dms_selftest`, натив `DMS.SelfTest`).
+- [x] Справочные нативы: имена частей, список сообщений/параметров, `nm_build_part_info`, `nm_agent_get_joint`
+      (`DMS.PartNames/Messages/MessageParams/BuildParts/BuildJoints/BuildDump`, команды `dms_nm_*`).
+- [x] Входные данные NM — те же, что у Playroom (ADR 0008): build Homer = `NM_DUMP` байт в байт, связи из
+      idle-клипа — бит в бит, агент в LEAD — бит в бит с Playroom (`golden dump|links|lead`).
+- [x] Golden-стенд (`tools/golden`, ADR 0008, 0011): сборка Playroom из каталога SDK без записи в него (`--locked`,
+      `--target-dir` в этом репозитории), `NM_DUMP` build'а Homer, прогоны по сценариям `golden/scenarios/`
+      (стойка `bodyBalance` 60 с, выстрел в грудь, толчок, `catchFall` с высоты, `relax`; headless — бит в бит,
+      остальные — `--script --rec` в окне, т.к. headless Playroom сценарии не исполняет) → `golden/out/` (не в
+      git). Формат команд и записи — `golden/README.md`.
 
 **DoD:** `dms_selftest` проходит в игре; без данных — внятная ошибка с путём, куда положить файлы; `tools/golden`
 одной командой снимает эталоны Playroom для всех сценариев.
@@ -276,7 +278,7 @@ M0 ──► M1 ─┐
 | Порядок vtable `IPhysicsNM` | падение при вызове | FFI-тесты M1 |
 | Физика Box3D отличается от физики Playroom (инерция, солвер суставов, контакты) | поведение не 1 в 1 | golden-сверка тела (M3) и поведения (M4); правки в форке, не в NM (ADR 0008) |
 | `dms-homer` портирует тело неточно | все последующие вехи меряют не то | `tools/golden body` против `NM_DUMP` Playroom, допуск 1e-5 (M3) |
-| PC `Fred.art` little-endian | мусор в суставах, NaN | `character.json` как основной формат (M2) |
+| PC `Fred.art` little-endian | мусор в суставах, NaN | `delirium_data::LE` перед чтением, как в Playroom; сверка `golden dump/lead` (M2, ADR 0010) |
 | Steam откатывает `vphysics.dll` | аддон «молча» не работает | явная проверка интерфейса при старте и сообщение игроку (M1) |
 | Несовместимые изменения `IPhysicsNM` в форке | падения | строгая проверка строки версии, копия заголовка в репо |
 | Лицензия GPL-3 и данные GTA IV | юридические | GPL-3 для всего, данные только из копии пользователя |

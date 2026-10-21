@@ -1,0 +1,3 @@
+# bodyRelax с шага 0 (после "balance", который headless жмёт сам), первая секунда — до выстрела на шаге 60.
+# Встаёт Playroom анимацией (не NM) после 2 с лежания: get-up дважды = режим off.
+#! headless 60 press=get-up,get-up,relax

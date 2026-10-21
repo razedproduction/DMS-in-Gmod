@@ -13,3 +13,5 @@
 | [0006](0006-gpl3-no-game-data.md) | GPL-3.0-only, данные GTA IV не распространяются | принято |
 | [0007](0007-gravity-compensation.md) | `sv_gravity` не трогаем, разницу с 9.8 компенсирует сила на каждую часть | принято |
 | [0008](0008-playroom-golden.md) | Playroom — golden, в работу Delirium не вмешиваемся (кроме гравитации) | принято |
+| [0010](0010-nm-data-from-game-copy.md) | Данные NM — прямо из копии игры кодом Playroom (заменяет часть 0006) | принято |
+| [0011](0011-golden-headless-and-window.md) | Эталоны Playroom: headless бит в бит, сценарии — в окне (уточняет 0008) | принято |

@@ -1,0 +1,4 @@
+# Стойка, первая секунда: Playroom headless сам жмёт "balance" (bodyBalance start=true) на шаге 0.
+# 60 шагов — до выстрела, который headless делает на шаге 60. Детерминированно, бит в бит (.frames).
+# Встаёт Playroom анимацией (не NM) после 2 с лежания: get-up дважды = режим off.
+#! headless 60 press=get-up,get-up

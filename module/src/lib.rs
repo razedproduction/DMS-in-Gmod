@@ -2,9 +2,13 @@
 //!
 //! `require("dms")` registers the global table `DMS`.
 
+mod data;
 mod ffi;
 mod lua;
 mod natives;
+mod nm;
+mod nm_natives;
+mod selftest;
 mod step;
 
 use std::ffi::{CString, c_int};
@@ -57,13 +61,13 @@ pub unsafe extern "C" fn gmod13_open(l: *mut LuaState) -> c_int {
     let Ok(api) = lua::api() else { return 0 };
     let nm_message = acquire_message();
     unsafe {
-        (api.createtable)(l, 0, 2 + natives::NATIVES.len() as c_int);
+        (api.createtable)(l, 0, 2 + (natives::NATIVES.len() + nm_natives::NATIVES.len()) as c_int);
         let version = CString::new(MODULE_VERSION).unwrap_or_default();
         (api.pushstring)(l, version.as_ptr());
         (api.setfield)(l, -2, c"Version".as_ptr());
         (api.pushcclosure)(l, lua_nm_version, 0);
         (api.setfield)(l, -2, c"NmVersion".as_ptr());
-        for (name, f) in natives::NATIVES {
+        for (name, f) in natives::NATIVES.iter().chain(nm_natives::NATIVES) {
             (api.pushcclosure)(l, *f, 0);
             (api.setfield)(l, -2, name.as_ptr());
         }
