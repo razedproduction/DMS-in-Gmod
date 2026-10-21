@@ -86,18 +86,20 @@ DMS in Gmod/
 
 ### M1. Мост к VPhysics-Box3D — 3–4 дня
 
-- [ ] `ffi/vphysics_nm.rs`: `#[repr(C)]` vtable `IPhysicsNM` строго в порядке объявления (10 методов).
-      x64 — обычный `extern "C"` с `this` первым аргументом; x86 — `extern "thiscall"`. `PhysicsNMBodyState_t`
+- [x] `ffi/vphysics_nm.rs`: `#[repr(C)]` vtable `IPhysicsNM` строго в порядке объявления (10 методов).
+      x64 — обычный `extern "C"` с `this` первым аргументом (x86 не поддерживается, ADR 0002). `PhysicsNMBodyState_t`
       как `#[repr(C)]`.
-- [ ] Получение интерфейса: `GetModuleHandleA("vphysics.dll")` + `CreateInterface("VBOX3D_NM_002")`
-      (Linux: `dlopen(..., RTLD_NOLOAD)`, `vphysics_srv.so` на dedicated). Если `NULL` — пробуем `_001`
-      и предупреждаем, что лимитов суставов не будет; если и его нет — аддон выключен.
-- [ ] `ffi/lua.rs`: Lua userdata `PhysObj` → `IPhysicsObject*` (структура GMod `UserData { void* data; uint8 type; }`,
+- [x] Получение интерфейса: `GetModuleHandleA("vphysics.dll")` + `CreateInterface("VBOX3D_NM_002")`
+      (Linux: `dlopen(..., RTLD_NOLOAD)`, `vphysics_srv.so` на dedicated — в M8). Если `NULL` — пробуем `_001`
+      и предупреждаем, что лимитов суставов не будет; если и его нет — аддон выключен (`DMS.Available()` = false).
+- [x] `lua.rs`: Lua userdata `PhysObj` → `IPhysicsObject*` (структура GMod `UserData { void* data; uint8 type; }`,
       проверка типа `PhysObj`). Без сторонних хаков — только через публичный layout.
-- [ ] Отладочные нативы: `DMS.BodyState(physobj)`, `DMS.Drive(physobj, force, torque, ticks)`,
-      `DMS.FindJoint(a, b)`, `DMS.Armature(a, b, value)`.
-- [ ] Step-callback на окружение сервера: регистрация один раз, снятие при выгрузке модуля (`GMOD_MODULE_CLOSE`)
-      и при `ShutDown`.
+- [x] Отладочные нативы: `DMS.Available()`, `DMS.InterfaceVersion()`, `DMS.BodyState(physobj)`,
+      `DMS.Drive(physobj, force, torque[, steps])`, `DMS.FindJoint(a, b)`, `DMS.SetArmature(a, b, value)`,
+      `DMS.GetArmature(a, b)`, `DMS.SubstepCount()`, `DMS.Hover(physobj, mass, g | false)`; консольные команды
+      `dms_info`, `dms_bodystate`, `dms_hover`, `dms_armature` (`addon/lua/dms/debug_commands.lua`).
+- [x] Step-callback на окружение сервера (`step.rs`): ставится при первом drive'е, снятие при выгрузке модуля
+      (`gmod13_close`) и при `ShutDown` (`DMS.Shutdown()`).
 
 **DoD:** (1) `BodyState` совпадает с `PhysObj:GetPos()/GetVelocity()` с учётом единиц и COM; (2) проп,
 которому `Drive` даёт силу `m·g` вверх, висит в воздухе; (3) armature 1e6 на суставе ragdoll'а делает его жёстким,
