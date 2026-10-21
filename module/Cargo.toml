@@ -1,0 +1,13 @@
+[package]
+name = "gmsv_dms"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Read only (docs/adr/0001): built into this workspace's target/, nothing is written there.
+delirium-sdk = { path = "../../delirium-physics (CLAUDE DONT CHANGE ANYTHING HERE)/crates/delirium-sdk" }
