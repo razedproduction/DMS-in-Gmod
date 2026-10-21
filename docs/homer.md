@@ -23,7 +23,7 @@ cargo build --release -p dms-homer
 ## В игре
 
 - `dms_homer` (суперадмин) — Homer стоит в позе Playroom перед игроком, лицом к нему; суставы сразу получают пивоты,
-  кадры и лимиты NM (`DMS.BindHomer`). NM им пока не управляет (FOLLOW — M4): он падает как обычный ragdoll.
+  кадры и лимиты NM и тензоры инерции NM (`DMS.BindHomer`). NM им пока не управляет (FOLLOW — M4): он падает как обычный ragdoll.
 - Lua: `DMS_SpawnHomer(pos, yaw)`, `DMS_HomerParts(ent)`, `DMS_HomerReport(ent)`; натив `DMS.HomerBody([pos, yaw])`.
 - Заспавненная из меню модель не связана с NM (пивоты в центрах частей) — спавнить через `dms_homer`.
 
@@ -39,8 +39,8 @@ cargo build --release -p dms-homer
 (≤ 1 мм, ≤ 0.5°), массы, инерция (≤ 1 %), FindConstraint на 20 суставах, затем падение без NM 4 с (всё конечно,
 пивоты вместе, суставы в пределах NM ± 5°).
 
-Сейчас не сходятся две вещи, обе — форк VPhysics-Box3D (ADR 0013): внедиагональные члены тензора инерции и
-трактовка лимитов шара (левое бедро при падении уходит за эллипс NM на ~15°).
+Нужен форк с `IPhysicsNM` `VBOX3D_NM_003` (ADR 0014): `DMS.BindHomer` ставит каждой части полный тензор инерции NM
+(`SetBodyInertia`), шарам — семантику NM (`SetJointBallLimits`), хинжам — `SetJointLimits`.
 
 ## Визуальная проверка (пользователю)
 

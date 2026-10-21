@@ -38,17 +38,26 @@ fn pose(nm: &Nm, object: *mut IPhysicsObject) -> Result<(Vec3, Quat), String> {
 
 native!(bind_homer => bind_homer_impl);
 /// `DMS.BindHomer(parts)`: `parts` the ragdoll's 21 PhysObj in NM's part order, standing as it was spawned. Gives
-/// every joint NM's pivot, frame and limits; `{joint = {part, parent, kind, anchor, limits}, ...}` per joint, or a
-/// Lua error naming the joint that failed.
+/// every body NM's inertia tensor (`SetBodyInertia`) and every joint NM's pivot, frames and limits (a ball
+/// `SetJointBallLimits`, a hinge `SetJointLimits`); `{joint = {part, parent, kind, anchor, limits}, ...}` per
+/// joint, or a Lua error naming the part or joint that failed.
 unsafe fn bind_homer_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
     let nm = vphysics_nm::get().ok_or("IPhysicsNM isn't available (vphysics.dll isn't VPhysics-Box3D)")?;
-    if nm.version != Version::V002 {
-        return Err(format!("{} has no SetJointLimits: update VPhysics-Box3D", nm.version.name()));
+    if nm.version != Version::V003 {
+        return Err(format!("{} has no SetBodyInertia / SetJointBallLimits: update VPhysics-Box3D", nm.version.name()));
     }
     let d = data::get().ok_or_else(|| format!("NM's data isn't loaded (DMS.LoadData): {}", data::how_to()))?;
     let body = &d.body;
     let objects = unsafe { parts(api, l, 1, body.parts.len())? };
     let poses = objects.iter().map(|&o| pose(&nm, o)).collect::<Result<Vec<_>, _>>()?;
+    for (p, &o) in body.parts.iter().zip(&objects) {
+        // Symmetric: its columns are its rows.
+        let tensor = p.inertia.to_cols_array();
+        // SAFETY: a PhysObj of the ragdoll, alive for this call; 9 floats.
+        if unsafe { nm.set_body_inertia(o, &tensor) } != Some(true) {
+            return Err(format!("{}: SetBodyInertia refused NM's tensor {tensor:?}", p.name));
+        }
+    }
     unsafe { (api.createtable)(l, body.joints.len() as c_int, 0) };
     for (k, j) in body.joints.iter().enumerate() {
         let name = body.parts[j.part].name;
@@ -62,13 +71,14 @@ unsafe fn bind_homer_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> 
         // SAFETY: `c` joins two live objects; the arrays are as long as the calls read.
         let anchored = unsafe { nm.set_joint_anchor(c, Some(&pivot.to_array())) };
         let frames = [frames[0].to_array(), frames[1].to_array()];
-        let limited = unsafe { nm.set_joint_limits(c, parent, &frames, j.hinge, &j.limits) } == Some(true);
+        let limited = if j.hinge {
+            unsafe { nm.set_joint_limits(c, parent, &frames, true, &j.limits) }
+        } else {
+            unsafe { nm.set_joint_ball_limits(c, parent, &frames, &j.limits) }
+        } == Some(true);
         if !anchored || !limited {
-            // SAFETY: as above; only asks whether the constraint takes the other kind.
-            let other = unsafe { nm.set_joint_limits(c, parent, &frames, !j.hinge, &j.limits) } == Some(true);
-            return Err(format!("{name}: SetJointAnchor {anchored}, SetJointLimits {limited} as a {}; the constraint takes a {}",
-                if j.hinge { "hinge" } else { "ball" },
-                match (other, j.hinge) { (true, true) => "ball", (true, false) => "hinge", (false, _) => "neither" }));
+            return Err(format!("{name}: SetJointAnchor {anchored}, {} {limited} (was the constraint built as a {}?)",
+                if j.hinge { "SetJointLimits" } else { "SetJointBallLimits" }, if j.hinge { "hinge" } else { "ragdoll constraint" }));
         }
         unsafe {
             (api.createtable)(l, 0, 5);
@@ -82,7 +92,6 @@ unsafe fn bind_homer_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> 
     }
     Ok(1)
 }
-
 native!(homer_body => homer_body_impl);
 /// `DMS.HomerBody([pos, yaw])`: NM's body of Homer standing as `nm_agent_create` puts him at `pos` (m, his feet's
 /// level; default the origin) facing `yaw` (rad): per part `{name, parent, mass, pos, rot, inertia}` (`inertia`

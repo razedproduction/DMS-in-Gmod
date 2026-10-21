@@ -59,8 +59,8 @@ function DMS_SpawnHomer(pos, yaw)
 end
 
 -- Homer's parts as Box3D has them, a line each (for tools/golden body): the spawn's `spawn x y z yaw` (m, degrees),
--- then `part <name> <state pos 3> <state rot 4> <origin 3> <mass> <inertia 3> <damping 2>` (SI; origin the
--- PhysObj's own, inertia GetInertia's diagonal).
+-- then `part <name> <state pos 3> <state rot 4> <origin 3> <mass> <inertia 3> <damping 2> <tensor 9>` (SI; origin
+-- the PhysObj's own, inertia GetInertia's diagonal, tensor the one Box3D turns the body with, DMS.BodyInertia).
 function DMS_HomerReport(ent)
 	local parts, why = DMS_HomerParts(ent)
 	if not parts then return "error " .. why end
@@ -75,6 +75,10 @@ function DMS_HomerReport(ent)
 		out[#out + 1] = string.format("part %s %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g",
 			DMS.PartNames()[i], st.pos.x, st.pos.y, st.pos.z, st.rot.x, st.rot.y, st.rot.z, st.rot.w, o.x, o.y, o.z,
 			phys:GetMass(), inertia.x, inertia.y, inertia.z, lin, ang)
+		local t = DMS.BodyInertia(phys)
+		if t then
+			out[#out] = out[#out] .. string.format(" %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g", unpack(t))
+		end
 	end
 	return table.concat(out, "\n")
 end

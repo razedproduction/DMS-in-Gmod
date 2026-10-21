@@ -224,6 +224,8 @@ struct GamePart {
     mass: f32,
     inertia: Vec3,
     damping: [f32; 2],
+    /// The tensor Box3D turns the body with (`DMS.BodyInertia`), if the fork gives it.
+    tensor: Option<Mat3>,
 }
 
 fn report(text: &str) -> Result<((Vec3, f32), Vec<GamePart>), String> {
@@ -242,6 +244,8 @@ fn report(text: &str) -> Result<((Vec3, f32), Vec<GamePart>), String> {
                 mass: f(12)?,
                 inertia: Vec3::new(f(13)?, f(14)?, f(15)?),
                 damping: [f(16)?, f(17)?],
+                tensor: (w.len() >= 27).then(|| (18..27).map(f).collect::<Result<Vec<f32>, _>>()).transpose()?
+                    .map(|v| Mat3::from_cols_array(&v.try_into().unwrap_or([0.0; 9])).transpose()),
             }),
             Some("error") => return Err(line.into()),
             _ => {}
@@ -290,8 +294,8 @@ return DMS_HomerReport(ent) .. "\njoints " .. joints .. " " .. ent:GetPhysicsObj
         wrot.add("frame rotation (rad)", qgap(g.rot, *rot), p.name);
         wmass.add("mass (relative)", ((g.mass - p.mass) / p.mass).abs(), p.name);
         wmass.add("damping", g.damping[0].abs().max(g.damping[1].abs()), p.name);
-        // Box3D's tensor: GetInertia's diagonal in the body's frame (the fork keeps no other terms).
-        let ours = Mat3::from_diagonal(g.inertia);
+        // Box3D's tensor: the fork's own (VBOX3D_NM_003), else GetInertia's diagonal.
+        let ours = g.tensor.unwrap_or(Mat3::from_diagonal(g.inertia));
         let frob = |m: Mat3| m.to_cols_array().iter().map(|x| x * x).sum::<f32>().sqrt();
         inertia.add("inertia tensor (relative)", frob(ours - p.inertia) / frob(p.inertia), p.name);
         let d = Vec3::new(p.inertia.x_axis.x, p.inertia.y_axis.y, p.inertia.z_axis.z);
@@ -302,8 +306,8 @@ return DMS_HomerReport(ent) .. "\njoints " .. joints .. " " .. ent:GetPhysicsObj
     let diag_ok = diag.report(INERTIA_TOL);
     let tensor_ok = inertia.report(INERTIA_TOL);
     if !tensor_ok {
-        println!("  NM's inertia tensors have off-diagonal terms in the parts' frames; VPhysics-Box3D keeps a body's inertia");
-        println!("  diagonal in its own frame (CPhysicsObject::m_Inertia, b3MassData set diagonal): see `golden body` notes");
+        println!("  NM's inertia tensors have off-diagonal terms in the parts' frames: Box3D needs them whole (VBOX3D_NM_003's");
+        println!("  SetBodyInertia, bound by DMS.BindHomer); an older fork keeps only the diagonal");
         for p in &body.parts {
             let t = p.inertia;
             println!("    {:16} NM [{:.5} {:.5} {:.5} | {:.5} {:.5} {:.5}] (diagonal | xy xz yz)", p.name, t.x_axis.x, t.y_axis.y,
@@ -354,12 +358,13 @@ return table.concat(out, "\n")
         let beyond = if j.hinge {
             (j.limits[0] - t).max(t - j.limits[1]).max(0.0).max(s.length())
         } else {
-            let e = ((s.x / j.limits[0].max(1e-3)).powi(2) + (s.y / j.limits[1].max(1e-3)).powi(2)).sqrt();
+            // NM's ellipse (ragdoll.rs lean_limit): limits[0] bounds the swing about the parent frame's Y, [1] about X.
+            let e = ((s.y / j.limits[0].max(1e-3)).powi(2) + (s.x / j.limits[1].max(1e-3)).powi(2)).sqrt();
             ((e - 1.0) * j.limits[0].min(j.limits[1])).max(t.abs() - j.limits[2]).max(0.0)
         };
         over.add("joint past NM's limits (rad)", beyond, name);
         if beyond > 0.0 {
-            println!("    {name:16} {} twist {:+.1} deg, swing x {:+.1} y {:+.1} deg; NM's limits {:.1} {:.1} {:.1} deg: {:.1} deg past",
+            println!("    {name:16} {} twist {:+.1} deg, swing about x {:+.1} y {:+.1} deg; NM's limits (y, x, twist) {:.1} {:.1} {:.1} deg: {:.1} deg past",
                 if j.hinge { "hinge" } else { "ball " }, t.to_degrees(), s.x.to_degrees(), s.y.to_degrees(), j.limits[0].to_degrees(),
                 j.limits[1].to_degrees(), j.limits[2].to_degrees(), beyond.to_degrees());
         }

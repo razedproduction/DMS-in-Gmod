@@ -1,4 +1,5 @@
-//! VPhysics-Box3D's `IPhysicsNM` (`VBOX3D_NM_002`), as `include/vphysics_nm.h` of the fork declares it.
+//! VPhysics-Box3D's `IPhysicsNM` (`VBOX3D_NM_003`), as `include/vphysics_nm.h` of the fork declares it (a copy
+//! is beside this file).
 //!
 //! Win64 only: a C++ virtual call is a plain C call with `this` first, so the vtable is a struct of
 //! `extern "C"` function pointers in declaration order.
@@ -25,7 +26,8 @@ pub struct IPhysicsEnvironment {
     _private: [u8; 0],
 }
 
-pub const INTERFACE_VERSION: &str = "VBOX3D_NM_002";
+pub const INTERFACE_VERSION: &str = "VBOX3D_NM_003";
+pub const INTERFACE_VERSION_002: &str = "VBOX3D_NM_002";
 pub const INTERFACE_VERSION_001: &str = "VBOX3D_NM_001";
 
 /// Armature above this (kg m^2) is clamped to it.
@@ -80,7 +82,7 @@ pub struct IPhysicsNMVtbl {
     pub get_substep_count: unsafe extern "C" fn(this: *mut IPhysicsNM) -> c_int,
     pub set_joint_anchor:
         unsafe extern "C" fn(this: *mut IPhysicsNM, constraint: *mut IPhysicsConstraint, world_point: *const f32) -> bool,
-    /// Only in `VBOX3D_NM_002`: an `_001` vtable ends before it.
+    /// From `VBOX3D_NM_002` on: an `_001` vtable ends before it.
     pub set_joint_limits: unsafe extern "C" fn(
         this: *mut IPhysicsNM,
         constraint: *mut IPhysicsConstraint,
@@ -89,6 +91,16 @@ pub struct IPhysicsNMVtbl {
         hinge: bool,
         limits: *const f32,
     ) -> bool,
+    /// From `VBOX3D_NM_003` on: an `_002` vtable ends before them.
+    pub set_body_inertia: unsafe extern "C" fn(this: *mut IPhysicsNM, object: *mut IPhysicsObject, tensor: *const f32) -> bool,
+    pub set_joint_ball_limits: unsafe extern "C" fn(
+        this: *mut IPhysicsNM,
+        constraint: *mut IPhysicsConstraint,
+        parent: *mut IPhysicsObject,
+        world_frames: *const f32,
+        limits: *const f32,
+    ) -> bool,
+    pub get_body_inertia: unsafe extern "C" fn(this: *mut IPhysicsNM, object: *const IPhysicsObject, tensor: *mut f32) -> bool,
 }
 
 /// Which version of the interface the loaded vphysics gave.
@@ -96,13 +108,15 @@ pub struct IPhysicsNMVtbl {
 pub enum Version {
     V001 = 1,
     V002 = 2,
+    V003 = 3,
 }
 
 impl Version {
     pub fn name(self) -> &'static str {
         match self {
             Version::V001 => INTERFACE_VERSION_001,
-            Version::V002 => INTERFACE_VERSION,
+            Version::V002 => INTERFACE_VERSION_002,
+            Version::V003 => INTERFACE_VERSION,
         }
     }
 }
@@ -123,7 +137,7 @@ static VERSION: AtomicU8 = AtomicU8::new(0);
 pub fn acquire() -> Result<Version, AcquireError> {
     release();
     let create = sys::create_interface().ok_or(AcquireError::NoVphysics)?;
-    for (version, name) in [(Version::V002, c"VBOX3D_NM_002"), (Version::V001, c"VBOX3D_NM_001")] {
+    for (version, name) in [(Version::V003, c"VBOX3D_NM_003"), (Version::V002, c"VBOX3D_NM_002"), (Version::V001, c"VBOX3D_NM_001")] {
         // SAFETY: vphysics' exported factory, given a null terminated name and no return code.
         let p = unsafe { create(name.as_ptr(), ptr::null_mut()) }.cast::<IPhysicsNM>();
         if !p.is_null() {
@@ -147,6 +161,7 @@ pub fn get() -> Option<Nm> {
     let version = match VERSION.load(Ordering::Acquire) {
         1 => Version::V001,
         2 => Version::V002,
+        3 => Version::V003,
         _ => return None,
     };
     (!p.is_null()).then_some(Nm { this: p, version })
@@ -234,11 +249,55 @@ impl Nm {
         hinge: bool,
         limits: &[f32; 3],
     ) -> Option<bool> {
-        if self.version != Version::V002 {
+        if self.version == Version::V001 {
             return None;
         }
         let frames = world_frames.as_ptr().cast::<f32>();
         Some(unsafe { (self.vtbl().set_joint_limits)(self.this, constraint, parent, frames, hinge, limits.as_ptr()) })
+    }
+
+    /// `SetBodyInertia`: `tensor` row by row about the centre of mass in the body's frame (kg m^2). `None` before
+    /// `VBOX3D_NM_003`.
+    ///
+    /// # Safety
+    /// `object` is null or a live `IPhysicsObject` of this vphysics.
+    pub unsafe fn set_body_inertia(&self, object: *mut IPhysicsObject, tensor: &[f32; 9]) -> Option<bool> {
+        if self.version != Version::V003 {
+            return None;
+        }
+        Some(unsafe { (self.vtbl().set_body_inertia)(self.this, object, tensor.as_ptr()) })
+    }
+
+    /// `SetJointBallLimits`: NM's ball (lean about the parent frame's Y and X, twist about Z). `None` before
+    /// `VBOX3D_NM_003`.
+    ///
+    /// # Safety
+    /// `constraint` and `parent` are null or live objects of this vphysics.
+    pub unsafe fn set_joint_ball_limits(
+        &self,
+        constraint: *mut IPhysicsConstraint,
+        parent: *mut IPhysicsObject,
+        world_frames: &[[f32; 4]; 2],
+        limits: &[f32; 3],
+    ) -> Option<bool> {
+        if self.version != Version::V003 {
+            return None;
+        }
+        let frames = world_frames.as_ptr().cast::<f32>();
+        Some(unsafe { (self.vtbl().set_joint_ball_limits)(self.this, constraint, parent, frames, limits.as_ptr()) })
+    }
+
+    /// `GetBodyInertia`: the tensor the solver turns the body with, row by row (kg m^2, body frame). `None` before
+    /// `VBOX3D_NM_003` or for a null object.
+    ///
+    /// # Safety
+    /// `object` is null or a live `IPhysicsObject` of this vphysics.
+    pub unsafe fn body_inertia(&self, object: *const IPhysicsObject) -> Option<[f32; 9]> {
+        if self.version != Version::V003 {
+            return None;
+        }
+        let mut t = [0.0f32; 9];
+        unsafe { (self.vtbl().get_body_inertia)(self.this, object, t.as_mut_ptr()) }.then_some(t)
     }
 }
 

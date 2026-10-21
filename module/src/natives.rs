@@ -13,6 +13,7 @@ pub const NATIVES: &[(&CStr, lua::CFunction)] = &[
     (c"Available", available),
     (c"InterfaceVersion", interface_version),
     (c"BodyState", body_state),
+    (c"BodyInertia", body_inertia),
     (c"Drive", drive),
     (c"FindJoint", find_joint),
     (c"SetArmature", set_armature),
@@ -34,7 +35,7 @@ unsafe fn available_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
 }
 
 native!(interface_version => interface_version_impl);
-/// `DMS.InterfaceVersion()`: `"VBOX3D_NM_002"`, `"VBOX3D_NM_001"` or nil.
+/// `DMS.InterfaceVersion()`: `"VBOX3D_NM_003"`, `"VBOX3D_NM_002"`, `"VBOX3D_NM_001"` or nil.
 unsafe fn interface_version_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
     match vphysics_nm::get() {
         Some(nm) => unsafe { api.push_str(l, nm.version.name()) },
@@ -63,6 +64,25 @@ unsafe fn body_state_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> 
             api.push_vector(l, v);
             (api.setfield)(l, -2, name.as_ptr());
         }
+    }
+    Ok(1)
+}
+
+native!(body_inertia => body_inertia_impl);
+/// `DMS.BodyInertia(physobj)`: the inertia tensor Box3D turns the body with, 9 numbers row by row (kg m^2, about the
+/// centre of mass in the body's frame); nil before `VBOX3D_NM_003`.
+unsafe fn body_inertia_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
+    let nm = nm()?;
+    let object = unsafe { api.check_physobj(l, 1)? };
+    match unsafe { nm.body_inertia(object) } {
+        Some(t) => unsafe {
+            (api.createtable)(l, 9, 0);
+            for (i, v) in t.iter().enumerate() {
+                (api.pushnumber)(l, f64::from(*v));
+                api.append(l, i + 1);
+            }
+        },
+        None => unsafe { (api.pushnil)(l) },
     }
     Ok(1)
 }

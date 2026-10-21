@@ -9,7 +9,7 @@ Delirium (active ragdoll, NM-style) нативно в Garry's Mod в режим�
 | Компонент | Где | Что даёт | Правило |
 |---|---|---|---|
 | Delirium SDK | `../delirium-physics (CLAUDE DONT CHANGE ANYTHING HERE)/crates/delirium-sdk` | C API `delirium_physics.h` (`nm_*`), Rust-крейт `delirium_physics` (`rlib` + `cdylib`) | **только чтение**, подключается path-зависимостью |
-| VPhysics-Box3D (форк) | `../VPhysics-Box3D` | `vphysics.dll` + `IPhysicsNM` (`VBOX3D_NM_002`, `include/vphysics_nm.h`) | NM-расширение пока **не закоммичено** |
+| VPhysics-Box3D (форк) | `../VPhysics-Box3D` | `vphysics.dll` + `IPhysicsNM` (`VBOX3D_NM_003`, `include/vphysics_nm.h`) | NM-расширение пока **не закоммичено** |
 | Прошлая попытка | `../delirium-physics (gmod addon & api)` | заметки и грабли (README) | только как справочник, код не переносим |
 
 Ключевые факты из API, на которых строится план:
@@ -215,10 +215,11 @@ DMS in Gmod/
 - [x] **`golden body`**: build = `NM_DUMP` (байт в байт; поля и C API SDK — 0…5e-7); `.phy` — массы/центр масс/
       диагональ инерции точно, оболочки −3.1…+0.5 мм, объём ≤ 3.7 %, констрейнты и пары NM; в игре — позиции
       ≤ 0.6 мм, повороты ≤ 0.1°, массы и диагональ инерции точно, падение без NM — без взрывов, пивоты ≤ 1.5 мм.
-- [ ] **Расхождения форка (показаны пользователю, ждут решения, ADR 0013):** полный тензор инерции (форк держит
-      только диагональ, внедиагональные члены NM до 46 % по норме у рук) и лимиты шара (twist/cone/plane с
-      эвристической осью twist вместо twist по Z + эллипса NM: левое бедро при падении ~15° за пределом).
-      План — `VBOX3D_NM_003`: `SetBodyInertia` (тензор 3×3 в кадре тела) и шар с семантикой NM.
+- [x] **Расхождения форка исправлены** (ADR 0014, `VBOX3D_NM_003`): полный тензор инерции (`SetBodyInertia`; был
+      только диагональ, у рук до 46 %) и шар с семантикой NM (`SetJointBallLimits`: twist по Z, эллипс наклонов в
+      кадре родителя — патч Box3D `box3d-elliptical-cone.patch`; было twist/cone/plane с эвристической осью и
+      перепутанными X/Y, бедро уходило на ~15°). `golden body` проходит: тензор 7e-8, суставы при падении ≤ 0.5° за
+      пределами NM, пивоты ≤ 0.6 мм.
 - [ ] Визуальная проверка пользователем (docs/homer.md: вид, `vcollide_wireframe 1`, падение).
 **DoD:** `dms-homer` из копии GTA IV одной командой делает `homer.mdl`; `tools/golden body` проходит: build совпадает
 с Playroom (1e-5), у заспавненного Homer все 21 часть совпадают с Playroom (позиция ≤ 1 мм, поворот ≤ 0.5°, масса
