@@ -74,6 +74,11 @@ pub fn remove(object: *mut IPhysicsObject) -> bool {
     removed
 }
 
+/// How many objects are driven.
+pub fn count() -> usize {
+    state().drives.len()
+}
+
 /// Drops every drive and removes the callback. For `ShutDown` and the module's unloading.
 pub fn shutdown() {
     let mut state = state();

@@ -140,28 +140,39 @@ DMS in Gmod/
 его состояние — та же роль, что у Playroom `--headless --script --rec`, но на Source + Box3D. Пользователь
 проверяет в игре только визуальное.
 
-- [ ] **Выделенный сервер GMod** (Garry's Mod Dedicated Server через SteamCMD, ветка x86-64, `srcds_win64.exe`)
-      в отдельной папке (не трогает игру пользователя): форк `vphysics.dll` в `bin\win64`, `gmsv_dms_win64.dll` в
-      `garrysmod\lua\bin`, аддон в `garrysmod\addons\dms`; `scripts\install.ps1 -Server` ставит туда же.
-- [ ] **Запуск без окна и без игроков:** `-console -nocrashdialog +map <тестовая карта> +maxplayers 1`,
-      `sv_hibernate_think 1` (иначе сервер без игроков не считает физику), `sv_cheats 1`, RCON только на
-      `127.0.0.1` со случайным паролем на запуск; `scripts\server.ps1 start|stop|restart|status`, лог консоли
-      (`-condebug`) в файл.
-- [ ] **Тестовая сцена «Playroom на Source»:** карта/сцена с той же геометрией, что комната и стадии Playroom
-      (пол, лестница, стена, уступ, мост), спавн Homer в той же точке и позе, что в Playroom.
-- [ ] **Канал управления и телеметрии в модуле** (только при `dms_dev 1`, по умолчанию выключен): TCP-сервер на
-      `127.0.0.1` в `gmsv_dms` — сетевой поток только кладёт команды в очередь и читает готовые снимки, Lua и
-      физику не трогает (ADR 0003). Команды (консольная команда, Lua-выражение, сообщение NM) выполняются в
-      `Think`; телеметрия — JSON-строка на каждый шаг/N шагов: время, части Homer (поза, скорости), COM,
-      касания, флаги `balancing/fallen`, drives, компенсация гравитации.
-- [ ] **CLI `tools/dms-ctl`** (Rust): `exec <консольная команда>`, `lua <код>`, `nm <сообщение> [параметры]`,
-      `watch [--for 5s] [--fields ...]` (поток телеметрии, с таймаутом — для неинтерактивного запуска из сессий
-      Claude), `run <сценарий>` (сценарий `golden/scenarios/*.txt` → запись в формате Playroom `--rec`),
-      `snapshot`; fallback на RCON (протокол Source RCON), если модуль не загружен.
-- [ ] **Сверка в один шаг:** `tools/golden behaviour --source` — прогон сценария на сервере через `dms-ctl run`,
-      сравнение с эталоном Playroom из `golden/out/`, отчёт расхождений.
-- [ ] Ограничение времени симуляции: прогоны в реальном времени (66 тиков); замедление/пауза через
-      `host_timescale`/`phys_timescale` только для отладки, не для golden-сверки.
+Сделано ([docs/bench.md](docs/bench.md), ADR 0012). Главное отличие от плана: **стенд — сама игра без окна**, а не
+выделенный сервер — серверная сборка GMod x64 собрана с более новыми интерфейсами vphysics (`IAppSystem` с
+`GetDependencies…`, длиннее `IPhysicsCollision`/`IPhysicsSurfaceProps`), и форк её роняет.
+
+- [x] ~~**Выделенный сервер GMod**~~ → стенд на игре (ADR 0012). Выделенный сервер поставлен
+      (`E:\Games\GModServer`, `server.ps1 update`, `start -Dedicated`, `install.ps1 -Server`) и работает со своим
+      `vphysics.dll` (канал, тестовый агент, записи), но **без форка**. Отложено: порт форка VPhysics-Box3D на
+      серверный ABI (`IAppSystem` + интерфейсы vphysics) — нужен для выделенного сервера и Linux (M7).
+- [x] **Запуск без окна:** `scripts\server.ps1 start|stop|restart|status` — `gmod_win64.exe -textmode`, окно
+      скрывается, listen-сервер `maxplayers 2` + `-usercon` (RCON), `sv_hibernate_think 1`, `sv_cheats 1`, всё на
+      `127.0.0.1`, RCON и токен канала — новые на каждый запуск, лог `-condebug` → `garrysmod\console.log`.
+      Пока стенд запущен, пользователь не играет.
+- [x] **Тестовая сцена:** `gm_flatgrass` — плоский пол, начало комнаты Playroom = пол под `info_player_start`
+      (`dms_bench_scene`, `DMS.BenchScene()`). Отложено на M5: стадии Playroom (лестница, стена, уступ, мост) —
+      вместе с миром NM из карты (в игре есть `vbsp/vvis/vrad`); спавн Homer в позе Playroom — M3/M4.
+- [x] **Канал управления и телеметрии в модуле** (`dev.rs`, `dev.lua`): только `127.0.0.1`, только при `dms_dev 1`
+      (включает лишь одноразовый `data/dms/bench.txt` от `server.ps1`), токен; сетевые потоки только очередь и
+      готовые кадры (ADR 0003), исполнение в `Think`. Телеметрия — JSON-строка на кадр сервера: время/тик,
+      drives `step.rs`, гравитации NM/Source (компенсация — `null` до M4), место под FOLLOW-агентов (`agents`, M4);
+      тестового агента — шаг, флаги `balancing/fallen`, COM, части, контакты, drives, feedback.
+- [x] **CLI `tools/dms-ctl`**: `status`, `exec` (RCON с выводом; `--module`), `lua` (`-f`), `nm`, `bench`,
+      `snapshot`, `watch --for … [--fields] [--every]`, `run <сценарий>` → `.rec` Playroom; `lua` уходит в RCON
+      `lua_run`, `exec` — в модуль, если другой путь не отвечает.
+- [x] **Сверка в один шаг:** `golden behaviour --source [имена]` — сценарии на стенде против `golden/out/`.
+      Пока сценарии исполняет агент SDK в LEAD (как `dms_selftest`), т.е. проверяется конвейер, а не Box3D:
+      `stand` (60 с), `stand-1s`, `relax`, `relax-1s` совпадают с Playroom до 3 знаков записи на всех шагах. Не
+      совпадают, и это известно: `shot` — с шага 62 (выстрел Playroom — ShotTask, M6); `push` — тычок от камеры
+      Playroom, которая в окне движется (стенд берёт её начальную точку); **`catchfall` — Playroom пересылает агенту
+      сообщения его `extras.outbox` (catchFall сам запускает `pedalLegs`, `bodyRollUp`), а C API SDK этот outbox
+      не отдаёт — решить в M4** (иначе FOLLOW-агент не совпадёт с Playroom на catchFall). Осмысленная сверка
+      поведения Homer — после M3 (модель) и M4 (FOLLOW).
+- [x] Время: прогоны в реальном времени (тики игры, шаги NM 1/60 по аккумулятору, как окно Playroom);
+      `host_timescale` — только для отладки.
 
 **DoD:** одной командой (`scripts\server.ps1 start`) поднимается сервер без окна; `dms-ctl exec status`,
 `dms-ctl lua "return DMS.Version"` и `dms-ctl watch --for 2s` работают из PowerShell; сценарий из

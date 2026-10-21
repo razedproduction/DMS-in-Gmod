@@ -58,15 +58,21 @@ VPhysics-Box3D. Тело — `prop_ragdoll` Homer; Delirium каждый физ�
 - GMod: `E:\Games\Steam\steamapps\common\GarrysMod` (x86-64 ветка, форк `vphysics.dll` уже в `bin\win64`,
   оригинал — `vphysics.dll.original`). После сборки устанавливать в игру самому, не спрашивая.
 - В PowerShell не запускать `build.ps1` с `2>&1`: вывод cargo в stderr превращается в ошибку.
-- В игру Claude не заходит. Вне игры модуль проверяется загрузкой настоящего
-  `garrysmod\bin\win64\lua_shared.dll` (`luaL_newstate` → `gmod13_open` через P/Invoke из PowerShell,
-  `SetDllDirectory` на `bin\win64`); так же можно загрузить `vphysics.dll` форка и спросить `CreateInterface`.
-  Такие скрипты держать в scratchpad, не в репозитории. Проверку в самой игре делает пользователь — дать ему
-  точный список консольных команд.
-- После M2.5 у Claude есть свой стенд: выделенный сервер GMod без окна (`scripts\server.ps1 start|stop|status`) и
-  CLI `tools/dms-ctl` (`exec`, `lua`, `nm`, `watch --for`, `run <сценарий>`) — поведение и golden-сверку
-  проверять там самому; пользователю оставлять только визуальную проверку. `watch` всегда запускать с `--for`
-  (иначе команда не завершится). Канал `dms-ctl` — только `127.0.0.1` и только при `dms_dev 1`.
+- Свой стенд (M2.5, [docs/bench.md](docs/bench.md), ADR 0012): **сама игра без окна** —
+  `.\scripts\server.ps1 start|stop|restart|status` (`gmod_win64.exe -textmode`, listen-сервер на `127.0.0.1`,
+  окно скрыто) и CLI `.\target\release\dms-ctl.exe` (`cargo build --release -p dms-ctl -p golden`): `status`,
+  `exec <команда>` (RCON, с выводом), `lua <код>` / `lua -f <файл>`, `nm <сообщение> [p=v]`, `bench reset|stop|cancel`,
+  `snapshot`, `watch --for 2s [--fields a,b]` (**всегда с `--for`**), `run golden\scenarios\<имя>.txt` (→
+  `golden/out/source/<имя>.rec`); сверка — `.\target\release\golden.exe behaviour --source [имена]`. Поведение и
+  golden-сверку проверять там самому, пользователю оставлять только визуальное. Пока стенд запущен, пользователь не
+  может играть (одна копия игры) — после проверки `server.ps1 stop`. В PowerShell 5.1 `"` в аргументах `dms-ctl`
+  теряются: в Lua — одинарные кавычки или `lua -f`. Канал `dms-ctl` — только `127.0.0.1`, только при `dms_dev 1`
+  (включает лишь `server.ps1` через одноразовый `data/dms/bench.txt`).
+- Выделенный сервер (`server.ps1 start -Dedicated`, `E:\Games\GModServer`) с форком **не работает**: серверная
+  сборка GMod x64 собрана с новыми интерфейсами vphysics (ADR 0012); там только свой `vphysics.dll`, без `IPhysicsNM`.
+- Вне игры модуль можно проверить и загрузкой настоящего `garrysmod\bin\win64\lua_shared.dll` (`luaL_newstate` →
+  `gmod13_open` через P/Invoke из PowerShell, `SetDllDirectory` на `bin\win64`); так же — `vphysics.dll` и
+  `CreateInterface`. Такие скрипты держать в scratchpad, не в репозитории.
 
 ## Устройство
 

@@ -1,0 +1,13 @@
+[package]
+name = "dms-ctl"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "dms-ctl"
+path = "src/main.rs"

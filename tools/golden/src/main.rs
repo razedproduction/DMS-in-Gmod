@@ -18,6 +18,9 @@ usage: golden [--game <GTA IV dir>] [--sdk <SDK dir>] <command>
   lead         the SDK's LEAD agent (as dms_selftest makes it) against the Playroom's first second, bit for bit
   run [names]  the scenarios of golden/scenarios/ (all, or the named ones) -> golden/out/<name>.*
   all          build, dump, links, lead, run: every reference in one go
+  behaviour --source [names]
+               the scenarios on the bench server (dms-ctl run) -> golden/out/source/<name>.rec, against the
+               Playroom's golden/out/<name>.rec: COM, speed, lowest parts, command steps
 The game's folder: --game (remembered in golden/game_dir.txt), or the DMS_GAME_DIR environment variable.";
 
 struct Ctx {
@@ -87,6 +90,7 @@ fn main() {
         "links" => links(&ctx),
         "lead" => lead(&ctx),
         "run" => run(&ctx, &args),
+        "behaviour" => behaviour(&ctx, &args),
         "all" => build(&ctx).and_then(|_| dump(&ctx)).and_then(|_| links(&ctx)).and_then(|_| lead(&ctx)).and_then(|_| run(&ctx, &[])),
         _ => Err(USAGE.into()),
     };
@@ -314,7 +318,8 @@ fn scenario(text: &str) -> Result<Mode, String> {
     }
 }
 
-fn run(ctx: &Ctx, names: &[String]) -> Result<(), String> {
+/// The scenarios of golden/scenarios/: all, or the named ones.
+fn scenarios(ctx: &Ctx, names: &[String]) -> Result<Vec<PathBuf>, String> {
     let dir = ctx.repo.join("golden").join("scenarios");
     let mut all: Vec<PathBuf> = std::fs::read_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))?
         .filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().is_some_and(|x| x == "txt")).collect();
@@ -325,6 +330,70 @@ fn run(ctx: &Ctx, names: &[String]) -> Result<(), String> {
             return Err(format!("no such scenario among {}", dir.display()));
         }
     }
+    Ok(all)
+}
+
+/// A COM gap (m) the record's three decimals can't tell from none.
+const REC_TOLERANCE: f32 = 0.0015;
+
+/// ROADMAP M2.5: each scenario on the bench server, recorded as the Playroom records it, against the Playroom's.
+/// The bench's agent is in LEAD on NM's own floor (as `golden lead`), so this checks the bench and its records;
+/// Homer's FOLLOW agent on Box3D takes its place in M4.
+fn behaviour(ctx: &Ctx, args: &[String]) -> Result<(), String> {
+    let mut names: Vec<String> = args.to_vec();
+    let Some(i) = names.iter().position(|a| a == "--source") else {
+        return Err("behaviour --source [names]: only the bench server (Source) is there to compare so far".into());
+    };
+    names.remove(i);
+    let bench = dms_ctl::Bench::load()?;
+    let mut channel = dms_ctl::Channel::bench(&bench)?;
+    let out = ctx.out.join("source");
+    std::fs::create_dir_all(&out).map_err(|e| format!("{}: {e}", out.display()))?;
+    let mut failed = vec![];
+    for path in scenarios(ctx, &names)? {
+        let s = dms_ctl::Scenario::read(&path)?;
+        let theirs = ctx.out.join(format!("{}.rec", s.name));
+        if !theirs.is_file() {
+            println!("golden: {}: no reference {} (golden run {})", s.name, theirs.display(), s.name);
+            failed.push(s.name);
+            continue;
+        }
+        println!("golden: {}: on the bench ({}, about {:.0} s)...", s.name, s.mode, s.seconds());
+        let rec = match dms_ctl::run(&mut channel, &s) {
+            Ok(r) => r,
+            Err(e) => {
+                println!("golden: {}: FAILED on the bench: {e}", s.name);
+                failed.push(s.name);
+                continue;
+            }
+        };
+        write(&out.join(format!("{}.rec", s.name)), &rec)?;
+        let (ours, theirs) = (dms_ctl::rec::parse(&rec), dms_ctl::rec::parse(&read_text(&theirs)?));
+        let d = dms_ctl::rec::compare(&ours, &theirs, REC_TOLERANCE);
+        let same = d.steps == d.theirs_steps && d.first_off.is_none() && d.low_part_mismatch == 0;
+        println!("golden: {}: {} steps (Playroom {}); COM gap max {:.4} m at step {}, mean {:.4} m; |v| gap max {:.3} m/s; \
+                  lowest part differs on {} steps; first step off by > {REC_TOLERANCE} m: {}",
+            s.name, d.steps, d.theirs_steps, d.com_max.0, d.com_max.1 + 1, d.com_mean, d.speed_max, d.low_part_mismatch,
+            d.first_off.map_or("none".into(), |k| (k + 1).to_string()));
+        let marks = |m: &[(f32, String)]| m.iter().map(|(t, s)| format!("{t:.2} {s}")).collect::<Vec<_>>();
+        let (mo, mt) = (marks(&d.marks_ours), marks(&d.marks_theirs));
+        if mo != mt {
+            println!("golden: {}: command steps differ:\n  bench    {}\n  playroom {}", s.name, mo.join(" | "), mt.join(" | "));
+        }
+        for l in rec.lines().filter(|l| l.starts_with("# dms:")) {
+            println!("golden: {}: {l}", s.name);
+        }
+        if same {
+            println!("golden: {}: OK, the bench's record is the Playroom's to its 3 decimals", s.name);
+        } else {
+            failed.push(s.name);
+        }
+    }
+    if failed.is_empty() { Ok(()) } else { Err(format!("differ from the Playroom: {}", failed.join(", "))) }
+}
+
+fn run(ctx: &Ctx, names: &[String]) -> Result<(), String> {
+    let all = scenarios(ctx, names)?;
     let mut failed = vec![];
     for path in &all {
         let name = path.file_stem().unwrap_or_default().to_string_lossy().into_owned();

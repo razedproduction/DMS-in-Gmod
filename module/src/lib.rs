@@ -2,7 +2,9 @@
 //!
 //! `require("dms")` registers the global table `DMS`.
 
+mod bench;
 mod data;
+mod dev;
 mod ffi;
 mod lua;
 mod natives;
@@ -61,13 +63,14 @@ pub unsafe extern "C" fn gmod13_open(l: *mut LuaState) -> c_int {
     let Ok(api) = lua::api() else { return 0 };
     let nm_message = acquire_message();
     unsafe {
-        (api.createtable)(l, 0, 2 + (natives::NATIVES.len() + nm_natives::NATIVES.len()) as c_int);
+        let natives = natives::NATIVES.iter().chain(nm_natives::NATIVES).chain(dev::NATIVES);
+        (api.createtable)(l, 0, 2 + natives.clone().count() as c_int);
         let version = CString::new(MODULE_VERSION).unwrap_or_default();
         (api.pushstring)(l, version.as_ptr());
         (api.setfield)(l, -2, c"Version".as_ptr());
         (api.pushcclosure)(l, lua_nm_version, 0);
         (api.setfield)(l, -2, c"NmVersion".as_ptr());
-        for (name, f) in natives::NATIVES.iter().chain(nm_natives::NATIVES) {
+        for (name, f) in natives {
             (api.pushcclosure)(l, *f, 0);
             (api.setfield)(l, -2, name.as_ptr());
         }
@@ -84,6 +87,7 @@ pub unsafe extern "C" fn gmod13_open(l: *mut LuaState) -> c_int {
 /// Called by GMod with the Lua state given to `gmod13_open`, as it shuts it down.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gmod13_close(l: *mut LuaState) -> c_int {
+    dev::stop();
     step::shutdown();
     vphysics_nm::release();
     if let Ok(api) = lua::api() {
