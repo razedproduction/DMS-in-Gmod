@@ -3,3 +3,5 @@
 /target-playroom/
 /golden/out/
 /golden/game_dir.txt
+# The bench server's addresses and secrets (scripts\server.ps1).
+/.bench/

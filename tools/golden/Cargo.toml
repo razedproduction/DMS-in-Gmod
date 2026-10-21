@@ -6,6 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+dms-ctl = { path = "../dms-ctl" }
 dms-game = { path = "../dms-game" }
 # Read only (docs/adr/0001): built into this workspace's target/, nothing is written there.
 delirium = { path = "../../../delirium-physics (CLAUDE DONT CHANGE ANYTHING HERE)/crates/delirium" }

@@ -163,8 +163,7 @@ pub fn message_params(m: usize) -> Result<Vec<Param>, String> {
         .collect()
 }
 
-/// A param's value in a message. Only `Bool` is sent so far; the reactions (M6) send the rest.
-#[allow(dead_code)]
+/// A param's value in a message.
 #[derive(Clone, Debug)]
 pub enum Value {
     Float(f32),
@@ -172,6 +171,44 @@ pub enum Value {
     Bool(bool),
     Vec3([f32; 3]),
     Str(String),
+}
+
+impl Value {
+    /// `text` as a value of `kind`, as the Playroom's console reads it: numbers, `true/false/1/0`, `x,y,z`.
+    fn parse(kind: Kind, text: &str) -> Option<Value> {
+        Some(match kind {
+            Kind::Float => Value::Float(text.parse().ok()?),
+            Kind::Int => Value::Int(text.parse().ok()?),
+            Kind::Bool => Value::Bool(match text {
+                "true" | "1" => true,
+                "false" | "0" => false,
+                _ => return None,
+            }),
+            Kind::Vec3 => {
+                let v: Vec<f32> = text.split(',').map(|x| x.trim().parse().ok()).collect::<Option<_>>()?;
+                Value::Vec3(v.try_into().ok()?)
+            }
+            Kind::Str => Value::Str(text.to_string()),
+        })
+    }
+}
+
+/// A message line as the Playroom's console takes it (`send_to`): `<message> [param=value ...]`, `start` a bool,
+/// the rest by their kind.
+pub fn parse_message(line: &str) -> Result<(String, Vec<(String, Value)>), String> {
+    let mut w = line.split_whitespace();
+    let name = w.next().ok_or("an empty message")?;
+    let params = message_params(message_find(name)?)?;
+    let values = w
+        .map(|kv| {
+            let (k, v) = kv.split_once('=').ok_or_else(|| format!("{kv}: want name=value"))?;
+            let kind = if k == "start" { Some(Kind::Bool) } else { params.iter().find(|p| p.name == k).map(|p| p.kind) };
+            let kind = kind.ok_or_else(|| format!("{name} has no param {k}"))?;
+            let value = Value::parse(kind, v).ok_or_else(|| format!("{k}: not a {}", kind.name()))?;
+            Ok((k.to_string(), value))
+        })
+        .collect::<Result<_, String>>()?;
+    Ok((name.to_string(), values))
 }
 
 /// `NmWorld`: the geometry NM sees.
@@ -336,6 +373,47 @@ impl Agent {
             sdk::nm_agent_get_part_transforms(self.ptr(), out.as_mut_ptr(), PARTS as i32)
         })? as usize;
         Ok(out.chunks(7).take(n).map(|c| ([c[0], c[1], c[2]], [c[3], c[4], c[5], c[6]])).collect())
+    }
+
+    /// The body's centre of mass and its velocity (`nm_agent_get_com`, the Playroom's `doll.com()`).
+    pub fn com(&self) -> Result<([f32; 3], [f32; 3]), String> {
+        let (mut x, mut v) = ([0.0; 3], [0.0; 3]);
+        // SAFETY: a live agent, two 3 float outputs.
+        check("nm_agent_get_com", unsafe { sdk::nm_agent_get_com(self.ptr(), x.as_mut_ptr(), v.as_mut_ptr()) })?;
+        Ok((x, v))
+    }
+
+    /// Part `i`'s contact flag (`nm_agent_get_part_contact`).
+    pub fn part_contact(&self, i: usize) -> Result<u8, String> {
+        // SAFETY: a live agent.
+        check("nm_agent_get_part_contact", unsafe { sdk::nm_agent_get_part_contact(self.ptr(), i as i32) }).map(|c| c as u8)
+    }
+
+    /// Every part's drive: force and torque (`nm_agent_get_part_drives`).
+    pub fn part_drives(&self) -> Result<Vec<([f32; 3], [f32; 3])>, String> {
+        let mut out = [0.0f32; PARTS * 6];
+        // SAFETY: room for PARTS drives.
+        let n = check("nm_agent_get_part_drives", unsafe {
+            sdk::nm_agent_get_part_drives(self.ptr(), out.as_mut_ptr(), PARTS as i32)
+        })? as usize;
+        Ok(out.chunks(6).take(n).map(|c| ([c[0], c[1], c[2]], [c[3], c[4], c[5]])).collect())
+    }
+
+    /// This step's feedback: name and slot.
+    pub fn feedback(&self) -> Result<Vec<(String, i32)>, String> {
+        // SAFETY: a live agent.
+        let n = unsafe { sdk::nm_agent_feedback_count(self.ptr()) }.max(0);
+        (0..n)
+            .map(|i| {
+                let mut slot = 0;
+                let at: *mut i32 = &mut slot;
+                // SAFETY: a live agent; `buf` holds `len` bytes, `at` is one int.
+                let name = string("nm_agent_feedback_get", |buf, len| unsafe {
+                    sdk::nm_agent_feedback_get(self.ptr(), i, buf, len, at, std::ptr::null_mut())
+                })?;
+                Ok((name, slot))
+            })
+            .collect()
     }
 
     pub fn is_balancing(&self) -> Result<bool, String> {
