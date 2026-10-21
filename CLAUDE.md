@@ -58,7 +58,7 @@ VPhysics-Box3D. Тело — `prop_ragdoll` Homer; Delirium каждый физ�
 - GMod: `E:\Games\Steam\steamapps\common\GarrysMod` (x86-64 ветка, форк `vphysics.dll` уже в `bin\win64`,
   оригинал — `vphysics.dll.original`). После сборки устанавливать в игру самому, не спрашивая.
 - В PowerShell не запускать `build.ps1` с `2>&1`: вывод cargo в stderr превращается в ошибку.
-- Свой стенд (M2.5, [docs/bench.md](docs/bench.md), ADR 0012): **сама игра без окна** —
+- Свой стенд (M2.5, [docs/bench.md](docs/bench.md), ADR 0012): **сама игра в окне** —
   `.\scripts\server.ps1 start|stop|restart|status` (`gmod_win64.exe -textmode`, listen-сервер на `127.0.0.1`,
   окно скрыто) и CLI `.\target\release\dms-ctl.exe` (`cargo build --release -p dms-ctl -p golden`): `status`,
   `exec <команда>` (RCON, с выводом), `lua <код>` / `lua -f <файл>`, `nm <сообщение> [p=v]`, `bench reset|stop|cancel`,

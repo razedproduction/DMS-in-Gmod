@@ -1,4 +1,4 @@
-# Стенд: GMod без окна + `dms-ctl` (ROADMAP M2.5)
+# Стенд: GMod + `dms-ctl` (ROADMAP M2.5)
 
 Стенд — та же роль, что у Playroom `--headless`/`--script --rec`, но на Source + Box3D: Claude сам запускает
 Garry's Mod, управляет им и в реальном времени видит состояние; пользователю остаётся визуальная проверка.
@@ -9,7 +9,7 @@ Garry's Mod, управляет им и в реальном времени ви�
 ```powershell
 .\scripts\build.ps1                     # модуль -> dist\
 cargo build --release -p dms-ctl -p golden
-.\scripts\server.ps1 start              # игра без окна, канал dms-ctl и RCON на 127.0.0.1
+.\scripts\server.ps1 start              # игра в окне, канал dms-ctl и RCON на 127.0.0.1
 .\target\release\dms-ctl.exe exec status
 .\target\release\dms-ctl.exe lua "return DMS.Version"
 .\target\release\dms-ctl.exe watch --for 2s
