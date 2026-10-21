@@ -4,6 +4,8 @@
 //! Mirrors `delirium-room`'s `archive_read`, `load` and `getup::{key, plat, homer, Clips::stand_up}`. Only
 //! what Homer's agent needs is read; anything else of the Playroom's (get-up clips, weapons, the room) isn't.
 
+pub mod body;
+
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
@@ -132,10 +134,16 @@ impl Game {
         Ok((b, frames))
     }
 
+    /// Homer's fragment (`componentpeds.img/m_y_pmanhat_01.xft`), the one his build is made from: skeleton,
+    /// ragdoll parts, meshes and embedded textures.
+    pub fn homer_fragment(&self) -> Result<resource::Resource, String> {
+        let (table, mut f) = self.img_open("xbox360/models/cdimages/componentpeds.img")?;
+        self.img_read(&table, &mut f, &format!("{HOMER_MODEL}.xft"))
+    }
+
     /// `getup::homer_build`: the ped's fragment through the same `Rig` Delirium builds Homer with.
     fn homer_build(&self) -> Result<Build, String> {
-        let (table, mut f) = self.img_open("xbox360/models/cdimages/componentpeds.img")?;
-        let frag = self.img_read(&table, &mut f, &format!("{HOMER_MODEL}.xft"))?;
+        let frag = self.homer_fragment()?;
         let bones = skeleton::read(&frag, model::fragment_root(&frag)?)?;
         let parts = delirium_data::ragdoll::read(&frag)?;
         let parents: Vec<Option<usize>> = bones.iter().map(|b| b.parent).collect();
@@ -339,3 +347,4 @@ pub fn floor(x: f32, y: f32, z: f32, half: f32) -> (Vec<[f32; 3]>, Vec<[u32; 3]>
 pub fn concrete(surfaces: &[(String, f32, f32)]) -> u8 {
     surfaces.iter().position(|s| s.0 == "CONCRETE").unwrap_or(0) as u8
 }
+

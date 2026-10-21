@@ -591,6 +591,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "dms-homer"
+version = "0.1.0"
+dependencies = [
+ "delirium",
+ "delirium-data",
+ "delirium-sdk",
+ "dms-game",
+]
+
+[[package]]
 name = "downcast-rs"
 version = "2.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -761,6 +771,7 @@ dependencies = [
 name = "gmsv_dms"
 version = "0.1.0"
 dependencies = [
+ "delirium",
  "delirium-sdk",
  "dms-game",
 ]
@@ -773,6 +784,7 @@ dependencies = [
  "delirium-sdk",
  "dms-ctl",
  "dms-game",
+ "dms-homer",
 ]
 
 [[package]]

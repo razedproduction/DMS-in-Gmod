@@ -22,7 +22,7 @@ VPhysics-Box3D. Тело — `prop_ragdoll` Homer; Delirium каждый физ�
 
 - `E:\GitStuff\MyRepos\delirium-physics (CLAUDE DONT CHANGE ANYTHING HERE)` — **только чтение**, ничего там не
   менять, не собирать в его `target/`, не запускать `cargo fix`. Подключается path-зависимостью (ADR 0001).
-- `E:\GitStuff\MyRepos\VPhysics-Box3D` (форк с `IPhysicsNM`, интерфейс `include/vphysics_nm.h`, `VBOX3D_NM_002`)
+- `E:\GitStuff\MyRepos\VPhysics-Box3D` (форк с `IPhysicsNM`, интерфейс `include/vphysics_nm.h`, `VBOX3D_NM_003`)
   **можно менять**, если там есть неточности, мешающие NM работать один в один как в Playroom (силы, armature,
   пивоты/лимиты суставов, порядок шага, единицы и т.п.). Правило: сначала показать расхождение с Playroom/SDK
   (что делает Delirium, что делает форк), потом чинить в форке; новые/изменённые методы — новой версией

@@ -14,6 +14,8 @@ pub struct Data {
     pub dir: PathBuf,
     pub platform: &'static str,
     pub build: nm::Build,
+    /// The build as NM's physics has it, for the ragdoll (`bind.rs`).
+    pub body: dms_game::body::Body,
     /// The build as the Playroom's `NM_DUMP` writes it.
     pub dump: String,
     /// CONCRETE's surface row, the Playroom's floor.
@@ -90,6 +92,7 @@ fn read(dir: &str) -> Result<Data, String> {
             dms_game::Platform::Xbox360 => "Xbox 360",
         },
         build: nm::Build::from_text(&dump)?,
+        body: dms_game::body::Body::new(&build, &frames),
         dump,
         floor_material: dms_game::concrete(&rows),
         surfaces: rows.len(),

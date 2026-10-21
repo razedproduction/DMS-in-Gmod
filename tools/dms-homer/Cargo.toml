@@ -1,0 +1,13 @@
+[package]
+name = "dms-homer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+dms-game = { path = "../dms-game" }
+# Read only (docs/adr/0001): built into this workspace's target/, nothing is written there.
+delirium = { path = "../../../delirium-physics (CLAUDE DONT CHANGE ANYTHING HERE)/crates/delirium" }
+delirium-data = { path = "../../../delirium-physics (CLAUDE DONT CHANGE ANYTHING HERE)/crates/delirium-data" }
+delirium-sdk = { path = "../../../delirium-physics (CLAUDE DONT CHANGE ANYTHING HERE)/crates/delirium-sdk" }

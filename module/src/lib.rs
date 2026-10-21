@@ -3,6 +3,7 @@
 //! `require("dms")` registers the global table `DMS`.
 
 mod bench;
+mod bind;
 mod data;
 mod dev;
 mod ffi;
@@ -39,7 +40,12 @@ unsafe fn nm_version_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> 
 /// Looks for `IPhysicsNM` and says in the console what came of it (docs/adr/0005).
 fn acquire_message() -> String {
     match vphysics_nm::acquire() {
-        Ok(Version::V002) => format!("[DMS] IPhysicsNM {} found", Version::V002.name()),
+        Ok(Version::V003) => format!("[DMS] IPhysicsNM {} found", Version::V003.name()),
+        Ok(Version::V002) => format!(
+            "[DMS] WARNING: only IPhysicsNM {} found, Homer's full inertia and NM's ball joints (SetBodyInertia, \
+             SetJointBallLimits) are unavailable: update VPhysics-Box3D",
+            Version::V002.name()
+        ),
         Ok(Version::V001) => format!(
             "[DMS] WARNING: only IPhysicsNM {} found, joint limits (SetJointLimits) are unavailable: \
              update VPhysics-Box3D",
@@ -63,7 +69,7 @@ pub unsafe extern "C" fn gmod13_open(l: *mut LuaState) -> c_int {
     let Ok(api) = lua::api() else { return 0 };
     let nm_message = acquire_message();
     unsafe {
-        let natives = natives::NATIVES.iter().chain(nm_natives::NATIVES).chain(dev::NATIVES);
+        let natives = natives::NATIVES.iter().chain(nm_natives::NATIVES).chain(bind::NATIVES).chain(dev::NATIVES);
         (api.createtable)(l, 0, 2 + natives.clone().count() as c_int);
         let version = CString::new(MODULE_VERSION).unwrap_or_default();
         (api.pushstring)(l, version.as_ptr());

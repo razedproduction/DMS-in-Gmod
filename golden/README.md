@@ -21,6 +21,7 @@ cargo run --release -p golden -- --game "E:\Downloads\TorrentDownloads\Grand The
 | `lead` | агент SDK в LEAD, собранный как в `dms_selftest` (build из дампа, пол CONCRETE, seed 0.3, `bodyBalance`), против первой секунды Playroom — бит в бит | `lead.dms.frames` |
 | `run [имена]` | сценарии `golden/scenarios/*.txt` (все или названные) | `<имя>.rec`, `<имя>.log`, `<имя>.frames` |
 | `all` | всё по порядку | |
+| `body [--no-game]` | тело Homer, как его портирует `dms-homer` (M3, [docs/homer.md](../docs/homer.md)): build против `NM_DUMP` и C API SDK (1e-5), `homer.phy` против build'а, в игре на стенде — кадры, массы, инерция, падение без NM | — |
 
 Playroom запускается с рабочим каталогом `golden/out/` (его служебные файлы ложатся туда, в SDK ничего не пишется) и
 с `ROOM_LOG=1` (журнал в `<имя>.log`). Сборка Playroom идёт без `.cargo/config.toml` SDK (там `target-cpu=x86-64-v3`
