@@ -1,16 +1,17 @@
-﻿# The bench (ROADMAP M2.5, docs\bench.md): Garry's Mod without a window for tools\dms-ctl.
+﻿# The bench (ROADMAP M2.5, docs\bench.md): Garry's Mod driven by tools\dms-ctl.
 #
-#   .\scripts\server.ps1 start [-Map gm_flatgrass] [-GtaDir <GTA IV dir>] [-NoInstall]
+#   .\scripts\server.ps1 start [-Map gm_flatgrass] [-GtaDir <GTA IV dir>] [-NoInstall] [-Hidden]
 #   .\scripts\server.ps1 stop | restart | status
 #
-# By default it's the game itself (gmod_win64.exe -textmode, a listen server on 127.0.0.1): the only place
+# By default it's the game itself in a 1280x720 window, so the test can be watched (-Hidden: -textmode, the window
+# hidden), a listen server on 127.0.0.1: the only place
 # VPhysics-Box3D runs (the x86-64 dedicated server is built with newer vphysics interfaces than the fork, docs\bench.md).
 # -Dedicated [-Server <dir>] starts the dedicated server instead, with its own vphysics.dll (no IPhysicsNM: the module's
 # channel, the bench agent and the records work, the drives don't); update [-Server <dir>] [-SteamCmd <exe>] installs or
 # updates it (SteamCMD: app 4020, branch x86-64).
 #
 # start installs dist\ and addon\ (install.ps1), writes garrysmod\data\dms\bench.txt (dms_game_dir, dms_dev 1 and a new
-# token; the addon reads and deletes it) and starts the game hidden, RCON on 127.0.0.1 with a new password, the console
+# token; the addon reads and deletes it) and starts the game, RCON on 127.0.0.1 with a new password, the console
 # logged to garrysmod\console.log. What dms-ctl needs goes to .bench\server.txt (not in git).
 # The game can't run twice: don't start the bench while playing, stop it before playing.
 
@@ -25,7 +26,8 @@ param(
 	[int]$DevPort = 27099,
 	[string]$SteamCmd,
 	[int]$Wait = 180,
-	[switch]$NoInstall
+	[switch]$NoInstall,
+	[switch]$Hidden
 )
 
 $ErrorActionPreference = 'Stop'
@@ -180,10 +182,13 @@ function Start-Bench {
 		$launch = @('-console', '-game', 'garrysmod') + $common + @('+maxplayers', '1', '+sv_hibernate_think', '1', '+map', $Map)
 	} else {
 		# A listen server (2 slots: maxplayers 1 would be single player, no RCON); -usercon opens RCON there.
-		$launch = @('-textmode', '-nosound', '-novid', '-windowed', '-w', '640', '-h', '480', '-usercon') +
+		# Shown: a normal window, so the test can be watched; -Hidden: -textmode, the window hidden below.
+		$view = if ($Hidden) { @('-textmode', '-w', '640', '-h', '480') } else { @('-w', '1280', '-h', '720') }
+		$launch = $view + @('-nosound', '-novid', '-windowed', '-usercon') +
 			$common + @('+maxplayers', '2', '+sv_hibernate_think', '1', '+map', $Map)
 	}
-	$p = Start-Process -FilePath $exe -ArgumentList $launch -WorkingDirectory $dir -WindowStyle Hidden -PassThru
+	$style = if ($Dedicated -or $Hidden) { 'Hidden' } else { 'Normal' }
+	$p = Start-Process -FilePath $exe -ArgumentList $launch -WorkingDirectory $dir -WindowStyle $style -PassThru
 	[System.IO.File]::WriteAllLines($stateFile, [string[]]@(
 		"kind=$(if ($Dedicated) { 'dedicated' } else { 'game' })"
 		"dir=$dir"
@@ -197,10 +202,10 @@ function Start-Bench {
 	))
 	Write-Host "bench: starting $(Split-Path -Leaf $exe), pid $($p.Id), $Map, 127.0.0.1:$Port; waiting for the dms-ctl channel..."
 	$deadline = (Get-Date).AddSeconds($Wait)
-	$hidden = $Dedicated
+	# Only -Hidden hides the game's window (it opens one even with -textmode and a hidden start).
+	$hidden = $Dedicated -or -not $Hidden
 	while ((Get-Date) -lt $deadline) {
 		if ($p.HasExited) { throw "the bench exited ($($p.ExitCode)): see $log" }
-		# The game opens its window even with -textmode and a hidden start: hide it once it's there.
 		if (-not $hidden) {
 			$p.Refresh()
 			if ($p.MainWindowHandle -ne [IntPtr]::Zero) { $hidden = Hide-Window $p.MainWindowHandle }
