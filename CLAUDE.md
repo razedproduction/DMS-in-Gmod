@@ -70,6 +70,8 @@ VPhysics-Box3D. Тело — `prop_ragdoll` Homer; Delirium каждый физ�
   (включает лишь `server.ps1` через одноразовый `data/dms/bench.txt`).
 - Выделенный сервер (`server.ps1 start -Dedicated`, `E:\Games\GModServer`) с форком **не работает**: серверная
   сборка GMod x64 собрана с новыми интерфейсами vphysics (ADR 0012); там только свой `vphysics.dll`, без `IPhysicsNM`.
+  **Решение пользователя: от выделенного сервера отказались, все тесты — в игре** (стенд `server.ps1 start` без
+  `-Dedicated`). Порт форка на серверный ABI не делать без отдельной просьбы.
 - Вне игры модуль можно проверить и загрузкой настоящего `garrysmod\bin\win64\lua_shared.dll` (`luaL_newstate` →
   `gmod13_open` через P/Invoke из PowerShell, `SetDllDirectory` на `bin\win64`); так же — `vphysics.dll` и
   `CreateInterface`. Такие скрипты держать в scratchpad, не в репозитории.
