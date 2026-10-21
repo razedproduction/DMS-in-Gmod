@@ -4,6 +4,8 @@
 //! reads the same inputs from the game (build, derived links) and records the scenarios of `golden/scenarios/`
 //! into `golden/out/` (made from the user's game files: never committed, docs/adr/0006). See `golden/README.md`.
 
+mod body;
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -18,6 +20,10 @@ usage: golden [--game <GTA IV dir>] [--sdk <SDK dir>] <command>
   lead         the SDK's LEAD agent (as dms_selftest makes it) against the Playroom's first second, bit for bit
   run [names]  the scenarios of golden/scenarios/ (all, or the named ones) -> golden/out/<name>.*
   all          build, dump, links, lead, run: every reference in one go
+  body [--gmod <GarrysMod dir>] [--no-game]
+               Homer's body as dms-homer ports it (ROADMAP M3): the build against the Playroom's NM_DUMP and the
+               SDK (1e-5), the compiled homer.phy against the build, and on the bench (unless --no-game) Homer
+               spawned and bound against NM's body (frames 1 mm / 0.5 deg, masses, inertia 1 %), then dropped
   behaviour --source [names]
                the scenarios on the bench server (dms-ctl run) -> golden/out/source/<name>.rec, against the
                Playroom's golden/out/<name>.rec: COM, speed, lowest parts, command steps
@@ -91,6 +97,7 @@ fn main() {
         "lead" => lead(&ctx),
         "run" => run(&ctx, &args),
         "behaviour" => behaviour(&ctx, &args),
+        "body" => body_check(&ctx, &args),
         "all" => build(&ctx).and_then(|_| dump(&ctx)).and_then(|_| links(&ctx)).and_then(|_| lead(&ctx)).and_then(|_| run(&ctx, &[])),
         _ => Err(USAGE.into()),
     };
@@ -440,4 +447,37 @@ fn run_one(ctx: &Ctx, path: &Path, name: &str) -> Result<String, String> {
         Mode::Window { .. } => "window: command times in .rec's # lines",
     };
     Ok(format!("{} steps to t = {t_end} s ({kind}) -> {}", frames.len(), rec.display()))
+}
+
+/// `golden body`: the three steps of `body.rs`; the game's only if the bench is up (or `--no-game`).
+fn body_check(ctx: &Ctx, args: &[String]) -> Result<(), String> {
+    let gmod = args.iter().position(|a| a == "--gmod").and_then(|i| args.get(i + 1)).map(PathBuf::from)
+        .or_else(|| std::env::var_os("DMS_GMOD_DIR").map(PathBuf::from)).or_else(dms_homer::steam_gmod)
+        .ok_or("Garry's Mod not found: pass --gmod <GarrysMod folder>")?;
+    let theirs = ctx.out.join("homer.nmdump");
+    if !theirs.is_file() {
+        dump(ctx)?;
+    }
+    let ours_dump = ours(ctx)?;
+    let (b, frames) = dms_game::Game::open(ctx.game()?)?.homer()?;
+    let body = dms_game::body::Body::new(&b, &frames);
+    let mut failed = vec![];
+    if !body::build(&body, ours_dump, &read_text(&theirs)?)? {
+        failed.push("build");
+    }
+    let phy = gmod.join("garrysmod").join("models").join(dms_homer::MODEL.replace('/', "\\")).with_extension("phy");
+    if !body::phy(&body, &phy)? {
+        failed.push(".phy");
+    }
+    if args.iter().any(|a| a == "--no-game") {
+        println!("golden: body 3/3: skipped (--no-game)");
+    } else if !body::game(&body)? {
+        failed.push("game");
+    }
+    if failed.is_empty() {
+        println!("golden: body OK");
+        Ok(())
+    } else {
+        Err(format!("body: off in {}", failed.join(", ")))
+    }
 }

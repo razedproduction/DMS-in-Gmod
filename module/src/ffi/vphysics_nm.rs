@@ -217,7 +217,6 @@ impl Nm {
 
     /// # Safety
     /// `constraint` is null or a live `IPhysicsConstraint` of this vphysics.
-    #[allow(dead_code)] // Bound in M3.
     pub unsafe fn set_joint_anchor(&self, constraint: *mut IPhysicsConstraint, world_point: Option<&[f32; 3]>) -> bool {
         let point = world_point.map_or(ptr::null(), |p| p.as_ptr());
         unsafe { (self.vtbl().set_joint_anchor)(self.this, constraint, point) }
@@ -227,7 +226,6 @@ impl Nm {
     ///
     /// # Safety
     /// `constraint` and `parent` are null or live objects of this vphysics.
-    #[allow(dead_code)] // Bound in M3.
     pub unsafe fn set_joint_limits(
         &self,
         constraint: *mut IPhysicsConstraint,

@@ -3,6 +3,7 @@
 //! `require("dms")` registers the global table `DMS`.
 
 mod bench;
+mod bind;
 mod data;
 mod dev;
 mod ffi;
@@ -63,7 +64,7 @@ pub unsafe extern "C" fn gmod13_open(l: *mut LuaState) -> c_int {
     let Ok(api) = lua::api() else { return 0 };
     let nm_message = acquire_message();
     unsafe {
-        let natives = natives::NATIVES.iter().chain(nm_natives::NATIVES).chain(dev::NATIVES);
+        let natives = natives::NATIVES.iter().chain(nm_natives::NATIVES).chain(bind::NATIVES).chain(dev::NATIVES);
         (api.createtable)(l, 0, 2 + natives.clone().count() as c_int);
         let version = CString::new(MODULE_VERSION).unwrap_or_default();
         (api.pushstring)(l, version.as_ptr());
