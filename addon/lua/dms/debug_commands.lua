@@ -5,13 +5,7 @@ local METRES_PER_UNIT = 0.0254
 -- Hovering props: entity -> its PhysObj, so DMS.Hover can be stopped before the entity goes.
 local hovering = {}
 
-local function say(ply, text)
-	if IsValid(ply) then
-		ply:PrintMessage(HUD_PRINTCONSOLE, text)
-	else
-		print(text)
-	end
-end
+local say = DMS_Say
 
 local function allowed(ply)
 	if IsValid(ply) and not ply:IsSuperAdmin() then return false end

@@ -4,13 +4,7 @@
 local gameDir = CreateConVar("dms_game_dir", "", FCVAR_ARCHIVE + FCVAR_PROTECTED,
 	"Your GTA IV folder (PC: with GTAIV.exe; Xbox 360: with default.xex): NM's data is read from there")
 
-local function say(ply, text)
-	if IsValid(ply) then
-		ply:PrintMessage(HUD_PRINTCONSOLE, text)
-	else
-		print(text)
-	end
-end
+local say = DMS_Say
 
 local function allowed(ply)
 	return not IsValid(ply) or ply:IsSuperAdmin()

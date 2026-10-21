@@ -18,6 +18,25 @@ hook.Add("ShutDown", "DMS_Shutdown", function()
 	DMS.Shutdown()
 end)
 
+-- Text to a player's console (the server's for nil): in pieces, as a user message carries 255 bytes at most.
+function DMS_Say(ply, text)
+	if not IsValid(ply) then
+		print(text)
+		return
+	end
+	for line in (text .. "\n"):gmatch("(.-)\n") do
+		repeat
+			local piece = line:sub(1, 200)
+			-- Not in the middle of a UTF-8 character.
+			while #piece < #line and #piece > 1 and line:byte(#piece + 1) >= 0x80 and line:byte(#piece + 1) < 0xC0 do
+				piece = piece:sub(1, -2)
+			end
+			ply:PrintMessage(HUD_PRINTCONSOLE, piece)
+			line = line:sub(#piece + 1)
+		until line == ""
+	end
+end
+
 include("dms/debug_commands.lua")
 include("dms/nm_commands.lua")
 include("dms/homer.lua")
