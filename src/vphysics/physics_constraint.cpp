@@ -1025,6 +1025,9 @@ void CPhysicsConstraint::RunRows( Function function )
 
 void CPhysicsConstraint::SetupRows( const ConstraintStep_t &step )
 {
+	if ( m_bNMBall )
+		return;
+
 	if ( m_nType == CONSTRAINT_PULLEY )
 		RunRows( [&]( ConstraintBody_t bodies[2] ) { m_Pulley.Setup( bodies, step ); } );
 	else
@@ -1047,6 +1050,9 @@ void CPhysicsConstraint::SetupRows( const ConstraintStep_t &step )
 
 void CPhysicsConstraint::SolveRows( float flAlpha, float flBeta, const ConstraintStep_t &step )
 {
+	if ( m_bNMBall )
+		return;
+
 	if ( m_nType == CONSTRAINT_PULLEY )
 		RunRows( [&]( ConstraintBody_t bodies[2] ) { m_Pulley.Solve( bodies, flAlpha, flBeta, step ); } );
 	else if ( m_Ragdoll.NeedsSolve() )
@@ -1109,9 +1115,191 @@ void CPhysicsConstraint::CreateJoint()
 		break;
 	}
 
+	if ( m_flArmature > 0.0f )
+		b3Joint_SetArmature( m_Joint, m_flArmature );
+
 	m_flBreakMass = -1.0f;
 	UpdateBreakThresholds( m_pEnvironment->GetSimulationTimestep() );
 	NotifyWokenObjects();
+}
+
+void CPhysicsConstraint::SetArmature( float flArmature )
+{
+	m_flArmature = flArmature;
+	if ( HasJoint() )
+		b3Joint_SetArmature( m_Joint, flArmature );
+}
+
+b3Vec3 CPhysicsConstraint::GetLocalAnchor( int nBody ) const
+{
+	switch ( m_nType )
+	{
+	case CONSTRAINT_RAGDOLL:
+		return IVPToSource( m_RagdollFrames.m_Origins[nBody] );
+	case CONSTRAINT_BALLSOCKET:
+		return m_Anchors[nBody];
+	default:
+		return nBody == 0 ? m_Definition.m_Revolute.base.localFrameA.p : m_Definition.m_Revolute.base.localFrameB.p;
+	}
+}
+
+void CPhysicsConstraint::SetLocalAnchor( int nBody, b3Vec3 anchor )
+{
+	b3JointDef &base = GetBaseDefinition( m_Definition, m_nJointType );
+	b3Transform &frame = nBody == 0 ? base.localFrameA : base.localFrameB;
+	switch ( m_nType )
+	{
+	case CONSTRAINT_RAGDOLL:
+		m_RagdollFrames.m_Origins[nBody] = SourceToIVP( anchor );
+		if ( m_bNMBall )
+			frame.p = anchor;
+		else if ( m_nJointType == b3_sphericalJoint )
+			frame = GetRagdollFrame( nBody );
+		break;
+	case CONSTRAINT_BALLSOCKET:
+		m_Anchors[nBody] = anchor;
+		frame.p = anchor;
+		break;
+	default:
+		frame.p = anchor;
+		break;
+	}
+}
+
+bool CPhysicsConstraint::SetAnchor( const b3Vec3 *pWorldPoint )
+{
+	if ( !m_pReference || m_pReference == m_pAttached )
+		return false;
+
+	// ragdolls (also the ones built as hinges and the angular only ones) and ball sockets have a single pivot
+	if ( m_nType != CONSTRAINT_RAGDOLL && m_nType != CONSTRAINT_BALLSOCKET && m_nType != CONSTRAINT_HINGE )
+		return false;
+
+	if ( !m_bAnchorMoved )
+	{
+		for ( int i = 0; i < 2; ++i )
+			m_OriginalAnchors[i] = GetLocalAnchor( i );
+	}
+
+	const CPhysicsObject *const objects[2] = { m_pReference, m_pAttached };
+	for ( int i = 0; i < 2; ++i )
+		SetLocalAnchor( i, pWorldPoint ? b3InvTransformWorldPoint( b3Body_GetTransform( objects[i]->GetBody() ), b3ToPos( *pWorldPoint ) ) : m_OriginalAnchors[i] );
+	m_bAnchorMoved = pWorldPoint != nullptr;
+
+	if ( HasJoint() )
+	{
+		const b3JointDef &base = GetBaseDefinition( m_Definition, m_nJointType );
+		b3Joint_SetLocalFrameA( m_Joint, base.localFrameA );
+		b3Joint_SetLocalFrameB( m_Joint, base.localFrameB );
+	}
+	return true;
+}
+
+bool CPhysicsConstraint::SetJointLimits( const CPhysicsObject *pParent, const b3Quat worldFrames[2], bool bHinge, const float limits[3] )
+{
+	if ( !m_pReference || m_pReference == m_pAttached || ( pParent != m_pReference && pParent != m_pAttached ) )
+		return false;
+
+	// a hinge only on a constraint VPhysics built as one (a ragdoll joint with one free axis), a ball on a ragdoll one
+	if ( m_nType != ( bHinge ? CONSTRAINT_HINGE : CONSTRAINT_RAGDOLL ) )
+		return false;
+
+	// each object's frame in it as it's posed now, at the pivots they have
+	const bool bSwapped = pParent == m_pAttached;
+	const CPhysicsObject *const objects[2] = { m_pReference, m_pAttached };
+	b3Quat frames[2];
+	b3Vec3 anchors[2];
+	for ( int i = 0; i < 2; ++i )
+	{
+		const b3Quat world = worldFrames[( i == 0 ) == bSwapped ? 1 : 0];
+		frames[i] = b3NormalizeQuat( b3InvMulQuat( b3Body_GetTransform( objects[i]->GetBody() ).q, world ) );
+		anchors[i] = GetLocalAnchor( i );
+	}
+
+	if ( bHinge )
+	{
+		// the joint's angle is the attached object's turn from the reference's: the parent's other way round if it's
+		// the attached one
+		const float flLower = bSwapped ? -limits[1] : limits[0];
+		const float flUpper = bSwapped ? -limits[0] : limits[1];
+		b3RevoluteJointDef &def = m_Definition.m_Revolute;
+		def.base.localFrameA = { anchors[0], frames[0] };
+		def.base.localFrameB = { anchors[1], frames[1] };
+		def.enableLimit = !IsFullCircle( flLower, flUpper );
+		def.lowerAngle = std::min( flLower, flUpper );
+		def.upperAngle = std::max( flLower, flUpper );
+	}
+	else
+	{
+		// as the game would make the ragdoll joint, with the frame as the constraint's space in both objects
+		// (not Defaults(): mathlib's SetIdentityMatrix isn't linked in, and both matrices are set here anyway)
+		constraint_ragdollparams_t ragdoll;
+		ragdoll.constraint.Defaults();
+		ragdoll.parentIndex = -1;
+		ragdoll.childIndex = -1;
+		ragdoll.isActive = true;
+		ragdoll.useClockwiseRotations = false;
+		matrix3x4_t *const matrices[2] = { &ragdoll.constraintToReference, &ragdoll.constraintToAttached };
+		for ( int i = 0; i < 2; ++i )
+		{
+			SetMatrixColumn( *matrices[i], 0, b3RotateVector( frames[i], b3Vec3_axisX ) );
+			SetMatrixColumn( *matrices[i], 1, b3RotateVector( frames[i], b3Vec3_axisY ) );
+			SetMatrixColumn( *matrices[i], 2, b3RotateVector( frames[i], b3Vec3_axisZ ) );
+			SetMatrixColumn( *matrices[i], 3, anchors[i] );
+		}
+		for ( int i = 0; i < 3; ++i )
+		{
+			const float flLimit = std::fabs( limits[i] ) * RADIANS_TO_DEGREES;
+			ragdoll.axes[i].SetAxisFriction( -flLimit, flLimit, 0.0f );
+		}
+		ragdoll.onlyAngularLimits = m_bOnlyAngularLimits;
+		m_bNMBall = false;
+		BuildRagdoll( ragdoll );
+	}
+
+	if ( HasJoint() )
+	{
+		DestroyJoint( false );
+		CreateJoint();
+	}
+	return true;
+}
+
+bool CPhysicsConstraint::SetJointBall( const CPhysicsObject *pParent, const b3Quat worldFrames[2], const float limits[3] )
+{
+	// a ragdoll joint as the game makes it: the child the reference, the parent the attached object, whose frame the
+	// swing's ellipse is taken in (Box3D's frame B)
+	if ( !m_pReference || m_pReference == m_pAttached || pParent != m_pAttached || m_nType != CONSTRAINT_RAGDOLL || m_bOnlyAngularLimits )
+		return false;
+
+	b3SphericalJointDef &def = m_Definition.m_Spherical;
+	def = b3DefaultSphericalJointDef();
+	const CPhysicsObject *const objects[2] = { m_pReference, m_pAttached };
+	b3Transform *const frames[2] = { &def.base.localFrameA, &def.base.localFrameB };
+	for ( int i = 0; i < 2; ++i )
+	{
+		const b3Quat world = worldFrames[i == 0 ? 1 : 0];
+		*frames[i] = { GetLocalAnchor( i ), b3NormalizeQuat( b3InvMulQuat( b3Body_GetTransform( objects[i]->GetBody() ).q, world ) ) };
+	}
+
+	// NM's lean limits: limits[0] the swing about the parent frame's Y, limits[1] about its X (ragdoll.rs lean_limit)
+	def.enableConeLimit = true;
+	def.coneAngle = std::clamp( std::fabs( limits[1] ), 1e-4f, 0.5f * PI );
+	def.coneAngleY = std::clamp( std::fabs( limits[0] ), 1e-4f, 0.5f * PI );
+	def.enableTwistLimit = true;
+	def.lowerTwistAngle = -std::min( std::fabs( limits[2] ), 0.99f * PI );
+	def.upperTwistAngle = std::min( std::fabs( limits[2] ), 0.99f * PI );
+	m_nJointType = b3_sphericalJoint;
+	m_bNMBall = true;
+	m_Ragdoll.SetPlaneOnly( true );
+	m_Ragdoll.GetLimit( CRagdollSolver::SLOT_PLANE ).m_bLimited = false;
+
+	if ( HasJoint() )
+	{
+		DestroyJoint( false );
+		CreateJoint();
+	}
+	return true;
 }
 
 void CPhysicsConstraint::DestroyJoint( bool bWakeAttached )

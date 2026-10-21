@@ -16,6 +16,7 @@ add_library( vphysics SHARED
 	vphysics/physics_fluid_controller.cpp
 	vphysics/physics_friction_snapshot.cpp
 	vphysics/physics_motion_controller.cpp
+	vphysics/physics_nm.cpp
 	vphysics/physics_object.cpp
 	vphysics/physics_object_pair_hash.cpp
 	vphysics/physics_player_controller.cpp
@@ -93,7 +94,7 @@ set_target_properties( tier0 PROPERTIES
 	RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/tier0"
 )
 
-target_include_directories( vphysics PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} )
+target_include_directories( vphysics PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} "${PROJECT_SOURCE_DIR}/include" )
 find_package( Threads REQUIRED )
 target_link_libraries( vphysics PRIVATE source_sdk tier0 tier1 box3d::box3d qhull Threads::Threads )
 

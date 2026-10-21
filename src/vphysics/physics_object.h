@@ -283,6 +283,12 @@ public:
 	void AttachSpring( CPhysicsSpring *pSpring );
 	void DetachSpring( CPhysicsSpring *pSpring );
 
+	const std::vector<CPhysicsConstraint *> &GetConstraints() const { return m_Constraints; }
+
+	void GetBodyState( b3Vec3 &center, b3Quat &rotation, b3Vec3 &velocity, b3Vec3 &angularVelocity ) const;
+	void ApplyDrive( b3Vec3 force, b3Vec3 torque );
+	void SetInertiaTensor( const b3Matrix3 &tensor );
+
 	std::vector<uint64_t> &GetContactKeys() { return m_ContactKeys; }
 
 	const std::vector<uint64_t> &GetContactKeys() const { return m_ContactKeys; }
@@ -443,6 +449,9 @@ private:
 	float m_flMass = 0.0f;
 	float m_flInvMass = 0.0f;
 	Vector m_Inertia = Vector( 0.0f, 0.0f, 0.0f );
+	// A full inertia tensor about the centre of mass in the body's frame (kg m^2), for the solver; m_Inertia then
+	// holds its diagonal for VPhysics' own diagonal approximations (IPhysicsNM::SetBodyInertia)
+	b3Matrix3 m_InertiaTensor = b3Mat3_zero;
 	Vector m_InvInertia = Vector( 0.0f, 0.0f, 0.0f );
 	Vector m_MassCenter = Vector( 0.0f, 0.0f, 0.0f );
 	float m_flSpeedDamping = 0.0f;
@@ -479,6 +488,7 @@ private:
 	SleepState_t m_nSleepState = ASLEEP;
 
 	bool m_bStatic = false;
+	bool m_bInertiaTensor = false;
 	bool m_bMotionEnabled = true;
 	bool m_bCollisionEnabled = false;
 	bool m_bTrigger = false;

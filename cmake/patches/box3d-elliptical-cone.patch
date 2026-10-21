@@ -1,0 +1,101 @@
+diff --git a/include/box3d/box3d.h b/include/box3d/box3d.h
+index 9f26e88..15a17d6 100644
+--- a/include/box3d/box3d.h
++++ b/include/box3d/box3d.h
+@@ -1567,6 +1567,9 @@ B3_API float b3SphericalJoint_GetConeLimit( b3JointId jointId );
+ /// Set the spherical joint limits in radians
+ B3_API void b3SphericalJoint_SetConeLimit( b3JointId jointId, float angleRadians );
+ 
++/// Set an elliptical cone limit in radians: the swing's half angles about the frameB x-axis and y-axis (see
++/// b3SphericalJointDef::coneAngleY). A zero angleY makes the cone circular again. void b3SphericalJoint_SetEllipticalConeLimit( b3JointId jointId, float angleX, float angleY );
++
+ /// Get the spherical joint current cone angle in radians.
+ B3_API float b3SphericalJoint_GetConeAngle( b3JointId jointId );
+ 
+diff --git a/include/box3d/types.h b/include/box3d/types.h
+index 2cbbbeb..ea029da 100644
+--- a/include/box3d/types.h
++++ b/include/box3d/types.h
+@@ -918,6 +918,11 @@ typedef struct b3SphericalJointDef
+ 	/// The angle for the cone limit in radians. Valid range is [0, pi]
+ 	float coneAngle;
+ 
++	/// For an elliptical cone: the half angle of the swing about the frameB y-axis, coneAngle then being the half
++	/// angle about the frameB x-axis. The limit along a swing axis s is 1 / sqrt((s.x / coneAngle)^2 + (s.y / coneAngleY)^2)
++	/// with s in frameB. Zero (the default) keeps the cone circular.
++	float coneAngleY;
++
+ 	/// A flag to enable the twist limit. The twist is centered on the frameB z-axis.
+ 	bool enableTwistLimit;
+ 
+diff --git a/src/joint.c b/src/joint.c
+index 1b65120..80d67e6 100644
+--- a/src/joint.c
++++ b/src/joint.c
+@@ -666,6 +666,7 @@ b3JointId b3CreateSphericalJoint( b3WorldId worldId, const b3SphericalJointDef*
+ 	joint->sphericalJoint.dampingRatio = def->dampingRatio;
+ 	joint->sphericalJoint.targetRotation = def->targetRotation;
+ 	joint->sphericalJoint.coneAngle = b3ClampFloat( def->coneAngle, 0.0f, 0.5f * B3_PI );
++	joint->sphericalJoint.coneAngleY = b3ClampFloat( def->coneAngleY, 0.0f, 0.5f * B3_PI );
+ 
+ 	float lowerAngle = b3MinFloat( def->lowerTwistAngle, def->upperTwistAngle );
+ 	float upperAngle = b3MaxFloat( def->lowerTwistAngle, def->upperTwistAngle );
+diff --git a/src/joint.h b/src/joint.h
+index 655a4a3..588567b 100644
+--- a/src/joint.h
++++ b/src/joint.h
+@@ -219,6 +219,8 @@ typedef struct b3SphericalJoint
+ 	float lowerTwistAngle;
+ 	float upperTwistAngle;
+ 	float coneAngle;
++	float coneAngleY;
++	float coneLimit;
+ 	b3Quat targetRotation;
+ 
+ 	int indexA;
+diff --git a/src/spherical_joint.c b/src/spherical_joint.c
+index cc9692c..349d5b6 100644
+--- a/src/spherical_joint.c
++++ b/src/spherical_joint.c
+@@ -46,6 +46,15 @@ void b3SphericalJoint_SetConeLimit( b3JointId jointId, float angleRadians )
+ 	base->sphericalJoint.coneAngle = angleRadians;
+ }
+ 
++void b3SphericalJoint_SetEllipticalConeLimit( b3JointId jointId, float angleX, float angleY )
++{
++	B3_ASSERT( b3IsValidFloat( angleX ) && 0 <= angleX && angleX <= 0.5f * B3_PI );
++	B3_ASSERT( b3IsValidFloat( angleY ) && 0 <= angleY && angleY <= 0.5f * B3_PI );
++	b3JointSim* base = b3GetJointSimCheckType( jointId, b3_sphericalJoint );
++	base->sphericalJoint.coneAngle = angleX;
++	base->sphericalJoint.coneAngleY = angleY;
++}
++
+ float b3SphericalJoint_GetConeAngle( b3JointId jointId )
+ {
+ 	b3World* world = b3GetWorld( jointId.world0 );
+@@ -343,6 +352,16 @@ void b3PrepareSphericalJoint( b3JointSim* base, b3StepContext* context )
+ 		float k = b3Dot( swingAxis, b3MulMV( invInertiaSum, swingAxis ) );
+ 		joint->swingMass = k > 0.0f ? 1.0f / k : 0.0f;
+ 		joint->swingAxis = swingAxis;
++
++		// An elliptical cone's limit along this swing axis, the axis taken in frame B
++		joint->coneLimit = joint->coneAngle;
++		if ( joint->coneAngleY > 0.0f )
++		{
++			float sx = b3Dot( swingAxis, b3RotateVector( joint->frameB.q, b3Vec3_axisX ) ) / b3MaxFloat( joint->coneAngle, FLT_EPSILON );
++			float sy = b3Dot( swingAxis, b3RotateVector( joint->frameB.q, b3Vec3_axisY ) ) / joint->coneAngleY;
++			float e = sx * sx + sy * sy;
++			joint->coneLimit = e > 0.0f ? 1.0f / sqrtf( e ) : b3MinFloat( joint->coneAngle, joint->coneAngleY );
++		}
+ 	}
+ 
+ 	if ( joint->enableTwistLimit )
+@@ -579,7 +598,7 @@ void b3SolveSphericalJoint( b3JointSim* base, b3StepContext* context, bool useBi
+ 
+ 			b3Vec3 swingAxis = joint->swingAxis;
+ 
+-			float c = joint->coneAngle - swingAngle;
++			float c = joint->coneLimit - swingAngle;
+ 			float bias = 0.0f;
+ 			float massScale = 1.0f;
+ 			float impulseScale = 0.0f;

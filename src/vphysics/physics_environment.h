@@ -3,6 +3,7 @@
 #include "vphysics_interface.h"
 #include "vphysics/performance.h"
 #include "vphysics/stats.h"
+#include "vphysics_nm.h"
 #include "tier0/valve_minmax_off.h"
 
 #include "compact_builder/math_util.h"
@@ -266,8 +267,15 @@ public:
 	bool HasFrictionContact( const CPhysicsObject *pObject ) const;
 	bool GetStrongestContact( const CPhysicsObject *pObject, Vector &point, int &nSurface ) const;
 
-private:
+	void SetNMStepCallback( PhysicsNMStepFn_t pCallback, void *pContext )
+	{
+		m_pNMStepCallback = pCallback;
+		m_pNMStepContext = pContext;
+	}
+
 	static constexpr int SUBSTEP_COUNT = 4;
+
+private:
 	static constexpr float CONTINUOUS_ROTATION_LIMIT = 0.5f * B3_PI;
 	static constexpr short SLEEP_COUNTDOWN = 10;
 
@@ -532,6 +540,8 @@ private:
 	IPhysicsCollisionEvent *m_pCollisionEvents = nullptr;
 	IPhysicsObjectEvent *m_pObjectEvents = nullptr;
 	IPhysicsConstraintEvent *m_pConstraintEvents = nullptr;
+	PhysicsNMStepFn_t m_pNMStepCallback = nullptr;
+	void *m_pNMStepContext = nullptr;
 
 	physics_performanceparams_t m_PerformanceSettings;
 	physics_stats_t m_Stats = {};
