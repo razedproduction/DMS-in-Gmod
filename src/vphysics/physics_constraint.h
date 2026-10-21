@@ -146,6 +146,14 @@ public:
 
 	void GroupDestroyed() { m_pGroup = nullptr; }
 
+	void SetArmature( float flArmature );
+
+	float GetArmature() const { return m_flArmature; }
+
+	bool SetAnchor( const b3Vec3 *pWorldPoint );
+	bool SetJointLimits( const CPhysicsObject *pParent, const b3Quat worldFrames[2], bool bHinge, const float limits[3] );
+	bool SetJointBall( const CPhysicsObject *pParent, const b3Quat worldFrames[2], const float limits[3] );
+
 	void Save( ISave *pSave ) const;
 
 private:
@@ -158,6 +166,8 @@ private:
 	void StoreRagdollRows( int nBody, const b3Vec3 columns[3] );
 	b3Transform GetRagdollFrame( int nBody ) const;
 	void UpdateRagdollSolverAxes();
+	b3Vec3 GetLocalAnchor( int nBody ) const;
+	void SetLocalAnchor( int nBody, b3Vec3 anchor );
 	void PrepareBodies( ConstraintBody_t bodies[2], float scales[2] ) const;
 	template<typename Function>
 	void RunRows( Function function );
@@ -206,6 +216,7 @@ private:
 	CRagdollSolver m_Ragdoll;
 	matrix3x4_t m_AttachedRefXform = {};
 	b3Vec3 m_Anchors[2] = {};
+	b3Vec3 m_OriginalAnchors[2] = {};
 	b3Vec3 m_SlideAxis = b3Vec3_zero;
 	float m_RagdollLimits[CRagdollSolver::SLOT_COUNT][2] = {};
 	float m_flForceLimit = 0.0f;
@@ -213,8 +224,13 @@ private:
 	float m_BodyMassScale[2] = { 1.0f, 1.0f };
 	float m_flBreakMass = -1.0f;
 	float m_flBreakTimestep = 0.0f;
+	float m_flArmature = 0.0f;
 	Type_t m_nType;
 	bool m_bBreakable = false;
 	bool m_bOnlyAngularLimits = false;
+	bool m_bAnchorMoved = false;
+	// A ball as NM has it (IPhysicsNM::SetJointBallLimits): the joint's own frames and limits, none of the
+	// ragdoll solver's adjustments
+	bool m_bNMBall = false;
 	bool m_bListenerRegistered[2] = {};
 };

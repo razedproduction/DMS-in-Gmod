@@ -88,6 +88,61 @@ Replace the game's own `vphysics` library with the one you built:
 
 Keep in mind that Steam puts the original back whenever it verifies or updates the game files, so back it up and copy yours over again afterwards.
 
+## Active ragdoll extension (`VBOX3D_NM_002`)
+
+VBox3D answers one extra interface, `IPhysicsNM`, for active ragdoll controllers (NaturalMotion style FOLLOW mode: the game's ragdoll is the body, the controller reads its parts every physics step and returns a force and torque per part). The header is [`include/vphysics_nm.h`](include/vphysics_nm.h), it only needs forward declarations of the standard VPhysics interfaces, so copy it into your module. It gives you:
+
+* each body's state: centre of mass position, rotation, linear and angular velocity, in metres, radians and seconds, world axes as Source's (Z up);
+* per-body drives: a force and torque (N, Nm, world) applied continuously over all Box3D sub-steps of the next step, unlike `IPhysicsObject::ApplyForceCenter`, which adds one velocity change per step;
+* per-joint armature (kg m², as MuJoCo's joint armature): inertia added to the relative rotation of a constraint's two objects, solved inside every Box3D sub-step together with the joint and its limits, so it resists drives, gravity, contacts and other joints alike. NM's `nm_agent_get_joint` returns it per joint each step, and stiff drives need it to stay stable;
+* joint pivots: `SetJointAnchor` moves a ragdoll joint's pivot to a world point (taken in both objects' current poses, limit frames keep their orientation), so it pivots where the controller's joint does; a null point puts the constraint's own pivot back;
+* joint limits: `SetJointLimits` gives a ragdoll joint the controller joint's frame (a world rotation, taken in both objects' current poses, which become the joint's zero) and limits (a hinge's range about the frame's Z, or a ball's turn either way about its X, Y and Z), so it turns where the controller's joint can and no further. `VBOX3D_NM_001` still answers, the same interface without it;
+* a per-environment callback run inside `IPhysicsEnvironment::Simulate` once per physics step (1/66 s by default, 4 sub-steps), right before the step is solved.
+
+Nothing changes when nobody uses the interface.
+
+The armature lives in Box3D's joint solver, which upstream doesn't have. The build copies `external/box3d` into the build tree and applies [`cmake/patches/box3d-joint-armature.patch`](cmake/patches/box3d-joint-armature.patch) there (the submodule stays clean), adding `b3Joint_SetArmature` for every joint type.
+
+### Getting the interface from a binary module
+
+`vphysics` is already loaded by the time a Garry's Mod binary module (`gmsv_*`/`gmcl_*`) is, so ask its `CreateInterface` from `GMOD_MODULE_OPEN` (or later):
+
+```cpp
+#include "vphysics_nm.h"
+
+typedef void *( *CreateInterfaceFn )( const char *pName, int *pReturnCode );
+
+static IPhysicsNM *GetPhysicsNM()
+{
+#ifdef _WIN32
+	HMODULE hModule = GetModuleHandleA( "vphysics.dll" );
+	CreateInterfaceFn factory = hModule ? reinterpret_cast<CreateInterfaceFn>( GetProcAddress( hModule, "CreateInterface" ) ) : nullptr;
+#else
+	// vphysics_srv.so on a Linux dedicated server
+	void *pModule = dlopen( "vphysics.so", RTLD_LAZY | RTLD_NOLOAD );
+	CreateInterfaceFn factory = pModule ? reinterpret_cast<CreateInterfaceFn>( dlsym( pModule, "CreateInterface" ) ) : nullptr;
+#endif
+	return factory ? static_cast<IPhysicsNM *>( factory( VPHYSICS_NM_INTERFACE_VERSION, nullptr ) ) : nullptr;
+}
+```
+
+With the Source SDK's tier1 linked in, `Sys_GetFactory( "vphysics" )` does the same, and `IPhysics::QueryInterface( VPHYSICS_NM_INTERFACE_VERSION )` answers it too. A null pointer means the game runs another vphysics: fall back to something else.
+
+`IPhysicsObject *` comes from a Lua `PhysObj` (`LUA->GetUserType<IPhysicsObject>( index, GarrysMod::Lua::Type::PhysObj )`, or `Entity:GetPhysicsObjectNum( i )` for a ragdoll's parts). `FindConstraint( parent, child )` gives the ragdoll joint between two parts and `GetObjectEnvironment( part )` the environment to hook (a listen server runs a client and a server environment in the same process).
+
+### Per step
+
+1. Once per ragdoll: `SetStepCallback( environment, OnStep, context )` (one callback per environment, share it between ragdolls), and, with the ragdoll at rest in its bind pose, `SetJointAnchor` on every joint with the controller's pivot (`nm_agent_get_joint`'s `pivot`), mapped into that pose, then `SetJointLimits` with its frame and limits (`nm_agent_get_joint`'s `frame` and `limits`), mapped the same way.
+2. In `OnStep( environment, timestep, context )`, for each driven ragdoll:
+   1. `GetBodyState` for every part, convert each to the controller's part frame (a fixed offset per part, taken in the bind pose; the centre of mass is `GetMassCenterLocalSpace()` in the body frame);
+   2. step the controller by `timestep` (`nm_agent_set_part_states`, `nm_agent_step`);
+   3. `ApplyBodyDrive` for every part with the controller's force and torque (`nm_agent_get_part_drives`);
+   4. `SetJointArmature` on every joint with the controller's armature (`nm_agent_get_joint`).
+3. The step then runs on those drives. They are cleared after it, armature stays until changed.
+4. `SetStepCallback( environment, nullptr, nullptr )` before the context goes away (ragdoll removed, module unloaded), and set the armature back to 0 and the pivots back with `SetJointAnchor( joint, nullptr )` if the ragdoll goes back to being a plain one.
+
+Only read states and set drives and armature from the callback: other game side calls there are queued for the next step or unsafe.
+
 ## Media
 
 ### Jolt vs. Box3D

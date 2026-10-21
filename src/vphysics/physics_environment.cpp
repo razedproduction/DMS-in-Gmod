@@ -601,6 +601,9 @@ void CPhysicsEnvironment::Step( double flTime )
 	DetectPendingPenetrationHolds();
 	ApplyPenetrationResets();
 
+	if ( m_pNMStepCallback )
+		m_pNMStepCallback( this, m_flTimestep, m_pNMStepContext );
+
 	m_TaskPool.Reset();
 	b3World_Step( m_World, m_flTimestep, SUBSTEP_COUNT );
 	m_flLastStepTime = flTime;

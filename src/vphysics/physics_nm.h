@@ -1,0 +1,23 @@
+#pragma once
+
+#include "vphysics_nm.h"
+
+class CPhysicsNM final : public IPhysicsNM
+{
+public:
+	bool GetBodyState( const IPhysicsObject *pObject, PhysicsNMBodyState_t *pState ) override;
+	bool ApplyBodyDrive( IPhysicsObject *pObject, const float *pForce, const float *pTorque ) override;
+	bool SetJointArmature( IPhysicsConstraint *pConstraint, float flArmature ) override;
+	float GetJointArmature( const IPhysicsConstraint *pConstraint ) override;
+	IPhysicsConstraint *FindConstraint( IPhysicsObject *pObject0, IPhysicsObject *pObject1 ) override;
+	bool SetStepCallback( IPhysicsEnvironment *pEnvironment, PhysicsNMStepFn_t pCallback, void *pContext ) override;
+	IPhysicsEnvironment *GetObjectEnvironment( const IPhysicsObject *pObject ) override;
+	int GetSubstepCount() override;
+	bool SetJointAnchor( IPhysicsConstraint *pConstraint, const float *pWorldPoint ) override;
+	bool SetJointLimits( IPhysicsConstraint *pConstraint, IPhysicsObject *pParent, const float *pWorldFrames, bool bHinge, const float *pLimits ) override;
+	bool SetBodyInertia( IPhysicsObject *pObject, const float *pTensor ) override;
+	bool SetJointBallLimits( IPhysicsConstraint *pConstraint, IPhysicsObject *pParent, const float *pWorldFrames, const float *pLimits ) override;
+	bool GetBodyInertia( const IPhysicsObject *pObject, float *pTensor ) override;
+};
+
+extern CPhysicsNM g_PhysicsNM;

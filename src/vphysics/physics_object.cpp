@@ -1176,6 +1176,7 @@ void CPhysicsObject::ChangeMass( float mass )
 	const float flRatio = mass / m_flMass;
 	m_flMass = mass;
 	m_Inertia *= flRatio;
+	m_InertiaTensor = b3MulSM( flRatio, m_InertiaTensor );
 	UpdateInverseMass();
 	UpdateMassData();
 }
@@ -1183,6 +1184,16 @@ void CPhysicsObject::ChangeMass( float mass )
 void CPhysicsObject::SetInertia( const Vector &inertia )
 {
 	m_Inertia = Vector( std::fabs( inertia.x ), std::fabs( inertia.y ), std::fabs( inertia.z ) );
+	m_bInertiaTensor = false;
+	UpdateInverseMass();
+	UpdateMassData();
+}
+
+void CPhysicsObject::SetInertiaTensor( const b3Matrix3 &tensor )
+{
+	m_InertiaTensor = tensor;
+	m_bInertiaTensor = true;
+	m_Inertia = Vector( tensor.cx.x, tensor.cy.y, tensor.cz.z );
 	UpdateInverseMass();
 	UpdateMassData();
 }
@@ -1553,6 +1564,24 @@ void CPhysicsObject::ApplyTorqueCenter( const AngularImpulse &torque )
 	ClampVelocity( true );
 }
 
+void CPhysicsObject::GetBodyState( b3Vec3 &center, b3Quat &rotation, b3Vec3 &velocity, b3Vec3 &angularVelocity ) const
+{
+	center = b3ToVec3( b3Body_GetWorldCenter( m_Body ) );
+	rotation = b3Body_GetRotation( m_Body );
+	velocity = IVPToSource( GetCoreVelocity() );
+	angularVelocity = GetBodyAngularVelocity( GetCoreAngularVelocity() );
+}
+
+void CPhysicsObject::ApplyDrive( b3Vec3 force, b3Vec3 torque )
+{
+	if ( !IsMoveable() )
+		return;
+
+	Wake();
+	b3Body_ApplyForceToCenter( m_Body, force, true );
+	b3Body_ApplyTorque( m_Body, torque, true );
+}
+
 void CPhysicsObject::CalculateForceOffset( const Vector &forceVector, const Vector &worldPosition, Vector *centerForce, AngularImpulse *centerTorque ) const
 {
 	const b3Vec3 force = SourceToIVP( forceVector );
@@ -1874,7 +1903,9 @@ void CPhysicsObject::ApplyMassData()
 	massData.mass = 1.0f / m_flInvMass;
 	massData.center = ToBox3D( m_MassCenter );
 	massData.inertia = b3Mat3_zero;
-	if ( flInertiaX <= MAX_BODY_INERTIA || flInertiaY <= MAX_BODY_INERTIA || flInertiaZ <= MAX_BODY_INERTIA )
+	if ( m_bInertiaTensor && m_nHingedAxis < 0 )
+		massData.inertia = b3MulSM( INERTIA_SCALE, m_InertiaTensor );
+	else if ( flInertiaX <= MAX_BODY_INERTIA || flInertiaY <= MAX_BODY_INERTIA || flInertiaZ <= MAX_BODY_INERTIA )
 	{
 		massData.inertia.cx.x = std::min( flInertiaX, MAX_BODY_INERTIA );
 		massData.inertia.cy.y = std::min( flInertiaY, MAX_BODY_INERTIA );
