@@ -8,8 +8,8 @@ use dms_homer::{phy, smd};
 
 const USAGE: &str = "\
 usage: dms-homer [--game <GTA IV dir>] [--gmod <GarrysMod dir>] [--work <dir>]
-  makes garrysmod\\models\\dms\\homer.mdl (+ .phy, .vvd, .vtx) and its materials from the game's Homer
-  (m_y_pmanhat_01), with studiomdl from Garry's Mod's bin\\win64, and checks the compiled .phy against NM's body.
+  makes garrysmod\\models\\dms\\homer.mdl (+ .phy, .vvd, .vtx) from the game's Homer (m_y_pmanhat_01): NM's body,
+  drawn as the Playroom draws it, with studiomdl from Garry's Mod's bin\\win64, and checks the compiled .phy against NM's body.
   --game  GTA IV's folder (default: DMS_GAME_DIR, else golden\\game_dir.txt)
   --gmod  Garry's Mod's folder (default: DMS_GMOD_DIR, else Steam's library from the registry)
   --work  where the SMDs, the .qc and studiomdl's log go (default: target\\dms-homer; never committed)";
@@ -52,23 +52,19 @@ fn run() -> Result<(), String> {
     }
 
     println!("dms-homer: Homer's body from {}", game.display());
-    let (g, build, body) = homer_body(&game)?;
+    let body = homer_body(&game)?;
     std::fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;
     let bones = dms_homer::bones(&body);
     let hulls = dms_homer::hulls(&body);
     let write = |name: &str, text: &str| std::fs::write(work.join(name), text).map_err(|e| format!("{name}: {e}"));
     write("homer_phys.smd", &smd::write(&bones, &dms_homer::hull_triangles(&bones, &hulls, "phys")))?;
+    // The Playroom's look: NM's capsules and boxes in its colours, its other colour schemes as skins.
     let materials = garrysmod.join("materials").join(dms_homer::MATERIALS.replace('/', "\\"));
     std::fs::create_dir_all(&materials).map_err(|e| format!("{}: {e}", materials.display()))?;
-    std::fs::write(materials.join("homer_capsule.vmt"), CAPSULE_VMT).map_err(|e| e.to_string())?;
-    let look = match look(&g, &build, &body.parts, &bones, &materials) {
-        Ok(t) => t,
-        Err(e) => {
-            println!("dms-homer: Homer's mesh didn't come out ({e}): the model shows NM's capsules instead");
-            dms_homer::hull_triangles(&bones, &hulls, "homer_capsule")
-        }
-    };
-    write("homer_ref.smd", &smd::write(&bones, &look))?;
+    for m in dms_homer::visual::BASE.iter().chain(dms_homer::visual::SKINS.iter().flat_map(|(_, ms)| ms.iter())) {
+        std::fs::write(materials.join(format!("{}.vmt", m.name)), dms_homer::visual::vmt(m)).map_err(|e| e.to_string())?;
+    }
+    write("homer_ref.smd", &smd::write(&bones, &dms_homer::visual::triangles(&body, &bones)))?;
     write("homer.qc", &dms_homer::qc(&body, "homer_ref.smd", "homer_phys.smd"))?;
 
     println!("dms-homer: studiomdl ({})", studiomdl.display());
@@ -98,47 +94,8 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
-const CAPSULE_VMT: &str = "\"VertexLitGeneric\"\n{\n\t\"$basetexture\" \"models/debug/debugwhite\"\n\t\"$color2\" \"[0.85 0.7 0.55]\"\n}\n";
-
-/// Homer's ped meshes (variation 000) on NM's bones, and their diffuse textures as VTFs in `materials`.
-fn look(g: &dms_game::Game, build: &delirium::ragdoll::Build, body_parts: &[dms_game::body::Part], bones: &[smd::Bone], materials: &Path) -> Result<Vec<smd::Triangle>, String> {
-    let name = dms_game::HOMER_MODEL;
-    let skeleton = g.homer_skeleton()?;
-    let wdd = g.componentpeds(&format!("{name}.wdd"))?;
-    let mut meshes = vec![];
-    for (_, at) in delirium_data::model::dictionary(&wdd)? {
-        meshes.extend(dms_homer::mesh::read(&wdd, at)?);
-    }
-    meshes.retain(|m| m.texture.as_deref().is_some_and(|t| dms_homer::visual::COMPONENTS.iter().any(|c| t.starts_with(c))));
-    if meshes.len() < dms_homer::visual::COMPONENTS.len() {
-        return Err(format!("{name}.wdd: {} of the {} components", meshes.len(), dms_homer::visual::COMPONENTS.len()));
-    }
-    let textures = dms_homer::vtf::read(&g.componentpeds(&format!("{name}.wtd"))?)?;
-    for m in &meshes {
-        let want = m.texture.as_deref().unwrap_or("");
-        let t = textures.iter().find(|t| t.name.eq_ignore_ascii_case(want)).ok_or(format!("{name}.wtd: no {want}"))?;
-        std::fs::write(materials.join(format!("{want}.vtf")), dms_homer::vtf::write(t)).map_err(|e| e.to_string())?;
-        let vmt = format!("\"VertexLitGeneric\"\n{{\n\t\"$basetexture\" \"{}/{want}\"\n}}\n", dms_homer::MATERIALS);
-        std::fs::write(materials.join(format!("{want}.vmt")), vmt).map_err(|e| e.to_string())?;
-    }
-    let placed: Vec<_> = bones.iter().map(|b| (b.pos, b.rot)).collect();
-    let tris = dms_homer::visual::triangles(build, &skeleton, &placed, &meshes);
-    println!("dms-homer: Homer's mesh: {} components, {} triangles, reskinned onto NM's {} parts; its vertices on one part \
-              only, outside NM's shape (median, 90 %, mm):", meshes.len(), tris.len(), bones.len());
-    for (k, p) in body_parts.iter().enumerate() {
-        let mut d: Vec<f32> = tris.iter().flat_map(|t| t.v.iter())
-            .filter(|v| v.weights.len() == 1 && v.weights[0].0 == k)
-            .map(|v| dms_homer::shape_distance(&p.shape, bones[k].rot.inverse() * (v.pos - bones[k].pos)) * 1000.0).collect();
-        d.sort_by(f32::total_cmp);
-        if !d.is_empty() {
-            println!("  {:16} {:5} vertices  {:+7.1} {:+7.1}", p.name, d.len(), d[d.len() / 2], d[d.len() * 9 / 10]);
-        }
-    }
-    Ok(tris)
-}
-
-/// Homer's build and body from the game, as `tools/dms-game` reads them (the Playroom's way).
-fn homer_body(game: &Path) -> Result<(dms_game::Game, delirium::ragdoll::Build, dms_game::body::Body), String> {
+/// Homer's body from the game, as `tools/dms-game` reads it (the Playroom's way).
+fn homer_body(game: &Path) -> Result<dms_game::body::Body, String> {
     let g = dms_game::Game::open(game)?;
     if let Some(m) = g.materials() {
         dms_game::set_surfaces(&m);
@@ -149,8 +106,7 @@ fn homer_body(game: &Path) -> Result<(dms_game::Game, delirium::ragdoll::Build, 
         return Err("nm_init_memory: fred.xrt didn't load".into());
     }
     let (b, frames) = g.homer()?;
-    let body = dms_game::body::Body::new(&b, &frames);
-    Ok((g, b, body))
+    Ok(dms_game::body::Body::new(&b, &frames))
 }
 
 fn report(checks: &[dms_homer::PhyCheck]) {

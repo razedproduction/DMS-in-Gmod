@@ -141,28 +141,6 @@ impl Game {
         self.img_read(&table, &mut f, &format!("{HOMER_MODEL}.xft"))
     }
 
-    /// Homer's skeleton (his fragment's, as `homer_build` reads it): the bones his meshes are skinned to.
-    pub fn homer_skeleton(&self) -> Result<Vec<skeleton::Bone>, String> {
-        let frag = self.homer_fragment()?;
-        skeleton::read(&frag, model::fragment_root(&frag)?)
-    }
-
-    /// The names in `componentpeds.img` that start with `prefix` (Homer's mesh and textures sit beside his fragment).
-    pub fn componentpeds_names(&self, prefix: &str) -> Result<Vec<String>, String> {
-        let (table, _) = self.img_open("xbox360/models/cdimages/componentpeds.img")?;
-        Ok(table.iter().filter(|e| e.name.to_lowercase().starts_with(&prefix.to_lowercase())).map(|e| e.name.clone()).collect())
-    }
-
-    /// A resource out of `componentpeds.img`, by its name there.
-    pub fn componentpeds(&self, name: &str) -> Result<resource::Resource, String> {
-        let (table, mut f) = self.img_open("xbox360/models/cdimages/componentpeds.img")?;
-        let e = table.iter().find(|e| e.name.eq_ignore_ascii_case(name)).ok_or(format!("{name}: not in componentpeds.img"))?;
-        let mut raw = vec![];
-        f.seek(SeekFrom::Start(e.offset)).map_err(|e| e.to_string())?;
-        (&mut f).take(e.used_blocks as u64 * 2048).read_to_end(&mut raw).map_err(|e| e.to_string())?;
-        resource::parse(&raw)
-    }
-
     /// `getup::homer_build`: the ped's fragment through the same `Rig` Delirium builds Homer with.
     fn homer_build(&self) -> Result<Build, String> {
         let frag = self.homer_fragment()?;

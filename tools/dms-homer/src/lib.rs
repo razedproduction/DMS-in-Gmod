@@ -2,11 +2,9 @@
 //! (ROADMAP M3, docs/adr/0013). Never shipped: it's made on the user's machine (docs/adr/0006).
 
 pub mod hull;
-pub mod mesh;
 pub mod phy;
 pub mod smd;
 pub mod visual;
-pub mod vtf;
 
 use delirium::prelude::*;
 use dms_game::body::Body;
@@ -58,7 +56,8 @@ pub fn qc(body: &Body, reference: &str, physics: &str) -> String {
     let mut s = format!(
         "$modelname \"{MODEL}\"\n$origin 0 0 0 -90\n$cdmaterials \"{MATERIALS}/\"\n$surfaceprop \"{SURFACE}\"\n\
          $body homer \"{reference}\"\n$sequence ragdoll \"{reference}\" activity ACT_DIERAGDOLL 1 fps 30\n\
-         $collisionjoints \"{physics}\" {{\n\t$mass {mass}\n\t$inertia 1\n\t$damping 0\n\t$rotdamping 0\n\t$rootbone \"{}\"\n",
+         {}$collisionjoints \"{physics}\" {{\n\t$mass {mass}\n\t$inertia 1\n\t$damping 0\n\t$rotdamping 0\n\t$rootbone \"{}\"\n",
+        visual::texture_group(),
         body.parts[0].name
     );
     for &(a, b) in &body.pairs {
