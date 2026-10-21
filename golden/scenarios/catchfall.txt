@@ -1,0 +1,10 @@
+# catchFall с высоты: "fall" ставит тело на 3 м выше (новый агент, smartFall), сразу catchFall start=true.
+# Оконный режим (--script): время команд — по часам; первая команда на 3 с, пока окно грузится (тело держится
+# в позе, шаги не идут). Фактический шаг каждой команды — в строках "#" файла .rec.
+# Встаёт Playroom анимацией (не NM) после 2 с лежания: get-up дважды = режим off.
+#! window
+3 !button get-up
+3 !button get-up
+3 !button fall
+3 catchFall start=true
+9 !quit

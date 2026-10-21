@@ -579,6 +579,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e90a5dd66beeca277ae954f8055b02a712792b6b6b43f2bc2f92b0b7d8291614"
 
 [[package]]
+name = "dms-game"
+version = "0.1.0"
+dependencies = [
+ "delirium",
+ "delirium-data",
+]
+
+[[package]]
 name = "downcast-rs"
 version = "2.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -750,6 +758,16 @@ name = "gmsv_dms"
 version = "0.1.0"
 dependencies = [
  "delirium-sdk",
+ "dms-game",
+]
+
+[[package]]
+name = "golden"
+version = "0.1.0"
+dependencies = [
+ "delirium",
+ "delirium-sdk",
+ "dms-game",
 ]
 
 [[package]]

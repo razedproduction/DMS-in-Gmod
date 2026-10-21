@@ -6,7 +6,7 @@ Delirium (active ragdoll, NM-style) нативно в Garry's Mod в режим�
 
 > Проект разрабатывается с помощью [Claude Code](https://claude.com/claude-code).
 
-- [ROADMAP.md](ROADMAP.md) — план разработки по вехам M0–M9.
+- [ROADMAP.md](ROADMAP.md) — план разработки по вехам M0–M8 (пока только тело Homer).
 - [docs/adr/](docs/adr/README.md) — архитектурные решения.
 
 ## Сборка
