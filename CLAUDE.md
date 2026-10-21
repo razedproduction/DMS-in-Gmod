@@ -59,8 +59,8 @@ VPhysics-Box3D. Тело — `prop_ragdoll` Homer; Delirium каждый физ�
   оригинал — `vphysics.dll.original`). После сборки устанавливать в игру самому, не спрашивая.
 - В PowerShell не запускать `build.ps1` с `2>&1`: вывод cargo в stderr превращается в ошибку.
 - Свой стенд (M2.5, [docs/bench.md](docs/bench.md), ADR 0012): **сама игра в окне** —
-  `.\scripts\server.ps1 start|stop|restart|status` (`gmod_win64.exe -textmode`, listen-сервер на `127.0.0.1`,
-  окно скрыто) и CLI `.\target\release\dms-ctl.exe` (`cargo build --release -p dms-ctl -p golden`): `status`,
+  `.\scripts\server.ps1 start|stop|restart|status` (`gmod_win64.exe`, listen-сервер на `127.0.0.1`,
+  окно 1280×720 видно, чтобы тест можно было смотреть; `-Hidden` — `-textmode` и скрытое окно) и CLI `.\target\release\dms-ctl.exe` (`cargo build --release -p dms-ctl -p golden`): `status`,
   `exec <команда>` (RCON, с выводом), `lua <код>` / `lua -f <файл>`, `nm <сообщение> [p=v]`, `bench reset|stop|cancel`,
   `snapshot`, `watch --for 2s [--fields a,b]` (**всегда с `--for`**), `run golden\scenarios\<имя>.txt` (→
   `golden/out/source/<имя>.rec`); сверка — `.\target\release\golden.exe behaviour --source [имена]`. Поведение и

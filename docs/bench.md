@@ -22,8 +22,10 @@ cargo build --release -p dms-ctl -p golden
 
 - `start` — ставит `dist\` и `addon\` в игру (`install.ps1`), пишет `garrysmod\data\dms\bench.txt` (`dms_game_dir`
   из `golden\game_dir.txt`/`DMS_GAME_DIR`/`-GtaDir`, `dms_dev 1`, новый токен) и запускает **саму игру**:
-  `gmod_win64.exe -textmode -nosound -novid -usercon -condebug -ip 127.0.0.1 -port 27115 +maxplayers 2 +sv_lan 1
-  +sv_cheats 1 +sv_hibernate_think 1 +rcon_password <новый> +map gm_flatgrass`; окно скрывается (`ShowWindow`).
+  `gmod_win64.exe -w 1280 -h 720 -windowed -nosound -novid -usercon -condebug -ip 127.0.0.1 -port 27115 +maxplayers 2
+  +sv_lan 1 +sv_cheats 1 +sv_hibernate_think 1 +rcon_password <новый> +map gm_flatgrass`. Окно видно, чтобы за тестом
+  можно было смотреть; тики идут 66/с и без фокуса, и свёрнутым. `start -Hidden` — без отрисовки (`-textmode`,
+  640×480), окно скрывается (`ShowWindow`), как было в M2.5.
   Это listen-сервер: `maxplayers 2`, иначе одиночная игра без RCON; `-usercon` включает RCON. Хост — аккаунт Steam
   пользователя на loopback. Аддон читает `bench.txt` и сразу удаляет его, так что обычная игра канал не открывает.
   Адреса и секреты — в `.bench\server.txt` (не в git), их читает `dms-ctl`. Лог консоли —
