@@ -327,17 +327,29 @@ pub fn surfaces(materials: &str) -> Vec<(String, f32, f32)> {
         .collect()
 }
 
-/// The Playroom's floor: `add_floor(0, 0, 0, 50, CONCRETE's row)`, as triangles (`Collision::add_floor`), for
-/// `nm_world_add_mesh`.
-pub fn floor(x: f32, y: f32, z: f32, half: f32) -> (Vec<[f32; 3]>, Vec<[u32; 3]>) {
-    let size = (half / 100.0).max(1.0);
-    let n = (half / size).ceil().max(1.0) as i32;
+/// The Playroom room's pool, sunk in its floor (`world::POOL`): x from -3 to 3, y from 5 to 25 m.
+pub const POOL: [[f32; 2]; 2] = [[-3.0, 5.0], [3.0, 25.0]];
+
+/// The Playroom's floor rectangles (`world::floor_rects`): the whole square, or four around the pool.
+fn floor_rects(pool: bool, half: f32) -> Vec<([f32; 2], [f32; 2])> {
+    let ([a, b], h) = (POOL, half);
+    if !pool {
+        return vec![([-h, -h], [h, h])];
+    }
+    vec![([-h, -h], [h, a[1]]), ([-h, b[1]], [h, h]), ([-h, a[1]], [a[0], b[1]]), ([b[0], a[1]], [h, b[1]])]
+}
+
+/// The Playroom's floor, `world::floor_tris(room.pool, 50)` with CONCRETE's row in `load`: 1 m squares at z = 0,
+/// with a hole for the pool when `pool` (the room has one; the stages haven't). For `nm_world_add_mesh`.
+pub fn floor(pool: bool, half: f32) -> (Vec<[f32; 3]>, Vec<[u32; 3]>) {
     let (mut p, mut t) = (vec![], vec![]);
-    for i in -n..n {
-        for j in -n..n {
-            let (a, b, k) = (x + i as f32 * size, y + j as f32 * size, p.len() as u32);
-            p.extend([[a, b, z], [a + size, b, z], [a + size, b + size, z], [a, b + size, z]]);
-            t.extend([[k, k + 1, k + 2], [k, k + 2, k + 3]]);
+    for (lo, hi) in floor_rects(pool, half) {
+        for x in lo[0] as i32..hi[0] as i32 {
+            for y in lo[1] as i32..hi[1] as i32 {
+                let (a, b, k) = (x as f32, y as f32, p.len() as u32);
+                p.extend([[a, b, 0.0], [a + 1.0, b, 0.0], [a + 1.0, b + 1.0, 0.0], [a, b + 1.0, 0.0]]);
+                t.extend([[k, k + 1, k + 2], [k, k + 2, k + 3]]);
+            }
         }
     }
     (p, t)

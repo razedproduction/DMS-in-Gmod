@@ -268,7 +268,7 @@ fn lead(ctx: &Ctx) -> Result<(), String> {
 /// # Safety
 /// fred.xrt is loaded (`ours`).
 unsafe fn lead_run(dump: &std::ffi::CStr, floor_row: u8, steps: usize) -> Result<Vec<Vec<f32>>, String> {
-    let (p, t) = dms_game::floor(0.0, 0.0, 0.0, 50.0);
+    let (p, t) = dms_game::floor(true, 50.0);
     // SAFETY: the SDK's own calls on the build, world and agent made here, with arrays as long as they say.
     unsafe {
         let b = sdk::nm_build_from_text(dump.as_ptr());
