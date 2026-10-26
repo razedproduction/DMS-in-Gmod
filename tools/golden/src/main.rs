@@ -434,7 +434,9 @@ fn run_one(ctx: &Ctx, path: &Path, name: &str) -> Result<String, String> {
         Mode::Window { last } => {
             let script = path.canonicalize().map_err(|e| e.to_string())?;
             let s = script.to_string_lossy().into_owned();
-            let mut c = ctx.room(&["--script", s.as_str(), "--rec", rec_s.as_str()])?;
+            // Safe Mode: the Playroom's defaults, not the user's settings.txt (its behaviour switches too, read by
+            // the window since 0.2.1), and the lowest graphics, so the window keeps up with 60 steps a second.
+            let mut c = ctx.room(&["--script", s.as_str(), "--rec", rec_s.as_str(), "--safe"])?;
             c.env("ROOM_LOG", "1");
             run_to(c, None, &log, Duration::from_secs_f32(last + 120.0))?;
         }

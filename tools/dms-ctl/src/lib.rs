@@ -367,9 +367,11 @@ pub mod rec {
         Rec { steps, log }
     }
 
-    /// The commands' steps: the `ours  MSG` / `room` lines' times.
+    /// The commands' steps: the `ours  MSG` / `room` lines' times, less the Playroom's own start-up notes
+    /// (`room  Safe Mode: …`, `room  settings from …`), which aren't commands.
     pub fn marks(r: &Rec) -> Vec<(f32, String)> {
-        r.log.iter().filter(|(_, s)| s.starts_with("ours  MSG") || s.starts_with("room  ")).cloned().collect()
+        let setup = |s: &str| s.starts_with("room  Safe Mode") || s.starts_with("room  settings from");
+        r.log.iter().filter(|(_, s)| (s.starts_with("ours  MSG") || s.starts_with("room  ")) && !setup(s)).cloned().collect()
     }
 
     /// How `ours` differs from `theirs`, step by step from the first.
