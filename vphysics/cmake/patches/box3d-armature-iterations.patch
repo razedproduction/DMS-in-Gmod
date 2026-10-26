@@ -1,0 +1,120 @@
+diff --git a/include/box3d/box3d.h b/include/box3d/box3d.h
+index 15a17d6..c699c1a 100644
+--- a/include/box3d/box3d.h
++++ b/include/box3d/box3d.h
+@@ -201,6 +201,11 @@ B3_API void b3World_Explode( b3WorldId worldId, const b3ExplosionDef* explosionD
+ /// @note Advanced feature
+ B3_API void b3World_SetContactTuning( b3WorldId worldId, float hertz, float dampingRatio, float contactSpeed );
+ 
++/// Extra Gauss-Seidel passes over the joints that have armature (b3Joint_SetArmature), before each solve and relax
++/// iteration. A chain of light bodies joined by heavy armature (an active ragdoll's nearly locked joints) converges
++/// slowly at one pass. 0 (the default) adds none; other joints and contacts are untouched.
++B3_API void b3World_SetArmatureIterations( b3WorldId worldId, int iterations );
++
+ /// Set the contact point recycling distance. Setting this to zero disables contact point recycling.
+ /// Usually in meters.
+ B3_API void b3World_SetContactRecycleDistance( b3WorldId worldId, float recycleDistance );
+diff --git a/src/joint.c b/src/joint.c
+index 6cdb1b4..6231128 100644
+--- a/src/joint.c
++++ b/src/joint.c
+@@ -1814,6 +1814,29 @@ void b3WarmStartJoints_Overflow( b3StepContext* context )
+ 	b3TracyCZoneEnd( prepare_joints );
+ }
+ 
++// Extra Gauss-Seidel passes over the joints with armature, every graph color and the overflow, single threaded
++// between solver stages (b3World_SetArmatureIterations).
++void b3SolveArmatureJoints( b3StepContext* context, bool useBias )
++{
++	int iterations = context->world->armatureIterations;
++	b3ConstraintGraph* graph = context->graph;
++	for ( int k = 0; k < iterations; ++k )
++	{
++		for ( int c = 0; c < B3_GRAPH_COLOR_COUNT; ++c )
++		{
++			b3JointSim* joints = graph->colors[c].jointSims.data;
++			int jointCount = graph->colors[c].jointSims.count;
++			for ( int i = 0; i < jointCount; ++i )
++			{
++				if ( joints[i].armature > 0.0f )
++				{
++					b3SolveJoint( joints + i, context, useBias );
++				}
++			}
++		}
++	}
++}
++
+ void b3SolveJoints_Overflow( b3StepContext* context, bool useBias )
+ {
+ 	b3TracyCZoneNC( solve_joints, "SolveJoints", b3_colorLemonChiffon, true );
+diff --git a/src/joint.h b/src/joint.h
+index 39fdae6..be42f7d 100644
+--- a/src/joint.h
++++ b/src/joint.h
+@@ -369,6 +369,7 @@ void b3PrepareJoints_Overflow( b3StepContext* context );
+ void b3WarmStartJoints_Overflow( b3StepContext* context );
+ void b3SolveJoints_Overflow( b3StepContext* context, bool useBias );
+ void b3StoreArmatureVelocities( b3StepContext* context );
++void b3SolveArmatureJoints( b3StepContext* context, bool useBias );
+ 
+ void b3GetJointReaction( b3World* world, b3JointSim* sim, float invTimeStep, float* force, float* torque );
+ 
+diff --git a/src/physics_world.c b/src/physics_world.c
+index 192cfdb..440a21c 100644
+--- a/src/physics_world.c
++++ b/src/physics_world.c
+@@ -2175,6 +2175,17 @@ void b3World_SetContactTuning( b3WorldId worldId, float hertz, float dampingRati
+ 	world->contactSpeed = b3ClampFloat( contactSpeed, 0.0f, FLT_MAX );
+ }
+ 
++void b3World_SetArmatureIterations( b3WorldId worldId, int iterations )
++{
++	b3World* world = b3GetUnlockedWorldFromId( worldId );
++	if ( world == NULL )
++	{
++		return;
++	}
++
++	world->armatureIterations = b3MaxInt( iterations, 0 );
++}
++
+ void b3World_SetContactRecycleDistance( b3WorldId worldId, float recycleDistance )
+ {
+ 	b3World* world = b3GetWorldFromId( worldId );
+diff --git a/src/physics_world.h b/src/physics_world.h
+index 1436ee4..649cdf8 100644
+--- a/src/physics_world.h
++++ b/src/physics_world.h
+@@ -236,6 +236,10 @@ typedef struct b3World
+ 	float hitEventThreshold;
+ 	float restitutionThreshold;
+ 	int restitutionIterations;
++
++	// Extra Gauss-Seidel passes over the joints with armature, each solve and relax iteration
++	// (b3World_SetArmatureIterations)
++	int armatureIterations;
+ 	bool enableRestitutionPropagation;
+ 	float maxLinearSpeed;
+ 	float isotropicInertiaTolerance;
+diff --git a/src/solver.c b/src/solver.c
+index 133cf76..f6cb434 100644
+--- a/src/solver.c
++++ b/src/solver.c
+@@ -1288,6 +1288,8 @@ static void b3SolverTask( void* taskContext )
+ 			bool useBias = true;
+ 			for ( int j = 0; j < ITERATIONS; ++j )
+ 			{
++				b3SolveArmatureJoints( context, useBias );
++
+ 				// Overflow constraints have lower priority. Typically these are dynamic-vs-dynamic.
+ 				b3SolveJoints_Overflow( context, useBias );
+ 				b3PushContacts_Overflow( context );
+@@ -1317,6 +1319,7 @@ static void b3SolverTask( void* taskContext )
+ 			useBias = false;
+ 			for ( int j = 0; j < RELAX_ITERATIONS; ++j )
+ 			{
++				b3SolveArmatureJoints( context, useBias );
+ 				b3SolveJoints_Overflow( context, useBias );
+ 				b3SolveContacts_Overflow( context );
+ 

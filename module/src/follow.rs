@@ -132,6 +132,24 @@ fn parse_value(kind: Kind, v: &str) -> Option<Value> {
     })
 }
 
+/// `applyImpulse`'s part, impulse, hit point and equalising from its params, the message's defaults for the rest
+/// (as `msg::send` takes them: an int or a float for the part, a float or an int for the amount).
+fn impulse_params(ps: &[(&str, Value)]) -> (usize, Vec3, Option<Vec3>, f32) {
+    let get = |n: &str| ps.iter().find(|(p, _)| *p == n).map(|(_, v)| v.clone()).or_else(|| msg::get(&msg::State::default(), "applyImpulse", n));
+    let num = |v: Option<Value>| match v {
+        Some(Value::Float(x)) => Some(x),
+        Some(Value::Int(i)) => Some(i as f32),
+        _ => None,
+    };
+    let vec = |v: Option<Value>| match v {
+        Some(Value::Vec3(v)) => Some(v),
+        _ => None,
+    };
+    let part = num(get("partIndex")).unwrap_or(0.0).max(0.0) as usize;
+    let hit = ps.iter().any(|(p, _)| *p == "hitPoint").then(|| vec(get("hitPoint"))).flatten();
+    (part.min(PARTS - 1), vec(get("impulse")).unwrap_or(Vec3::ZERO), hit, num(get("equalizeAmount")).unwrap_or(0.0))
+}
+
 /// A scenario running on this agent (the bench, `dms-ctl run`): its commands by NM step, as the Playroom ran them
 /// (golden/README.md, docs/adr/0011), and its record in the Playroom's `--rec` format.
 pub struct Script {
@@ -331,6 +349,7 @@ impl Follower {
 
     /// One NM step (the Playroom's `tick`, with the body's state from Box3D).
     unsafe fn nm_step(&mut self, nm: &Nm, events: &mut Vec<Event>) -> Result<(), String> {
+        let dt = DT as f32;
         let (mode, asleep) = (self.agent.doll.mode, self.agent.doll.asleep);
         let mut moved = (0.0f32, 0.0f32, 0.0f32);
         for (k, &o) in self.objects.iter().enumerate() {
@@ -389,9 +408,9 @@ impl Follower {
         let unit = self.agent.character().map(|ch| {
             let frames: Vec<Transform> = self.agent.doll.frames().collect();
             let body = delirium::nmdbm::Body { ch, build: &self.data.homer, doll: &self.agent.doll, frames: &frames };
-            delirium::nmdbm::stabilise(&body, 1.0, DT as f32)
+            delirium::nmdbm::stabilise(&body, 1.0, dt)
         });
-        self.agent.step_follow(&self.data.homer, &self.world, DT as f32, &[], &[]);
+        self.agent.step_follow(&self.data.homer, &self.world, dt, &[], &[]);
         self.steps += 1;
         if let (Some(unit), Some((gain, _))) = (unit, self.agent.character().and_then(|ch| ch.stabilise)) {
             for (k, j) in unit.into_iter().enumerate().filter(|(_, j)| *j != Vec3::ZERO) {
@@ -539,6 +558,8 @@ impl Follower {
             }
         }
         let short: String = line.chars().take(110).collect();
+        // A one-shot message's state is reset once it's sent: the impulse's params come from the line itself.
+        let kick = (name == "applyImpulse").then(|| impulse_params(&ps));
         match msg::send(&mut self.agent, &self.data.homer, &self.world, &mut self.msgs, name, &ps) {
             Ok(unused) => {
                 let kept = if unused > 0 { format!("  ({unused} kept, not used by the port)") } else { String::new() };
@@ -546,21 +567,19 @@ impl Follower {
             }
             Err(e) => self.say(&format!("ours  {name}: {e:?}")),
         }
-        if name == "applyImpulse" {
-            self.kick();
+        if let Some((k, impulse, hit, equalize)) = kick {
+            self.kick(k, impulse, hit, equalize);
         }
     }
 
     /// `applyImpulse` moves the Playroom's doll (`equalized_impulse`, solved in its physics step); in FOLLOW the
     /// body is Box3D's, so the same impulse goes on it, as a force over the next Source step.
-    fn kick(&mut self) {
-        let p = &self.msgs.apply_impulse;
+    fn kick(&mut self, k: usize, impulse: Vec3, hit: Option<Vec3>, equalize: f32) {
         let doll = &self.agent.doll;
-        let k = p.part_index.max(0) as usize;
         let Some(centre) = doll.frames().nth(k).map(|f| f.translation) else { return };
         let mean = doll.mass() / PARTS as f32;
-        let s = 1.0 - p.equalize_amount + p.equalize_amount * doll.part_mass(k) / mean;
-        let (at, j) = (p.hit_point.unwrap_or(centre), p.impulse * s);
+        let s = 1.0 - equalize + equalize * doll.part_mass(k) / mean;
+        let (at, j) = (hit.unwrap_or(centre), impulse * s);
         if at.is_finite() && j.is_finite() {
             self.kicks.push((k, at - centre, j));
         }
@@ -732,6 +751,7 @@ impl Follower {
             ("armature", json::array(self.armature.iter().map(|&a| json::num(a)))),
             ("feedback", json::array(fb)),
             ("timestep", json::num(self.timestep)),
+            ("state_v", json::array(self.before.iter().map(|(v, w)| json::array(v.to_array().iter().chain(&w.to_array()).map(|&x| json::num(x)))))),
             ("limit_use", json::array(self.limit_use.iter().map(|(a, b)| json::array([json::num(*a), json::num(*b)])))),
             ("pred_err", json::array(self.pred_err.iter().map(|(v, w)| json::array(v.to_array().iter().chain(&w.to_array()).map(|&x| json::num(x)))))),
             ("script", self.script.as_ref().map_or("null".into(), |s| format!("{{\"commands_left\":{},\"end\":{}}}", s.commands.len(), s.end))),
