@@ -1,7 +1,7 @@
 # DMS in Gmod
 
 Delirium (active ragdoll, NM-style) нативно в Garry's Mod в режиме **FOLLOW**: тело — обычный `prop_ragdoll` на
-физике [VPhysics-Box3D](../VPhysics-Box3D) (форк с `IPhysicsNM` и armature суставов), Delirium каждый физический
+физике [VPhysics-Box3D](vphysics/) (форк с `IPhysicsNM` и armature суставов), Delirium каждый физический
 шаг возвращает силы и моменты для частей.
 
 > Проект разрабатывается с помощью [Claude Code](https://claude.com/claude-code).
@@ -26,4 +26,5 @@ Delirium (active ragdoll, NM-style) нативно в Garry's Mod в режим�
 
 ## Лицензия
 
-GPL-3.0-only, см. [LICENSE](LICENSE).
+GPL-3.0-only, см. [LICENSE](LICENSE). Исключение — форк VPhysics-Box3D в `vphysics/` (от
+[Asphaltian/VPhysics-Box3D](https://github.com/Asphaltian/VPhysics-Box3D)): MIT, см. [vphysics/LICENSE](vphysics/LICENSE).

@@ -22,14 +22,18 @@ VPhysics-Box3D. Тело — `prop_ragdoll` Homer; Delirium каждый физ�
 
 - `E:\GitStuff\MyRepos\delirium-physics (CLAUDE DONT CHANGE ANYTHING HERE)` — **только чтение**, ничего там не
   менять, не собирать в его `target/`, не запускать `cargo fix`. Подключается path-зависимостью (ADR 0001).
-- `E:\GitStuff\MyRepos\VPhysics-Box3D` (форк с `IPhysicsNM`, интерфейс `include/vphysics_nm.h`, `VBOX3D_NM_003`)
-  **можно менять**, если там есть неточности, мешающие NM работать один в один как в Playroom (силы, armature,
-  пивоты/лимиты суставов, порядок шага, единицы и т.п.). Правило: сначала показать расхождение с Playroom/SDK
-  (что делает Delirium, что делает форк), потом чинить в форке; новые/изменённые методы — новой версией
-  интерфейса (`VBOX3D_NM_003`…) с сохранением старых строк, заголовок копировать в модуль. Сборка форка —
-  `cmake --preset windows-x64` + `cmake --build --preset windows-x64-release`, установка в
-  `GarrysMod\bin\win64\vphysics.dll` (оригинал не трогать — `vphysics.dll.original`). Не связанное с NM в форке
-  не менять.
+- Форк VPhysics-Box3D — папка **`vphysics/`** этого репозитория (git subtree, ADR 0015, [docs/vphysics.md](docs/vphysics.md);
+  `IPhysicsNM`, интерфейс `vphysics/include/vphysics_nm.h`, `VBOX3D_NM_003`). **Можно менять**, если там есть
+  неточности, мешающие NM работать один в один как в Playroom (силы, armature, пивоты/лимиты суставов, порядок
+  шага, единицы и т.п.). Правило: сначала показать расхождение с Playroom/SDK (что делает Delirium, что делает
+  форк), потом чинить в форке; новые/изменённые методы — новой версией интерфейса (`VBOX3D_NM_004`…) с сохранением
+  старых строк, заголовок копировать в модуль. Правка физики и модуля — **одним PR**. Сборка —
+  `.\scripts\build-vphysics.ps1` (= `cmake --preset windows-x64` + `cmake --build --preset windows-x64-release` в
+  `vphysics/`; после `subtree pull`/смены коммита — `-Clean`), установка — `.\scripts\install.ps1 -Fork` (в
+  `GarrysMod\bin\win64\vphysics.dll`, оригинал не трогать — `vphysics.dll.original`). Не связанное с NM в форке не
+  менять. Свежий upstream — `git subtree pull --prefix vphysics https://github.com/Asphaltian/VPhysics-Box3D main`
+  (без `--squash`). Старые `E:\GitStuff\MyRepos\VPhysics-Box3D` и `razedproduction/VPhysics-Box3D` больше не
+  используются.
 - `E:\GitStuff\MyRepos\delirium-physics (gmod addon & api)` — прошлая попытка, только справочник, код не переносить.
   Её инструмент для переделки костей моделей игры (`delirium-ragdoll`: `--fit-model`, `--reskin`, `--nm-body`,
   `--template`, `.nmfit.txt`) **игнорировать полностью** — даже как справочник. Когда понадобятся модели, напишем
@@ -82,6 +86,7 @@ VPhysics-Box3D. Тело — `prop_ragdoll` Homer; Delirium каждый физ�
   `GetProcAddress` (без крейтов-обёрток), нативы через `lua::native!` (`extern "C-unwind"`, ошибки → `lua_error`).
   `ffi/vphysics_nm.rs` — vtable `IPhysicsNM` строго в порядке объявления в заголовке.
 - `addon/lua/` — серверный Lua: `autorun/server/dms_init.lua` (`require("dms")`), `dms/*.lua`.
+- `vphysics/` — форк VPhysics-Box3D (C++, CMake, MIT); сабмодули `vphysics/external/*` (`git submodule update --init`).
 - `scripts/`, `docs/adr/`, `tools/` (появится в M3).
 
 Инварианты:

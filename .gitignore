@@ -5,3 +5,5 @@
 /golden/game_dir.txt
 # The bench server's addresses and secrets (scripts\server.ps1).
 /.bench/
+# The fork's CMake build tree (scripts\build-vphysics.ps1); vphysics\.gitignore has it too.
+/vphysics/build/
