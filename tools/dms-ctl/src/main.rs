@@ -17,9 +17,11 @@ usage: dms-ctl <command>   (the bench: scripts\\server.ps1 start; addresses from
   snapshot [--fields a,b]         the last telemetry (JSON)
   watch --for <time> [--fields a,b] [--every N]
                                   telemetry lines (JSON) for <time> (2s, 500ms, 1m), every N-th
-  run <scenario.txt> [--out <file.rec>]
-                                  a golden/scenarios/ scenario on the bench, in real time -> its .rec
-                                  (default golden/out/source/<name>.rec)";
+  run <scenario.txt> [--out <file.rec>] [--ref <playroom.rec>] [--lead]
+                                  a golden/scenarios/ scenario on Homer in FOLLOW (--lead: the LEAD bench
+                                  agent), in real time -> its .rec (default golden/out/source/<name>.rec);
+                                  window commands at the steps of the Playroom's record (default
+                                  golden/out/<name>.rec)";
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -107,12 +109,18 @@ fn dispatch(mut args: Vec<String>) -> Result<(), String> {
         }
         "run" => {
             let out = take(&mut args, "--out").map(PathBuf::from);
+            let lead = take_switch(&mut args, "--lead");
+            let reference = take(&mut args, "--ref").map(PathBuf::from);
             let path = PathBuf::from(need(&args, "run <scenario.txt>")?);
             let s = Scenario::read(&path)?;
             let out = out.unwrap_or_else(|| dms_ctl::repo().join("golden").join("out").join("source").join(format!("{}.rec", s.name)));
-            eprintln!("dms-ctl: {} ({}): about {:.0} s in real time", s.name, s.mode, s.seconds());
+            // The Playroom's record of it, for the steps its commands ran at.
+            let reference = reference.unwrap_or_else(|| dms_ctl::repo().join("golden").join("out").join(format!("{}.rec", s.name)));
+            let theirs = std::fs::read_to_string(&reference).ok().map(|t| dms_ctl::rec::parse(&t)).filter(|r| !r.steps.is_empty());
+            eprintln!("dms-ctl: {} ({}{}): about {:.0} s in real time{}", s.name, s.mode, if lead { ", LEAD" } else { ", Homer in FOLLOW" },
+                s.seconds(), if theirs.is_some() { "" } else { "; no Playroom record: commands at their times" });
             let start = Instant::now();
-            let rec = dms_ctl::run(&mut Channel::bench(&bench)?, &s)?;
+            let rec = dms_ctl::run(&mut Channel::bench(&bench)?, &s, theirs.as_ref(), lead)?;
             if let Some(dir) = out.parent() {
                 std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
             }

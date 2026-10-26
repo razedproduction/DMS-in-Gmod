@@ -301,6 +301,40 @@ impl Nm {
     }
 }
 
+/// `IPhysicsEnvironment`'s step (Source SDK 2013 `vphysics_interface.h`: slot 36 `GetSimulationTimestep`, 37
+/// `SetSimulationTimestep`, the virtual destructor's one slot first): the game sets 0.015 s, whatever the tickrate.
+pub mod env {
+    use super::IPhysicsEnvironment;
+
+    const GET_TIMESTEP: usize = 36;
+    const SET_TIMESTEP: usize = 37;
+
+    unsafe fn slot(env: *mut IPhysicsEnvironment, i: usize) -> *const () {
+        // SAFETY: a live C++ object, its first field the vtable (the caller's promise); the slot is in it.
+        unsafe { *(*(env as *const *const *const ())).add(i) }
+    }
+
+    /// The environment's physics step (s).
+    ///
+    /// # Safety
+    /// `env` is a live `IPhysicsEnvironment` of this vphysics, called from the game's main thread.
+    pub unsafe fn timestep(env: *mut IPhysicsEnvironment) -> f32 {
+        // SAFETY: `float GetSimulationTimestep() const`, `this` first.
+        let f: unsafe extern "C" fn(*mut IPhysicsEnvironment) -> f32 = unsafe { std::mem::transmute(slot(env, GET_TIMESTEP)) };
+        unsafe { f(env) }
+    }
+
+    /// Sets the environment's physics step (s). Not from inside its step.
+    ///
+    /// # Safety
+    /// As [`timestep`], outside `Simulate`.
+    pub unsafe fn set_timestep(env: *mut IPhysicsEnvironment, t: f32) {
+        // SAFETY: `void SetSimulationTimestep(float)`, `this` first.
+        let f: unsafe extern "C" fn(*mut IPhysicsEnvironment, f32) = unsafe { std::mem::transmute(slot(env, SET_TIMESTEP)) };
+        unsafe { f(env, t) }
+    }
+}
+
 /// vphysics' `CreateInterface(const char *, int *)`.
 type CreateInterfaceFn = unsafe extern "C" fn(name: *const c_char, return_code: *mut c_int) -> *mut c_void;
 

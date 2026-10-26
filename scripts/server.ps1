@@ -1,6 +1,6 @@
-﻿# The bench (ROADMAP M2.5, docs\bench.md): Garry's Mod driven by tools\dms-ctl.
+# The bench (ROADMAP M2.5, docs\bench.md): Garry's Mod driven by tools\dms-ctl.
 #
-#   .\scripts\server.ps1 start [-Map gm_flatgrass] [-GtaDir <GTA IV dir>] [-NoInstall] [-Hidden]
+#   .\scripts\server.ps1 start [-Map gm_flatgrass] [-GtaDir <GTA IV dir>] [-NoInstall] [-Hidden] [-Tickrate 60]
 #   .\scripts\server.ps1 stop | restart | status
 #
 # By default it's the game itself in a 1280x720 window, so the test can be watched (-Hidden: -textmode, the window
@@ -27,7 +27,9 @@ param(
 	[string]$SteamCmd,
 	[int]$Wait = 180,
 	[switch]$NoInstall,
-	[switch]$Hidden
+	[switch]$Hidden,
+	# The server's tick (66 by default): 60 makes a Source step NM's step (ROADMAP M4, docs\bench.md).
+	[int]$Tickrate = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -178,6 +180,7 @@ function Start-Bench {
 
 	$common = @('-nocrashdialog', '-condebug', '-ip', '127.0.0.1', '-port', $Port, '+sv_lan', '1', '+sv_cheats', '1',
 		'+rcon_password', $password)
+	if ($Tickrate -gt 0) { $common += @('-tickrate', $Tickrate) }
 	if ($Dedicated) {
 		$launch = @('-console', '-game', 'garrysmod') + $common + @('+maxplayers', '1', '+sv_hibernate_think', '1', '+map', $Map)
 	} else {

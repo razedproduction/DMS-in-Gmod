@@ -14,6 +14,11 @@ pub struct Data {
     pub dir: PathBuf,
     pub platform: &'static str,
     pub build: nm::Build,
+    /// The same build as the Playroom holds it (`delirium`), for the FOLLOW agents (`follow.rs`), which run on the
+    /// crate as the Playroom does (docs/adr/0016).
+    pub homer: delirium::ragdoll::Build,
+    /// The tasks' tuning as the Playroom loads it (`taskparams.txt`, or NM's defaults without one).
+    pub tp: delirium_data::taskparams::TaskParams,
     /// The build as NM's physics has it, for the ragdoll (`bind.rs`).
     pub body: dms_game::body::Body,
     /// The build as the Playroom's `NM_DUMP` writes it.
@@ -73,11 +78,12 @@ fn read(dir: &str) -> Result<Data, String> {
     nm::init_memory(&fred)?;
     let (build, frames) = game.homer()?;
     let dump = build.dump(&frames);
-    let taskparams = match game.taskparams() {
+    let tp_text = game.taskparams();
+    let taskparams = match &tp_text {
         Some(text) => {
             // The SDK reads them from a file; the game's may be inside an archive.
             let tmp = std::env::temp_dir().join(format!("dms-taskparams-{}.txt", std::process::id()));
-            std::fs::write(&tmp, &text).map_err(|e| format!("{}: {e}", tmp.display()))?;
+            std::fs::write(&tmp, text).map_err(|e| format!("{}: {e}", tmp.display()))?;
             let r = nm::load_task_params(&tmp);
             let _ = std::fs::remove_file(&tmp);
             r?;
@@ -93,6 +99,8 @@ fn read(dir: &str) -> Result<Data, String> {
         },
         build: nm::Build::from_text(&dump)?,
         body: dms_game::body::Body::new(&build, &frames),
+        tp: tp_text.as_deref().map_or_else(Default::default, delirium_data::taskparams::read),
+        homer: build,
         dump,
         floor_material: dms_game::concrete(&rows),
         surfaces: rows.len(),
@@ -106,4 +114,15 @@ pub fn floor_world(d: &Data) -> Result<nm::World, String> {
     let mut w = nm::World::new();
     w.add_mesh(&p, &t, &vec![d.floor_material; t.len()])?;
     Ok(w)
+}
+
+/// The Playroom's floor (its 1 m CONCRETE squares, 50 m either way) with its origin at `at` (m), as a FOLLOW
+/// agent's world (`delirium::collision`): with the room's pool hole for the bench's scenarios, without it under a
+/// Homer spawned anywhere else. The map's own geometry comes with M5.
+pub fn floor_collision(d: &Data, at: [f32; 3], pool: bool) -> delirium::collision::Collision {
+    let (p, t) = dms_game::floor(pool, 50.0);
+    let p: Vec<[f32; 3]> = p.iter().map(|v| [v[0] + at[0], v[1] + at[1], v[2] + at[2]]).collect();
+    let mut c = delirium::collision::Collision::default();
+    c.add(&p, &t, &vec![d.floor_material; t.len()]);
+    c
 }

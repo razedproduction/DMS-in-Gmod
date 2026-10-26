@@ -352,6 +352,7 @@ fn behaviour(ctx: &Ctx, args: &[String]) -> Result<(), String> {
         return Err("behaviour --source [names]: only the bench server (Source) is there to compare so far".into());
     };
     names.remove(i);
+    let lead = names.iter().position(|a| a == "--lead").map(|i| names.remove(i)).is_some();
     let bench = dms_ctl::Bench::load()?;
     let mut channel = dms_ctl::Channel::bench(&bench)?;
     let out = ctx.out.join("source");
@@ -365,8 +366,9 @@ fn behaviour(ctx: &Ctx, args: &[String]) -> Result<(), String> {
             failed.push(s.name);
             continue;
         }
-        println!("golden: {}: on the bench ({}, about {:.0} s)...", s.name, s.mode, s.seconds());
-        let rec = match dms_ctl::run(&mut channel, &s) {
+        println!("golden: {}: on the bench ({}, {}, about {:.0} s)...", s.name, s.mode, if lead { "LEAD" } else { "Homer in FOLLOW on Box3D" }, s.seconds());
+        let reference = dms_ctl::rec::parse(&read_text(&theirs)?);
+        let rec = match dms_ctl::run(&mut channel, &s, Some(&reference), lead) {
             Ok(r) => r,
             Err(e) => {
                 println!("golden: {}: FAILED on the bench: {e}", s.name);

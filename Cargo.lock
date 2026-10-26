@@ -672,6 +672,7 @@ name = "gmsv_dms"
 version = "0.1.0"
 dependencies = [
  "delirium",
+ "delirium-data",
  "delirium-sdk",
  "dms-game",
 ]

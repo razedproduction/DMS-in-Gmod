@@ -40,5 +40,6 @@ end
 include("dms/debug_commands.lua")
 include("dms/nm_commands.lua")
 include("dms/homer.lua")
+include("dms/follow.lua")
 include("dms/bench_scene.lua")
 include("dms/dev.lua")

@@ -21,8 +21,10 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::Duration;
 
+use crate::agents;
 use crate::bench::{Bench, ScriptMode, json};
 use crate::data;
+use crate::follow::Script;
 use crate::lua::{self, Api, LuaState, native};
 use crate::step;
 
@@ -57,17 +59,20 @@ struct Server {
     thread: Option<thread::JoinHandle<()>>,
 }
 
-/// The main thread's side: the bench and the request whose scenario runs on it.
+/// The main thread's side: the LEAD bench and the request whose scenario runs on it; a FOLLOW scenario waiting
+/// for Lua to spawn Homer (`DMS.BenchFollow`), and the one running (its request and agent).
 struct Main {
     bench: Option<Bench>,
     run: Option<(u64, u64)>,
+    pending: Option<(u64, u64, Script)>,
+    follow_run: Option<(u64, u64, u32)>,
 }
 
 // SAFETY: the bench's NM objects are only used on the main thread, from `Think`.
 unsafe impl Send for Main {}
 
 static SERVER: Mutex<Option<Server>> = Mutex::new(None);
-static MAIN: Mutex<Main> = Mutex::new(Main { bench: None, run: None });
+static MAIN: Mutex<Main> = Mutex::new(Main { bench: None, run: None, pending: None, follow_run: None });
 static NEXT_CONN: AtomicU64 = AtomicU64::new(1);
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -135,7 +140,7 @@ pub fn stop() {
         }
     }
     let mut main = lock(&MAIN);
-    (main.bench, main.run) = (None, None);
+    (main.bench, main.run, main.pending, main.follow_run) = (None, None, None, None);
 }
 
 fn running() -> Option<(Arc<Shared>, u16)> {
@@ -236,26 +241,67 @@ fn serve(stream: TcpStream, shared: Arc<Shared>) {
     let _ = writer.join();
 }
 
-/// A scenario request: its `#!` mode line, then `<t> <command>` lines (`dms-ctl run` parsed the file).
-fn parse_run(text: &str) -> Result<(ScriptMode, Vec<(f32, String)>), String> {
+/// What a scenario request asks for.
+enum Run {
+    /// On the LEAD bench (`lead` on the mode line): NM's own body, as in M2.5.
+    Lead(ScriptMode, Vec<(f32, String)>),
+    /// On Homer's ragdoll in FOLLOW (ROADMAP M4).
+    Follow(Script),
+}
+
+/// A scenario request (`dms-ctl run` parsed the file): its `#!` mode line (`headless <steps> [press=a,b]` or
+/// `window`, then `lead` for the LEAD bench), then its commands, `@<step> <command>` (the step the Playroom ran it
+/// at, read off its record: docs/adr/0011) or `<t> <command>` (its time; the first runs at step 0).
+fn parse_run(text: &str) -> Result<Run, String> {
     let mut lines = text.lines();
     let head: Vec<&str> = lines.next().unwrap_or("").split_whitespace().collect();
+    let lead = head.contains(&"lead");
     let mode = match head[..] {
         ["headless", steps, ref rest @ ..] => ScriptMode::Headless {
             steps: steps.parse().map_err(|_| format!("headless {steps}: not a step count"))?,
-            press: rest.iter().find_map(|w| w.strip_prefix("press=")).unwrap_or("").split(',').map(String::from).collect(),
+            press: rest.iter().find_map(|w| w.strip_prefix("press=")).unwrap_or("").split(',').filter(|b| !b.is_empty()).map(String::from).collect(),
         },
-        ["window"] => ScriptMode::Window,
-        _ => return Err("the first line is `headless <steps> [press=a,b]` or `window`".into()),
+        ["window", ..] => ScriptMode::Window,
+        _ => return Err("the first line is `headless <steps> [press=a,b]` or `window`, then `lead` for the LEAD bench".into()),
     };
-    let commands = lines
+    enum At {
+        Time(f32),
+        Step(u64),
+    }
+    let commands: Vec<(At, String)> = lines
         .filter(|l| !l.trim().is_empty())
         .map(|l| {
-            let (t, c) = l.split_once(' ').ok_or_else(|| format!("{l}: want `<t> <command>`"))?;
-            Ok((t.parse().map_err(|_| format!("{t}: not a time"))?, c.trim().to_string()))
+            let (t, c) = l.split_once(' ').ok_or_else(|| format!("{l}: want `<t> <command>` or `@<step> <command>`"))?;
+            let at = match t.strip_prefix('@') {
+                Some(s) => At::Step(s.parse().map_err(|_| format!("{t}: not a step"))?),
+                None => At::Time(t.parse().map_err(|_| format!("{t}: not a time"))?),
+            };
+            Ok((at, c.trim().to_string()))
         })
         .collect::<Result<_, String>>()?;
-    Ok((mode, commands))
+    let t0 = commands.iter().find_map(|c| if let At::Time(t) = c.0 { Some(t) } else { None }).unwrap_or(0.0);
+    let step_of = |a: &At| match *a {
+        At::Step(s) => s,
+        At::Time(t) => ((t - t0) * 60.0).round().max(0.0) as u64,
+    };
+    if lead {
+        let lines = commands.iter().map(|(a, c)| (match *a { At::Time(t) => t, At::Step(s) => s as f32 / 60.0 }, c.clone())).collect();
+        return Ok(Run::Lead(mode, lines));
+    }
+    let script = match mode {
+        ScriptMode::Headless { steps, press } => {
+            let buttons = std::iter::once("balance".to_string()).chain(press).map(|b| (0, format!("!button {b}"))).collect();
+            Script::new(buttons, steps, true, None)
+        }
+        ScriptMode::Window => {
+            let end = commands.iter().find(|c| c.1 == "!quit").map(|c| step_of(&c.0)).ok_or("a window scenario ends with `!quit`")?;
+            let mut steps: Vec<(u64, String)> = commands.iter().filter(|c| c.1 != "!quit").map(|c| (step_of(&c.0), c.1.clone())).collect();
+            steps.sort_by_key(|c| c.0);
+            let fall = steps.iter().any(|c| c.0 == 0 && c.1 == "!button fall");
+            Script::new(steps, end, false, fall.then_some(3.0))
+        }
+    };
+    Ok(Run::Follow(script))
 }
 
 /// Runs a module-side request now; `None` when its answer comes later (a scenario's, when it ends).
@@ -282,16 +328,31 @@ fn handle(main: &mut Main, r: &Request) -> Option<Result<String, String>> {
                 main.bench = None;
                 Ok("the bench agent is gone".into())
             }
-            "cancel" => Ok(if bench.cancel() { "the scenario is cancelled" } else { "no scenario runs" }.into()),
+            "cancel" => {
+                let follow = main.follow_run.take().map(|(conn, id, agent)| {
+                    step::with(agent, |f| f.script = None);
+                    (conn, id)
+                });
+                let waiting = follow.or(main.pending.take().map(|(conn, id, _)| (conn, id))).or(main.run.take());
+                Ok(if bench.cancel() || waiting.is_some() { "the scenario is cancelled" } else { "no scenario runs" }.into())
+            }
             t => Err(format!("bench {t}: reset | stop | cancel")),
         }),
         "run" => {
-            if main.run.is_some() {
+            if main.run.is_some() || main.follow_run.is_some() || main.pending.is_some() {
                 return Some(Err("a scenario runs already (bench cancel)".into()));
             }
-            match parse_run(&r.text).and_then(|(mode, lines)| bench.run(&d, mode, lines)) {
-                Ok(()) => {
+            let run = parse_run(&r.text).and_then(|run| match run {
+                Run::Lead(mode, lines) => bench.run(&d, mode, lines).map(|()| None),
+                Run::Follow(s) => Ok(Some(s)),
+            });
+            match run {
+                Ok(None) => {
                     main.run = Some((r.conn, r.id));
+                    None
+                }
+                Ok(Some(s)) => {
+                    main.pending = Some((r.conn, r.id, s));
                     None
                 }
                 Err(e) => Some(Err(e)),
@@ -319,17 +380,35 @@ unsafe fn think(api: &Api, l: *mut LuaState, now: f64, tick: f64, dt: f32, gravi
             for_lua.push(r);
         } else if let Some(answer) = handle(&mut main, &r) {
             shared.reply(r.conn, r.id, answer);
+        } else if let Some((conn, id, s)) = main.pending.as_ref().filter(|p| p.0 == r.conn && p.1 == r.id) {
+            // A FOLLOW scenario: Lua spawns Homer at the room's start (up high for the Playroom's `fall`) and hands
+            // him over with DMS.BenchFollow.
+            let up = s.fallen_from.unwrap_or(0.0);
+            for_lua.push(Request { conn: *conn, id: *id, kind: "bench_spawn".into(), text: format!("{up}") });
         }
     }
+    for (agent, f) in step::finished() {
+        // The record is complete: NM comes off the bench's Homer (an ordinary ragdoll till the next run).
+        step::unfollow(agent);
+        if let Some((conn, id, _)) = main.follow_run.take_if(|r| r.2 == agent) {
+            let note = if f.unsupported.is_empty() { String::new() } else { format!("# dms: not run on the bench: {}\n", f.unsupported.join("; ")) };
+            shared.reply(conn, id, Ok(format!("{note}{}", f.rec)));
+        }
+    }
+    if let Some((conn, id, agent)) = main.follow_run.take_if(|r| step::with(r.2, |_| ()).is_none()) {
+        shared.reply(conn, id, Err(format!("the bench's agent {agent} is gone (NaN, or Homer removed)")));
+    }
+    let (g, mode) = step::gravity();
     let mut fields: Vec<(&'static str, String)> = vec![
         ("t", format!("{now}")),
         ("tick", format!("{tick}")),
         ("frame_dt", json::num(dt)),
         ("hover", step::count().to_string()),
-        // ADR 0007: compensation comes with FOLLOW (M4); the gravities it works from are here already.
-        ("gravity", format!("{{\"nm\":{},\"source\":{},\"compensation\":null}}", json::num(9.8), json::num(gravity))),
-        // The FOLLOW agents on ragdolls (M4) go here.
-        ("agents", "[]".into()),
+        // docs/adr/0007: NM's gravity, Source's, and how the difference is made up.
+        ("gravity", format!("{{\"nm\":{},\"source\":{},\"compensation\":{}}}", json::num(9.8), json::num(gravity), json::string(mode.name()))),
+        ("source_gravity", json::array(g.to_array().iter().map(|&x| json::num(x)))),
+        ("nm_ms", json::num(step::cost_ms() as f32)),
+        ("agents", json::array(step::telemetry())),
     ];
     let d = data::get();
     let main = &mut *main;
@@ -388,12 +467,38 @@ fn publish(shared: &Shared, fields: Vec<(&'static str, String)>) {
 }
 
 pub const NATIVES: &[(&CStr, lua::CFunction)] = &[
+    (c"BenchFollow", bench_follow),
     (c"DevStart", dev_start),
     (c"DevStop", dev_stop),
     (c"DevPort", dev_port),
     (c"DevThink", dev_think),
     (c"DevReply", dev_reply),
 ];
+
+native!(bench_follow => bench_follow_impl);
+/// `DMS.BenchFollow(parts, origin)`: the waiting FOLLOW scenario on Homer, whom Lua just spawned at the room's start
+/// (`origin`, m: NM's frame is the Playroom room's there) and bound. The agent's id; its answer goes to `dms-ctl` as
+/// the scenario ends.
+unsafe fn bench_follow_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
+    let objects = unsafe { agents::parts(api, l, 1)? };
+    let origin = unsafe { api.check_vec3(l, 2)? };
+    let mut main = lock(&MAIN);
+    let (conn, id, script) = main.pending.take().ok_or("no FOLLOW scenario is waiting")?;
+    // SAFETY: Lua unfollows the bench's Homer before removing him.
+    let agent = match unsafe { agents::start(objects, 0.0, origin.into(), true) } {
+        Ok(a) => a,
+        Err(e) => {
+            if let Some((shared, _)) = running() {
+                shared.reply(conn, id, Err(format!("the bench's Homer: {e}")));
+            }
+            return Err(e);
+        }
+    };
+    step::with(agent, |f| f.script = Some(script));
+    main.follow_run = Some((conn, id, agent));
+    unsafe { (api.pushnumber)(l, f64::from(agent)) };
+    Ok(1)
+}
 
 native!(dev_start => dev_start_impl);
 /// `DMS.DevStart(port, token)`: the channel on 127.0.0.1:`port` (restarted if it runs).
