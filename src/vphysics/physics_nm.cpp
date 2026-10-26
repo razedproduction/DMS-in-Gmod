@@ -28,6 +28,21 @@ static bool LoadVector( const float *pIn, float flScale, b3Vec3 &v )
 	return std::isfinite( v.x ) && std::isfinite( v.y ) && std::isfinite( v.z );
 }
 
+// the bodies a constraint NM sets up joins become NM's too
+static bool MarkConstraintBodies( IPhysicsConstraint *pConstraint, bool bResult )
+{
+	if ( bResult )
+	{
+		CPhysicsConstraint *pPhysicsConstraint = static_cast<CPhysicsConstraint *>( pConstraint );
+		for ( CPhysicsObject *pObject : { pPhysicsConstraint->GetReference(), pPhysicsConstraint->GetAttached() } )
+		{
+			if ( pObject )
+				pObject->SetNMDriven();
+		}
+	}
+	return bResult;
+}
+
 bool CPhysicsNM::GetBodyState( const IPhysicsObject *pObject, PhysicsNMBodyState_t *pState )
 {
 	if ( !pObject || !pState )
@@ -56,6 +71,7 @@ bool CPhysicsNM::ApplyBodyDrive( IPhysicsObject *pObject, const float *pForce, c
 		return false;
 
 	static_cast<CPhysicsObject *>( pObject )->ApplyDrive( force, torque );
+	static_cast<CPhysicsObject *>( pObject )->SetNMDriven();
 	return true;
 }
 
@@ -65,7 +81,7 @@ bool CPhysicsNM::SetJointArmature( IPhysicsConstraint *pConstraint, float flArma
 		return false;
 
 	static_cast<CPhysicsConstraint *>( pConstraint )->SetArmature( std::min( flArmature, VPHYSICS_NM_MAX_ARMATURE ) * IVP_TO_SOURCE_SQUARED );
-	return true;
+	return MarkConstraintBodies( pConstraint, true );
 }
 
 float CPhysicsNM::GetJointArmature( const IPhysicsConstraint *pConstraint )
@@ -121,7 +137,7 @@ bool CPhysicsNM::SetJointAnchor( IPhysicsConstraint *pConstraint, const float *p
 	if ( !LoadVector( pWorldPoint, IVP_TO_SOURCE, point ) )
 		return false;
 
-	return pPhysicsConstraint->SetAnchor( &point );
+	return MarkConstraintBodies( pConstraint, pPhysicsConstraint->SetAnchor( &point ) );
 }
 
 static bool LoadQuat( const float *pIn, b3Quat &q )
@@ -148,7 +164,7 @@ bool CPhysicsNM::SetJointLimits( IPhysicsConstraint *pConstraint, IPhysicsObject
 	if ( !std::isfinite( limits[0] ) || !std::isfinite( limits[1] ) || !std::isfinite( limits[2] ) )
 		return false;
 
-	return static_cast<CPhysicsConstraint *>( pConstraint )->SetJointLimits( static_cast<CPhysicsObject *>( pParent ), frames, bHinge, limits );
+	return MarkConstraintBodies( pConstraint, static_cast<CPhysicsConstraint *>( pConstraint )->SetJointLimits( static_cast<CPhysicsObject *>( pParent ), frames, bHinge, limits ) );
 }
 
 bool CPhysicsNM::SetBodyInertia( IPhysicsObject *pObject, const float *pTensor )
@@ -175,6 +191,7 @@ bool CPhysicsNM::SetBodyInertia( IPhysicsObject *pObject, const float *pTensor )
 	// columns of the symmetric matrix, in the body's frame (Source's axes, which Box3D's body frame is)
 	const b3Matrix3 tensor = { { (float)a, (float)b, (float)c }, { (float)b, (float)d, (float)e }, { (float)c, (float)e, (float)f } };
 	static_cast<CPhysicsObject *>( pObject )->SetInertiaTensor( tensor );
+	static_cast<CPhysicsObject *>( pObject )->SetNMDriven();
 	return true;
 }
 
@@ -191,7 +208,7 @@ bool CPhysicsNM::SetJointBallLimits( IPhysicsConstraint *pConstraint, IPhysicsOb
 	if ( !std::isfinite( limits[0] ) || !std::isfinite( limits[1] ) || !std::isfinite( limits[2] ) )
 		return false;
 
-	return static_cast<CPhysicsConstraint *>( pConstraint )->SetJointBall( static_cast<CPhysicsObject *>( pParent ), frames, limits );
+	return MarkConstraintBodies( pConstraint, static_cast<CPhysicsConstraint *>( pConstraint )->SetJointBall( static_cast<CPhysicsObject *>( pParent ), frames, limits ) );
 }
 
 bool CPhysicsNM::GetBodyInertia( const IPhysicsObject *pObject, float *pTensor )

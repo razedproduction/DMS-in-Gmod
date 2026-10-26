@@ -1440,6 +1440,10 @@ bool CPhysicsEnvironment::IsContactActive( b3ShapeId shapeA, b3ShapeId shapeB, b
 	if ( !IsContactEnabled( pObjectA, pObjectB ) || !IsShapePairReachable( shapeA, shapeB, m_flTimestep ) )
 		return false;
 
+	// NM's bodies keep Box3D's own contacts, separating ones too, as in the Playroom
+	if ( pObjectA->IsNMDriven() || pObjectB->IsNMDriven() )
+		return true;
+
 	const b3BodyId bodies[2] = { pObjectA->GetBody(), pObjectB->GetBody() };
 	b3Vec3 velocities[2];
 	for ( int i = 0; i < 2; ++i )

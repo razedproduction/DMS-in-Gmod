@@ -327,6 +327,10 @@ public:
 	void ApplyDrive( b3Vec3 force, b3Vec3 torque );
 	void SetInertiaTensor( const b3Matrix3 &tensor );
 
+	// set once IPhysicsNM drives or shapes the body
+	void SetNMDriven() { m_bNMDriven = true; }
+	bool IsNMDriven() const { return m_bNMDriven; }
+
 	void QueueStiffnessUpdate();
 
 	void ClearStiffnessQueued() { m_bStiffnessQueued = false; }
@@ -564,6 +568,7 @@ private:
 	bool m_bPendingVelocity = false;
 	bool m_bVelocityFlushQueued = false;
 	bool m_bStiffnessQueued = false;
+	bool m_bNMDriven = false;
 	bool m_bQueuedAsWoken = false;
 	bool m_bHasFilterBounds = false;
 	bool m_bCoreVelocityValid = false;
