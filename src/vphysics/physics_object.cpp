@@ -466,7 +466,7 @@ bool CPhysicsObject::IsSolverIsolated() const
 void CPhysicsObject::UpdateFastRotation()
 {
 	if ( m_pCollide )
-		b3Body_AllowFastRotation( m_Body, m_pEnvironment->AllowsFastRotation() && IsSolverIsolated() );
+		b3Body_AllowFastRotation( m_Body, m_bCarWheel || ( m_pEnvironment->AllowsFastRotation() && IsSolverIsolated() ) );
 }
 
 void CPhysicsObject::UpdateFastMotion( float flTimestep )
@@ -519,7 +519,7 @@ void CPhysicsObject::CreateShapes( bool bSensor )
 
 		for ( const std::unique_ptr<CPhysConvex> &pConvex : m_pCollide->GetConvexes() )
 		{
-			if ( bMeshed && pConvex->IsFlat() )
+			if ( bMeshed && pConvex->IsFlat() && !pConvex->IsDetached() )
 				continue;
 
 			const b3HullData *pHull = pConvex->GetHull();
@@ -581,6 +581,15 @@ void CPhysicsObject::QueueVelocityFlush()
 	}
 }
 
+void CPhysicsObject::QueueStiffnessUpdate()
+{
+	if ( m_bStatic || m_bStiffnessQueued )
+		return;
+
+	m_bStiffnessQueued = true;
+	m_pEnvironment->QueueStiffnessUpdate( this );
+}
+
 b3Vec3 CPhysicsObject::GetBodyAngularVelocity( b3Vec3 coreAngular ) const
 {
 	return b3RotateVector( IVPToBox3D( m_NextRotation ), { coreAngular.x, coreAngular.z, -coreAngular.y } );
@@ -616,9 +625,15 @@ void CPhysicsObject::CapturePreStepVelocity( uint32_t nStepCount )
 {
 	m_PreStepVelocity = IVPToSource( GetCoreVelocity() );
 	m_PreStepAngularVelocity = GetBodyAngularVelocity( GetCoreAngularVelocity() );
+	m_PreStepRotation = b3Body_GetRotation( m_Body );
 	m_nPreStepCount = nStepCount;
 	m_bPreStepVelocityValid = true;
 	m_bPreStepAngularVelocityValid = true;
+}
+
+b3Quat CPhysicsObject::GetPreStepRotation() const
+{
+	return m_nPreStepCount == m_pEnvironment->GetStepCount() ? m_PreStepRotation : b3Body_GetRotation( m_Body );
 }
 
 Vector CPhysicsObject::GetPreStepVelocityAtPoint( const Vector &worldPosition ) const
@@ -711,6 +726,7 @@ void CPhysicsObject::MoveTo( DoubleVec3_t origin, DoubleQuat_t rotation, bool is
 	m_CorePosition = core;
 	m_CoreRotation = matrix;
 	m_ImplicitVelocity = b3Vec3_zero;
+	m_flLastStepMotion = 0.0f;
 
 	const b3Vec3 angular = GetCoreAngularVelocity();
 	const b3Transform transform = GetBodyTransform();
@@ -761,6 +777,7 @@ void CPhysicsObject::UpdateTransform( const b3Transform &transform )
 	m_ImplicitVelocity = ToFloat( flInverseTimestep * ( next - m_CorePosition ) );
 	m_NextRotation = Box3DToIVP( transform.q );
 	m_flInverseStepInterval = m_pEnvironment->GetInverseTimestep();
+	m_flLastStepMotion = b3Length( GetCoreVelocity() ) + b3Length( GetCoreAngularVelocity() ) * m_flRestRadius;
 }
 
 void CPhysicsObject::NotifySleep( const b3Transform &transform )
@@ -773,6 +790,7 @@ void CPhysicsObject::NotifySleep( const b3Transform &transform )
 	m_CorePosition = ToDouble( SourceToIVP( b3TransformPoint( transform, ToBox3D( m_MassCenter ) ) ) );
 	m_CoreRotation = QuatToMatrix( m_NextRotation );
 	m_ImplicitVelocity = b3Vec3_zero;
+	m_flLastStepMotion = 0.0f;
 	m_flLastStepTime = m_pEnvironment->GetLastStepTime();
 }
 
@@ -796,8 +814,12 @@ void CPhysicsObject::ResetClock( double flLastStepTime )
 void CPhysicsObject::ComputeRestRadius( b3Vec3 massCenter )
 {
 	const CPhysCollideCompactSurface *pSurface = m_pCollide ? m_pCollide->GetCompactSurface() : nullptr;
-	if ( pSurface )
-		m_flRestRadius = pSurface->GetUpperLimitRadius() + std::sqrt( b3LengthSquared( b3Sub( pSurface->GetIVPMassCenter(), massCenter ) ) );
+	if ( !pSurface )
+		return;
+
+	const float flShift = std::sqrt( b3LengthSquared( b3Sub( pSurface->GetIVPMassCenter(), massCenter ) ) );
+	m_flRestRadius = pSurface->GetUpperLimitRadius() + flShift;
+	m_flRadiusDeviation = pSurface->GetMaxDeviation() + flShift;
 }
 
 double CPhysicsObject::GetRotationDistance( DoubleQuat_t a, DoubleQuat_t b ) const
@@ -815,10 +837,6 @@ void CPhysicsObject::GetRestPose( bool bInStep, DoubleVec3_t &position, DoubleQu
 
 void CPhysicsObject::Revive( double flTime, uint32_t nSequence )
 {
-	m_FineRestPosition = RoundToFloat( m_CorePosition );
-	m_FineRestRotation = RoundToFloat( m_NextRotation );
-	m_CoarseRestPosition = m_FineRestPosition;
-	m_CoarseRestRotation = m_FineRestRotation;
 	m_flFineRestTime = flTime;
 	m_flCoarseRestTime = flTime;
 	m_nRestState = REST_MOVING;
@@ -906,6 +924,7 @@ void CPhysicsObject::Freeze( bool bInStep )
 	b3Body_SetAngularVelocity( m_Body, b3Vec3_zero );
 
 	m_ImplicitVelocity = b3Vec3_zero;
+	m_flLastStepMotion = 0.0f;
 	m_CorePosition = position;
 	m_LastRotation = lastRotation;
 	m_NextRotation = lastRotation;
@@ -944,6 +963,8 @@ CPhysicsObject::~CPhysicsObject()
 		m_pEnvironment->RemovePendingVelocity( this );
 	if ( m_bVelocityFlushQueued )
 		m_pEnvironment->RemoveVelocityFlush( this );
+	if ( m_bStiffnessQueued )
+		m_pEnvironment->RemoveStiffnessUpdate( this );
 	b3DestroyBody( m_Body );
 }
 
@@ -1106,10 +1127,45 @@ void CPhysicsObject::EnableDrag( bool enable )
 		DetachController( m_pEnvironment->GetDragController() );
 }
 
+static void CollectSleepingIsland( b3BodyId body, std::vector<b3BodyId> &bodies )
+{
+	static thread_local std::vector<b3ContactData> s_Contacts;
+	static thread_local std::vector<b3JointId> s_Joints;
+	bodies.assign( 1, body );
+	const auto visit = [&]( b3BodyId partner ) {
+		if ( b3Body_GetType( partner ) == b3_staticBody || b3Body_IsAwake( partner ) || std::any_of( bodies.begin(), bodies.end(), [partner]( b3BodyId body ) { return B3_ID_EQUALS( body, partner ); } ) )
+			return;
+
+		bodies.push_back( partner );
+	};
+	for ( size_t i = 0; i < bodies.size(); ++i )
+	{
+		const b3BodyId current = bodies[i];
+		s_Contacts.resize( b3Body_GetContactCapacity( current ) );
+		s_Contacts.resize( b3Body_GetContactData( current, s_Contacts.data(), static_cast<int>( s_Contacts.size() ) ) );
+		for ( const b3ContactData &data : s_Contacts )
+		{
+			visit( b3Shape_GetBody( data.shapeIdA ) );
+			visit( b3Shape_GetBody( data.shapeIdB ) );
+		}
+		s_Joints.resize( b3Body_GetJointCount( current ) );
+		b3Body_GetJoints( current, s_Joints.data(), static_cast<int>( s_Joints.size() ) );
+		for ( b3JointId joint : s_Joints )
+		{
+			visit( b3Joint_GetBodyA( joint ) );
+			visit( b3Joint_GetBodyB( joint ) );
+		}
+	}
+}
+
 void CPhysicsObject::EnableMotion( bool enable )
 {
 	if ( m_bStatic || m_bMotionEnabled == enable )
 		return;
+
+	std::vector<b3BodyId> sleepingIsland;
+	if ( IsAsleep() )
+		CollectSleepingIsland( m_Body, sleepingIsland );
 
 	m_bMotionEnabled = enable;
 	SetCoreVelocity( b3Vec3_zero );
@@ -1139,6 +1195,12 @@ void CPhysicsObject::EnableMotion( bool enable )
 	RecheckContactPoints();
 	if ( enable && m_bCollisionEnabled )
 		m_pEnvironment->QueuePenetrationCheck( this );
+
+	for ( b3BodyId body : sleepingIsland )
+	{
+		if ( b3Body_IsAwake( body ) )
+			b3Body_SetAwake( body, false );
+	}
 }
 
 void CPhysicsObject::Wake()
@@ -1277,7 +1339,9 @@ void CPhysicsObject::SetCoreVelocity( b3Vec3 velocity )
 {
 	m_CoreVelocity = velocity;
 	m_bCoreVelocityValid = true;
-	m_bPreStepVelocityValid = false;
+	if ( m_bReportPreStepVelocity )
+		m_bPreStepVelocityValid = false;
+	m_bReportImpactVelocity = false;
 	QueueVelocityFlush();
 }
 
@@ -1300,7 +1364,9 @@ void CPhysicsObject::SetCoreAngularVelocity( b3Vec3 angular )
 {
 	m_CoreAngularVelocity = angular;
 	m_bCoreAngularVelocityValid = true;
-	m_bPreStepAngularVelocityValid = false;
+	if ( m_bReportPreStepVelocity )
+		m_bPreStepAngularVelocityValid = false;
+	m_bReportImpactAngularVelocity = false;
 	QueueVelocityFlush();
 }
 
@@ -1449,6 +1515,9 @@ void CPhysicsObject::AddVelocity( const Vector *velocity, const AngularImpulse *
 
 b3Vec3 CPhysicsObject::GetReportedVelocity() const
 {
+	if ( m_bReportImpactVelocity )
+		return m_ImpactVelocity;
+
 	if ( m_bReportPreStepVelocity && m_bPreStepVelocityValid )
 		return SourceToIVP( m_nPreStepCount == m_pEnvironment->GetStepCount() ? m_PreStepVelocity : b3Vec3_zero );
 	return GetCoreVelocity();
@@ -1456,12 +1525,23 @@ b3Vec3 CPhysicsObject::GetReportedVelocity() const
 
 b3Vec3 CPhysicsObject::GetReportedAngularVelocity() const
 {
+	if ( m_bReportImpactAngularVelocity )
+		return m_ImpactAngularVelocity;
+
 	if ( m_bReportPreStepVelocity && m_bPreStepAngularVelocityValid )
 	{
 		const b3Vec3 w = m_nPreStepCount == m_pEnvironment->GetStepCount() ? m_PreStepAngularVelocity : b3Vec3_zero;
 		return IVPToCore( { w.x, -w.z, w.y } );
 	}
 	return GetCoreAngularVelocity();
+}
+
+void CPhysicsObject::SetReportedImpactVelocity( b3Vec3 velocity, b3Vec3 angularVelocity )
+{
+	m_ImpactVelocity = b3Sub( velocity, m_PendingVelocity );
+	m_ImpactAngularVelocity = b3Sub( angularVelocity, m_PendingAngularVelocity );
+	m_bReportImpactVelocity = true;
+	m_bReportImpactAngularVelocity = true;
 }
 
 void CPhysicsObject::GetVelocity( Vector *velocity, AngularImpulse *angularVelocity ) const
@@ -1883,6 +1963,8 @@ void CPhysicsObject::UpdateInverseMass()
 void CPhysicsObject::UpdateMassData()
 {
 	ApplyMassData();
+	if ( !m_Constraints.empty() )
+		QueueStiffnessUpdate();
 	m_flFastDistance = b3Body_GetSafetyFactor( m_Body ) * b3Body_GetMinExtent( m_Body );
 	m_flMaxExtent = b3Length( b3Body_GetMaxExtent( m_Body ) );
 }

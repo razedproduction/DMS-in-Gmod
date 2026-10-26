@@ -170,8 +170,6 @@ b3JointDef &CPhysicsConstraint::GetBaseDefinition( JointDef_t &def, b3JointType 
 		return def.m_Weld.base;
 	case b3_sphericalJoint:
 		return def.m_Spherical.base;
-	case b3_distanceJoint:
-		return def.m_Distance.base;
 	default:
 		return def.m_Filter.base;
 	}
@@ -180,6 +178,80 @@ b3JointDef &CPhysicsConstraint::GetBaseDefinition( JointDef_t &def, b3JointType 
 static b3Vec3 GetWorldLocal( b3BodyId body, const Vector &worldPosition )
 {
 	return b3InvTransformWorldPoint( b3Body_GetTransform( body ), b3ToPos( ToBox3D( worldPosition ) ) );
+}
+
+static b3Matrix3 GetLeverCompliance( const CPhysicsObject *pObject, b3Quat rotation )
+{
+	if ( pObject->IsStatic() )
+		return b3Mat3_zero;
+
+	const Vector inertia = pObject->GetInertia();
+	b3Matrix3 compliance = b3Mat3_zero;
+	compliance.cx.x = 1.0f / inertia.y + 1.0f / inertia.z;
+	compliance.cy.y = 1.0f / inertia.x + 1.0f / inertia.z;
+	compliance.cz.z = 1.0f / inertia.x + 1.0f / inertia.y;
+	const b3Matrix3 basis = b3MakeMatrixFromQuat( rotation );
+	return b3MulMM( b3MulMM( basis, compliance ), b3Transpose( basis ) );
+}
+
+static int GetSolvedJointCount( const CPhysicsObject *pObject )
+{
+	int nJoints = 0;
+	for ( const CPhysicsConstraint *pConstraint : pObject->GetConstraints() )
+		nJoints += pConstraint->HasJoint() && pConstraint->GetJointType() != b3_filterJoint;
+	return nJoints;
+}
+
+static void DecoupleJointAnchor( b3JointDef &base, const CPhysicsObject *pReference, const CPhysicsObject *pAttached, float flReferenceWeight, float flAttachedWeight, bool bHinge )
+{
+	if ( pReference->IsStatic() && pAttached->IsStatic() )
+		return;
+
+	const b3Transform frameA = base.localFrameA, frameB = base.localFrameB;
+	const b3Matrix3 complianceA = b3MulSM( flReferenceWeight, GetLeverCompliance( pReference, b3Quat_identity ) );
+	const b3Matrix3 complianceB = b3MulSM( flAttachedWeight, GetLeverCompliance( pAttached, b3MulQuat( frameA.q, b3Conjugate( frameB.q ) ) ) );
+	const b3Vec3 centerA = ToBox3D( pReference->GetMassCenterLocalSpace() );
+	const b3Vec3 centerB = b3TransformPoint( frameA, b3InvTransformPoint( frameB, ToBox3D( pAttached->GetMassCenterLocalSpace() ) ) );
+	const b3Matrix3 compliance = b3AddMM( complianceA, complianceB );
+	const b3Vec3 weighted = b3Add( b3MulMV( complianceA, centerA ), b3MulMV( complianceB, centerB ) );
+	if ( bHinge )
+	{
+		const b3Vec3 axis = b3RotateVector( frameA.q, b3Vec3_axisZ );
+		const float flCompliance = b3Dot( axis, b3MulMV( compliance, axis ) );
+		if ( !( flCompliance > 0.0f ) )
+			return;
+
+		base.localFrameA.p = b3MulAdd( frameA.p, b3Dot( axis, b3Sub( weighted, b3MulMV( compliance, frameA.p ) ) ) / flCompliance, axis );
+	}
+	else
+	{
+		base.localFrameA.p = b3MulMV( b3InvertMatrix( compliance ), weighted );
+	}
+	base.localFrameB.p = b3TransformPoint( frameB, b3InvTransformPoint( frameA, base.localFrameA.p ) );
+}
+
+struct JointCompliance_t
+{
+	b3Matrix3 m_Linear;
+	b3Matrix3 m_Angular;
+};
+
+static JointCompliance_t GetJointCompliance( b3BodyId body, b3Vec3 anchor )
+{
+	if ( b3Body_GetType( body ) != b3_dynamicBody )
+		return { b3Mat3_zero, b3Mat3_zero };
+
+	const b3MassData massData = b3Body_GetMassData( body );
+	if ( !( massData.mass > 0.0f ) )
+		return { b3Mat3_zero, b3Mat3_zero };
+
+	const b3Quat rotation = b3Body_GetRotation( body );
+	const b3Matrix3 basis = b3MakeMatrixFromQuat( rotation );
+	const b3Matrix3 inverseInertia = b3MulMM( b3MulMM( basis, b3InvertMatrix( massData.inertia ) ), b3Transpose( basis ) );
+	const b3Vec3 lever = b3RotateVector( rotation, b3Sub( anchor, massData.center ) );
+	const float flInverseMass = 1.0f / massData.mass;
+	const auto column = [&]( b3Vec3 axis ) { return b3MulAdd( b3Cross( b3MulMV( inverseInertia, b3Cross( lever, axis ) ), lever ), flInverseMass, axis ); };
+	return { { column( b3Vec3_axisX ), column( b3Vec3_axisY ), column( b3Vec3_axisZ ) }, inverseInertia };
 }
 
 CPhysicsConstraintGroup::CPhysicsConstraintGroup( CPhysicsEnvironment *pEnvironment, int nIterations, int nMinErrorTicks, float flErrorTolerance )
@@ -285,9 +357,12 @@ void CPhysicsConstraintGroup::Simulate( CPhysicsObject *, float flTimestep )
 	}
 
 	const int nCount = static_cast<int>( m_Constraints.size() );
+	const ConstraintStep_t step = { flTimestep, m_pEnvironment->GetInverseTimestep() };
+	for ( CPhysicsConstraint *pConstraint : m_Constraints )
+		pConstraint->ApplyHingeServo( step );
+
 	if ( m_nRowConstraints > 0 )
 	{
-		const ConstraintStep_t step = { flTimestep, m_pEnvironment->GetInverseTimestep() };
 		for ( int i = 0; i < nCount; ++i )
 		{
 			if ( m_Constraints[i]->IsSolvedByRows() )
@@ -313,7 +388,6 @@ void CPhysicsConstraintGroup::Simulate( CPhysicsObject *, float flTimestep )
 	for ( int i = 0; i < nCount; ++i )
 	{
 		CPhysicsConstraint *pConstraint = m_Constraints[i];
-		pConstraint->UpdateBreakThresholds( flTimestep );
 		if ( pConstraint->ReportsError() )
 		{
 			const float flSeparation = pConstraint->GetJointSeparation() * SOURCE_TO_IVP;
@@ -602,7 +676,8 @@ CPhysicsConstraint *CPhysicsConstraint::CreateSliding( CPhysicsEnvironment *pEnv
 	def.base.localFrameB = b3MulTransforms( b3InvertTransform( attachedToReference ), frameA );
 	def.base.constraintHertz *= std::max( sliding.constraint.strength, 0.0f );
 
-	if ( sliding.limitMin != sliding.limitMax && !IsFullCircle( sliding.limitMin * SOURCE_TO_IVP, sliding.limitMax * SOURCE_TO_IVP ) )
+	const bool bLimited = sliding.limitMin != sliding.limitMax && !IsFullCircle( sliding.limitMin * SOURCE_TO_IVP, sliding.limitMax * SOURCE_TO_IVP );
+	if ( bLimited )
 	{
 		def.enableLimit = true;
 		def.lowerTranslation = std::min( sliding.limitMin, sliding.limitMax );
@@ -619,6 +694,14 @@ CPhysicsConstraint *CPhysicsConstraint::CreateSliding( CPhysicsEnvironment *pEnv
 	pConstraint->m_nJointType = b3_prismaticJoint;
 	pConstraint->m_AttachedRefXform = sliding.attachedRefXform;
 	pConstraint->m_SlideAxis = NormalizeOrZero( ToBox3D( sliding.slideAxisRef ) );
+	if ( pReference && pAttached )
+	{
+		const float flReferenceMass = pReference->GetMass();
+		const float flAttachedMass = pAttached->GetMass();
+		const float flWeight = flReferenceMass == 0.0f ? 1.0f : ( flAttachedMass == 0.0f ? 0.0f : flAttachedMass / ( flAttachedMass + flReferenceMass ) );
+		pConstraint->m_Sliding.Initialize( SourceToIVPDirection( pConstraint->m_SlideAxis ), flWeight, sliding.limitMin * SOURCE_TO_IVP, sliding.limitMax * SOURCE_TO_IVP, bLimited, pConstraint->GetSlidePosition() );
+	}
+	pConstraint->m_Sliding.SetMotor( sliding.velocity * SOURCE_TO_IVP, std::fabs( sliding.friction ) * SOURCE_TO_IVP, sliding.friction != 0.0f );
 	pConstraint->Initialize( pGroup, sliding.constraint, sliding.constraint.isActive );
 	return pConstraint;
 }
@@ -646,23 +729,10 @@ CPhysicsConstraint *CPhysicsConstraint::CreateEmpty( CPhysicsEnvironment *pEnvir
 CPhysicsConstraint *CPhysicsConstraint::CreateLength( CPhysicsEnvironment *pEnvironment, CPhysicsObject *pReference, CPhysicsObject *pAttached, CPhysicsConstraintGroup *pGroup, const constraint_lengthparams_t &length )
 {
 	CPhysicsConstraint *pConstraint = new CPhysicsConstraint( pEnvironment, pReference, pAttached, CONSTRAINT_LENGTH );
-	b3DistanceJointDef &def = pConstraint->m_Definition.m_Distance;
-	def = b3DefaultDistanceJointDef();
-	def.base.localFrameA = { ToBox3D( length.objectPosition[0] ), b3Quat_identity };
-	def.base.localFrameB = { ToBox3D( length.objectPosition[1] ), b3Quat_identity };
-	def.base.constraintHertz *= std::max( length.constraint.strength, 0.0f );
-
-	const float flMaxLength = std::max( length.totalLength, B3_LINEAR_SLOP );
-	def.length = flMaxLength;
-	if ( length.minLength * SOURCE_TO_IVP < length.totalLength * SOURCE_TO_IVP )
-	{
-		def.enableSpring = true;
-		def.enableLimit = true;
-		def.minLength = length.minLength;
-		def.maxLength = flMaxLength;
-	}
-
-	pConstraint->m_nJointType = b3_distanceJoint;
+	const b3Vec3 anchors[2] = { SourceToIVP( length.objectPosition[0] ), SourceToIVP( length.objectPosition[1] ) };
+	pConstraint->m_Length.Initialize( anchors, length.minLength * SOURCE_TO_IVP, length.totalLength * SOURCE_TO_IVP, length.constraint.strength );
+	pConstraint->m_Definition.m_Filter = b3DefaultFilterJointDef();
+	pConstraint->m_nJointType = b3_filterJoint;
 	pConstraint->Initialize( pGroup, length.constraint, length.constraint.isActive );
 	return pConstraint;
 }
@@ -1030,6 +1100,16 @@ void CPhysicsConstraint::SetupRows( const ConstraintStep_t &step )
 
 	if ( m_nType == CONSTRAINT_PULLEY )
 		RunRows( [&]( ConstraintBody_t bodies[2] ) { m_Pulley.Setup( bodies, step ); } );
+	else if ( m_nType == CONSTRAINT_LENGTH )
+		RunRows( [&]( ConstraintBody_t bodies[2] ) { m_Length.Setup( bodies, step ); } );
+	else if ( m_nType == CONSTRAINT_SLIDING )
+	{
+		if ( m_Sliding.NeedsSolve() )
+		{
+			const float flPosition = GetSlidePosition();
+			RunRows( [&]( ConstraintBody_t bodies[2] ) { m_Sliding.Setup( bodies, step, flPosition ); } );
+		}
+	}
 	else
 		RunRows( [&]( ConstraintBody_t bodies[2] ) { m_Ragdoll.Setup( bodies, step ); } );
 
@@ -1055,6 +1135,13 @@ void CPhysicsConstraint::SolveRows( float flAlpha, float flBeta, const Constrain
 
 	if ( m_nType == CONSTRAINT_PULLEY )
 		RunRows( [&]( ConstraintBody_t bodies[2] ) { m_Pulley.Solve( bodies, flAlpha, flBeta, step ); } );
+	else if ( m_nType == CONSTRAINT_LENGTH )
+		RunRows( [&]( ConstraintBody_t bodies[2] ) { m_Length.Solve( bodies, flAlpha, flBeta, step ); } );
+	else if ( m_nType == CONSTRAINT_SLIDING )
+	{
+		if ( m_Sliding.NeedsSolve() )
+			RunRows( [&]( ConstraintBody_t bodies[2] ) { m_Sliding.Solve( bodies, flAlpha, flBeta, step ); } );
+	}
 	else if ( m_Ragdoll.NeedsSolve() )
 		RunRows( [&]( ConstraintBody_t bodies[2] ) { m_Ragdoll.Solve( bodies, flAlpha, flBeta, step ); } );
 }
@@ -1067,6 +1154,8 @@ void CPhysicsConstraint::DetachObjects()
 	m_pReference->DetachConstraint( this );
 	if ( m_pAttached != m_pReference )
 		m_pAttached->DetachConstraint( this );
+	m_pReference->QueueStiffnessUpdate();
+	m_pAttached->QueueStiffnessUpdate();
 	m_pReference = nullptr;
 	m_pAttached = nullptr;
 }
@@ -1096,9 +1185,13 @@ void CPhysicsConstraint::CreateJoint()
 	switch ( m_nJointType )
 	{
 	case b3_revoluteJoint:
+		if ( m_nType == CONSTRAINT_HINGE )
+			def.m_Revolute.enableMotor = false;
 		m_Joint = b3CreateRevoluteJoint( world, &def.m_Revolute );
 		break;
 	case b3_prismaticJoint:
+		def.m_Prismatic.enableLimit = false;
+		def.m_Prismatic.enableMotor = false;
 		m_Joint = b3CreatePrismaticJoint( world, &def.m_Prismatic );
 		break;
 	case b3_weldJoint:
@@ -1106,9 +1199,6 @@ void CPhysicsConstraint::CreateJoint()
 		break;
 	case b3_sphericalJoint:
 		m_Joint = b3CreateSphericalJoint( world, &def.m_Spherical );
-		break;
-	case b3_distanceJoint:
-		m_Joint = b3CreateDistanceJoint( world, &def.m_Distance );
 		break;
 	default:
 		m_Joint = b3CreateFilterJoint( world, &def.m_Filter );
@@ -1118,9 +1208,15 @@ void CPhysicsConstraint::CreateJoint()
 	if ( m_flArmature > 0.0f )
 		b3Joint_SetArmature( m_Joint, m_flArmature );
 
-	m_flBreakMass = -1.0f;
-	UpdateBreakThresholds( m_pEnvironment->GetSimulationTimestep() );
+	if ( m_bBreakable && m_nJointType != b3_filterJoint )
+	{
+		m_flBreakMass = -1.0f;
+		UpdateBreakThresholds();
+		m_pEnvironment->AddBreakableConstraint( this );
+	}
 	NotifyWokenObjects();
+	m_pReference->QueueStiffnessUpdate();
+	m_pAttached->QueueStiffnessUpdate();
 }
 
 void CPhysicsConstraint::SetArmature( float flArmature )
@@ -1309,42 +1405,179 @@ void CPhysicsConstraint::DestroyJoint( bool bWakeAttached )
 
 	b3DestroyJoint( m_Joint, bWakeAttached );
 	m_Joint = b3_nullJointId;
+	if ( m_bBreakable )
+		m_pEnvironment->RemoveBreakableConstraint( this );
 	if ( bWakeAttached )
 		NotifyWokenObjects();
-}
-
-float CPhysicsConstraint::GetBreakMass() const
-{
-	float flMass = 0.0f;
-	for ( const CPhysicsObject *pObject : { m_pReference, m_pAttached } )
+	for ( CPhysicsObject *pObject : { m_pReference, m_pAttached } )
 	{
-		if ( pObject && pObject->IsMoveable() && ( flMass == 0.0f || pObject->GetMass() < flMass ) )
-			flMass = pObject->GetMass();
+		if ( pObject )
+			pObject->QueueStiffnessUpdate();
 	}
-	return flMass;
 }
 
-void CPhysicsConstraint::UpdateBreakThresholds( float flTimestep )
+void CPhysicsConstraint::ApplyHingeServo( const ConstraintStep_t &step )
 {
-	if ( !m_bBreakable || !HasJoint() || m_nJointType == b3_filterJoint )
+	const b3RevoluteJointDef &def = m_Definition.m_Revolute;
+	if ( m_nType != CONSTRAINT_HINGE || !def.enableMotor || !HasJoint() )
 		return;
 
-	const float flMass = GetBreakMass();
-	if ( flMass == m_flBreakMass && flTimestep == m_flBreakTimestep )
+	CPhysicsObject *const objects[2] = { m_pReference, m_pAttached };
+	const b3Vec3 local = b3RotateVector( b3Joint_GetLocalFrameB( m_Joint ).q, b3Vec3_axisZ );
+	const b3Vec3 attachedAxis = { local.x, -local.z, local.y };
+	const b3Vec3 axes[2] = { m_pReference->IVPToCore( m_pAttached->CoreToIVP( attachedAxis ) ), attachedAxis };
+	b3Vec3 responses[2] = { b3Vec3_zero, b3Vec3_zero };
+	float flInverseMass = 0.0f;
+	for ( int i = 0; i < 2; ++i )
+	{
+		if ( !objects[i]->IsMoveable() )
+			continue;
+
+		const b3Vec3 inverseInertia = objects[i]->GetCoreInverseInertia();
+		responses[i] = { inverseInertia.x * axes[i].x, inverseInertia.y * axes[i].y, inverseInertia.z * axes[i].z };
+		flInverseMass += b3Dot( axes[i], responses[i] );
+	}
+	if ( !( flInverseMass > 0.0f ) )
+		return;
+
+	float flError = m_flServoAngle - b3RevoluteJoint_GetAngle( m_Joint );
+	flError -= flError > PI ? TWO_PI : ( flError < -PI ? -TWO_PI : 0.0f );
+	const float flSpeed = b3Dot( axes[1], m_pAttached->GetCoreAngularVelocity() ) - b3Dot( axes[0], m_pReference->GetCoreAngularVelocity() );
+	const float flMaxImpulse = ( def.maxMotorTorque / IVP_TO_SOURCE_SQUARED ) * step.m_flTimestep;
+	float flImpulse = ( SERVO_GAIN * flError * step.m_flInverseTimestep - flSpeed ) / flInverseMass;
+	float flFraction = 1.0f;
+	if ( std::fabs( flImpulse ) > flMaxImpulse )
+		flFraction = flMaxImpulse / std::fabs( flImpulse );
+	flImpulse *= flFraction;
+
+	m_flServoAngle += def.motorSpeed * step.m_flTimestep - ( 1.0f - flFraction ) * flError;
+	m_flServoAngle -= m_flServoAngle > PI ? TWO_PI : ( m_flServoAngle < -PI ? -TWO_PI : 0.0f );
+
+	for ( int i = 0; i < 2; ++i )
+	{
+		if ( !objects[i]->IsMoveable() )
+			continue;
+
+		const float flSigned = i == 0 ? -flImpulse : flImpulse;
+		objects[i]->SetCoreAngularVelocity( b3MulAdd( objects[i]->GetCoreAngularVelocity(), flSigned, responses[i] ) );
+	}
+}
+
+void CPhysicsConstraint::UpdateJointAnchor()
+{
+	JointDef_t def = m_Definition;
+	b3JointDef &base = GetBaseDefinition( def, m_nJointType );
+	DecoupleJointAnchor( base, m_pReference, m_pAttached, static_cast<float>( GetSolvedJointCount( m_pReference ) ), static_cast<float>( GetSolvedJointCount( m_pAttached ) ), m_nJointType == b3_revoluteJoint );
+	b3Joint_SetLocalFrameA( m_Joint, base.localFrameA );
+	b3Joint_SetLocalFrameB( m_Joint, base.localFrameB );
+}
+
+void CPhysicsConstraint::UpdateStiffnessCoupling()
+{
+	m_StiffnessCoupling[0] = {};
+	m_StiffnessCoupling[1] = {};
+	if ( !HasJoint() || m_nJointType == b3_filterJoint )
+		return;
+
+	if ( m_nJointType == b3_weldJoint || m_nJointType == b3_revoluteJoint )
+		UpdateJointAnchor();
+
+	m_flStiffnessHertz = GetBaseDefinition( m_Definition, m_nJointType ).constraintHertz;
+	const bool bAngular = m_nJointType == b3_weldJoint || m_nJointType == b3_revoluteJoint || m_nJointType == b3_prismaticJoint;
+	const b3BodyId bodies[2] = { m_pReference->GetBody(), m_pAttached->GetBody() };
+	const b3Vec3 anchors[2] = { b3Joint_GetLocalFrameA( m_Joint ).p, b3Joint_GetLocalFrameB( m_Joint ).p };
+	const JointCompliance_t compliance[2] = { GetJointCompliance( bodies[0], anchors[0] ), GetJointCompliance( bodies[1], anchors[1] ) };
+	const b3Matrix3 linear = b3AddMM( compliance[0].m_Linear, compliance[1].m_Linear );
+	const b3Matrix3 angular = b3AddMM( compliance[0].m_Angular, compliance[1].m_Angular );
+	if ( !( b3AbsFloat( b3Det( linear ) ) > 0.0f ) )
+		return;
+
+	const float flHertzSquared = m_flStiffnessHertz * m_flStiffnessHertz;
+	const b3Matrix3 linearStiffness = b3MulSM( flHertzSquared, b3InvertMatrix( linear ) );
+	const b3Matrix3 angularStiffness = bAngular && b3AbsFloat( b3Det( angular ) ) > 0.0f ? b3MulSM( flHertzSquared, b3InvertMatrix( angular ) ) : b3Mat3_zero;
+	for ( int i = 0; i < 2; ++i )
+	{
+		if ( b3Body_GetType( bodies[i] ) != b3_dynamicBody )
+			continue;
+
+		const b3Matrix3 basis = b3MakeMatrixFromQuat( b3Body_GetRotation( bodies[i] ) );
+		const b3Matrix3 inverse = b3Transpose( basis );
+		m_StiffnessCoupling[i] = { b3MulMM( b3MulMM( inverse, linearStiffness ), basis ), b3MulMM( b3MulMM( inverse, angularStiffness ), basis ), b3Sub( anchors[i], b3Body_GetMassData( bodies[i] ).center ) };
+	}
+}
+
+void CPhysicsConstraint::ApplyStiffnessBudget()
+{
+	if ( !HasJoint() || m_nJointType == b3_filterJoint )
+		return;
+
+	const float flScale = std::min( m_pReference->GetStiffnessScale(), m_pAttached->GetStiffnessScale() );
+	b3Joint_SetConstraintTuning( m_Joint, m_flStiffnessHertz * std::sqrt( flScale ), GetBaseDefinition( m_Definition, m_nJointType ).constraintDampingRatio );
+}
+
+float CPhysicsConstraint::GetBreakMass( int nBody ) const
+{
+	const float flMass = ( nBody ? m_pAttached : m_pReference )->GetMass();
+	return m_BodyMassScale[nBody] == 1.0f ? flMass : std::min( flMass * m_BodyMassScale[nBody], MAX_SCALED_MASS );
+}
+
+void CPhysicsConstraint::UpdateBreakThresholds()
+{
+	float flMass = FLT_MAX;
+	for ( int i = 0; i < 2; ++i )
+	{
+		if ( ( i ? m_pAttached : m_pReference )->IsMoveable() )
+			flMass = std::min( flMass, GetBreakMass( i ) );
+	}
+
+	const float flSubstepRate = m_pEnvironment->GetSubstepRate();
+	if ( flMass == m_flBreakMass && flSubstepRate == m_flBreakSubstepRate )
 		return;
 
 	m_flBreakMass = flMass;
-	m_flBreakTimestep = flTimestep;
-	const bool bMoveable = flMass > 0.0f;
-	const float flForce = bMoveable && m_flForceLimit < UNBREAKABLE_LIMIT ? ( m_flForceLimit * IVP_TO_SOURCE ) * std::sqrt( flMass ) / flTimestep : FLT_MAX;
-	const float flTorque = bMoveable && m_flTorqueLimit < UNBREAKABLE_LIMIT ? ( m_flTorqueLimit * IVP_TO_SOURCE_SQUARED ) / flTimestep : FLT_MAX;
-	b3Joint_SetForceThreshold( m_Joint, flForce );
-	b3Joint_SetTorqueThreshold( m_Joint, flTorque );
+	m_flBreakSubstepRate = flSubstepRate;
+	const bool bMoveable = flMass < FLT_MAX;
+	b3Joint_SetForceThreshold( m_Joint, bMoveable && m_flForceLimit < UNBREAKABLE_LIMIT ? ( m_flForceLimit * IVP_TO_SOURCE ) * std::sqrt( flMass ) * flSubstepRate : FLT_MAX );
+	b3Joint_SetTorqueThreshold( m_Joint, bMoveable && m_flTorqueLimit < UNBREAKABLE_LIMIT ? ( m_flTorqueLimit * IVP_TO_SOURCE_SQUARED ) * flSubstepRate : FLT_MAX );
+}
+
+bool CPhysicsConstraint::IsOverloaded( float flTimestep ) const
+{
+	const b3BodyId bodies[2] = { m_pReference->GetBody(), m_pAttached->GetBody() };
+	if ( !b3Body_IsAwake( bodies[0] ) && !b3Body_IsAwake( bodies[1] ) )
+		return false;
+
+	const b3Vec3 impulse = b3MulSV( flTimestep, b3Joint_GetConstraintForce( m_Joint ) );
+	const b3Vec3 angularImpulse = b3MulSV( flTimestep, b3Joint_GetConstraintTorque( m_Joint ) );
+	const b3Vec3 anchors[2] = { b3Joint_GetLocalFrameA( m_Joint ).p, b3Joint_GetLocalFrameB( m_Joint ).p };
+	const CPhysicsObject *const objects[2] = { m_pReference, m_pAttached };
+	for ( int i = 0; i < 2; ++i )
+	{
+		if ( !objects[i]->IsMoveable() )
+			continue;
+
+		const float flMass = GetBreakMass( i );
+		const b3Vec3 lever = b3RotateVector( b3Body_GetRotation( bodies[i] ), b3Sub( anchors[i], b3Body_GetLocalCenter( bodies[i] ) ) );
+		const float flSpeed = ( b3Length( impulse ) / flMass ) * SOURCE_TO_IVP;
+		const float flMomentum = b3Length( b3Add( angularImpulse, b3Cross( lever, impulse ) ) ) / IVP_TO_SOURCE_SQUARED;
+		if ( m_flForceLimit * m_flForceLimit <= flSpeed * flSpeed * flMass || m_flTorqueLimit * m_flTorqueLimit <= flMomentum * flMomentum )
+			return true;
+	}
+	return false;
 }
 
 float CPhysicsConstraint::GetJointSeparation() const
 {
-	return HasJoint() && m_nJointType != b3_filterJoint ? b3Joint_GetLinearSeparation( m_Joint ) : 0.0f;
+	if ( !HasJoint() || m_nJointType == b3_filterJoint )
+		return 0.0f;
+
+	if ( m_nJointType != b3_weldJoint )
+		return b3Joint_GetLinearSeparation( m_Joint );
+
+	const b3JointDef &base = m_Definition.m_Weld.base;
+	const b3Pos anchorA = b3TransformWorldPoint( b3Body_GetTransform( m_pReference->GetBody() ), base.localFrameA.p );
+	const b3Pos anchorB = b3TransformWorldPoint( b3Body_GetTransform( m_pAttached->GetBody() ), base.localFrameB.p );
+	return b3Length( b3SubPos( anchorB, anchorA ) );
 }
 
 void CPhysicsConstraint::ObjectDestroyed( CPhysicsObject *pObject )
@@ -1397,12 +1630,17 @@ void CPhysicsConstraint::SetLinearMotor( float speed, float maxLinearImpulse )
 	def.enableMotor = maxLinearImpulse != 0.0f;
 	def.motorSpeed = speed;
 	def.maxMotorForce = std::fabs( maxLinearImpulse );
-	if ( !HasJoint() )
-		return;
+	m_Sliding.SetMotor( speed * SOURCE_TO_IVP, std::fabs( maxLinearImpulse ) * SOURCE_TO_IVP, maxLinearImpulse != 0.0f );
+}
 
-	b3PrismaticJoint_EnableMotor( m_Joint, def.enableMotor );
-	b3PrismaticJoint_SetMotorSpeed( m_Joint, def.motorSpeed );
-	b3PrismaticJoint_SetMaxMotorForce( m_Joint, def.maxMotorForce );
+float CPhysicsConstraint::GetSlidePosition() const
+{
+	const b3PrismaticJointDef &def = m_Definition.m_Prismatic;
+	const b3WorldTransform transformA = b3Body_GetTransform( m_pReference->GetBody() );
+	const b3WorldTransform transformB = b3Body_GetTransform( m_pAttached->GetBody() );
+	const b3Vec3 axis = b3RotateVector( b3MulQuat( transformA.q, def.base.localFrameA.q ), b3Vec3_axisX );
+	const b3Vec3 delta = b3SubPos( b3TransformWorldPoint( transformB, def.base.localFrameB.p ), b3TransformWorldPoint( transformA, def.base.localFrameA.p ) );
+	return b3Dot( axis, delta ) * SOURCE_TO_IVP;
 }
 
 void CPhysicsConstraint::SetAngularMotor( float rotSpeed, float maxAngularImpulse )
@@ -1414,12 +1652,6 @@ void CPhysicsConstraint::SetAngularMotor( float rotSpeed, float maxAngularImpuls
 		def.enableMotor = maxAngularImpulse != 0.0f;
 		def.motorSpeed = -( rotSpeed * DEGREES_TO_RADIANS );
 		def.maxMotorTorque = flTorque * IVP_TO_SOURCE_SQUARED;
-		if ( !HasJoint() )
-			return;
-
-		b3RevoluteJoint_EnableMotor( m_Joint, def.enableMotor );
-		b3RevoluteJoint_SetMotorSpeed( m_Joint, def.motorSpeed );
-		b3RevoluteJoint_SetMaxMotorTorque( m_Joint, def.maxMotorTorque );
 		return;
 	}
 
@@ -1665,12 +1897,11 @@ void CPhysicsConstraint::Save( ISave *pSave ) const
 	}
 	case CONSTRAINT_LENGTH:
 	{
-		const b3DistanceJointDef &def = m_Definition.m_Distance;
 		vphysics_save_constraintlength_t record = {};
-		record.objectPosition[0] = ToSource( RoundTripPosition( def.base.localFrameA.p ) );
-		record.objectPosition[1] = ToSource( RoundTripPosition( def.base.localFrameB.p ) );
-		record.totalLength = RoundTripLength( def.length );
-		record.minLength = RoundTripLength( def.enableSpring ? def.minLength : def.length );
+		for ( int i = 0; i < 2; ++i )
+			record.objectPosition[i] = ToSource( IVPToSource( m_Length.GetAnchor( i ) ) );
+		record.totalLength = m_Length.GetMaxLength() * IVP_TO_SOURCE;
+		record.minLength = m_Length.GetMinLength() * IVP_TO_SOURCE;
 		record.constraint = breakable;
 		pSave->WriteAll( &record );
 		break;
