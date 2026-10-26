@@ -1,0 +1,259 @@
+diff --git a/include/box3d/box3d.h b/include/box3d/box3d.h
+index c699c1a..e84ea33 100644
+--- a/include/box3d/box3d.h
++++ b/include/box3d/box3d.h
+@@ -203,7 +203,8 @@ B3_API void b3World_SetContactTuning( b3WorldId worldId, float hertz, float damp
+ 
+ /// Extra Gauss-Seidel passes over the joints that have armature (b3Joint_SetArmature), before each solve and relax
+ /// iteration. A chain of light bodies joined by heavy armature (an active ragdoll's nearly locked joints) converges
+-/// slowly at one pass. 0 (the default) adds none; other joints and contacts are untouched.
++/// slowly at one pass. 0 (the default) adds none; other joints and contacts are untouched, except the contacts of
++/// bodies with b3Body_SetArmatureContacts, solved after the joints in each pass.
+ B3_API void b3World_SetArmatureIterations( b3WorldId worldId, int iterations );
+ 
+ /// Set the contact point recycling distance. Setting this to zero disables contact point recycling.
+@@ -747,6 +748,14 @@ B3_API void b3Body_SetBullet( b3BodyId bodyId, bool flag );
+ /// Is this body a bullet?
+ B3_API bool b3Body_IsBullet( b3BodyId bodyId );
+ 
++/// Solve the contacts of this body again in the armature passes (b3World_SetArmatureIterations), after the joints
++/// with armature. A light body of an active ragdoll under the weight of the rest (a foot on the ground) otherwise
++/// leaves its joints stretched. These contacts skip the graph coloring and are solved single threaded.
++B3_API void b3Body_SetArmatureContacts( b3BodyId bodyId, bool flag );
++
++/// Are the contacts of this body solved in the armature passes?
++B3_API bool b3Body_HasArmatureContacts( b3BodyId bodyId );
++
+ /// Allow this body to rotate fast. Useful for axially symmetric bodies, such as vehicle wheels.
+ /// Normally rotation speed is clamped to improve CCD. However, this clamping is unnecessary for
+ /// bodies that only rotate fast around an axis of symmetry.
+diff --git a/src/body.c b/src/body.c
+index 70bbc28..d0f8387 100644
+--- a/src/body.c
++++ b/src/body.c
+@@ -4,6 +4,7 @@
+ #include "body.h"
+ 
+ #include "aabb.h"
++#include "constraint_graph.h"
+ #include "contact.h"
+ #include "core.h"
+ #include "id_pool.h"
+@@ -2495,6 +2496,55 @@ bool b3Body_IsBullet( b3BodyId bodyId )
+ 	return ( body->flags & b3_isBullet ) != 0;
+ }
+ 
++void b3Body_SetArmatureContacts( b3BodyId bodyId, bool flag )
++{
++	b3World* world = b3GetUnlockedWorld( bodyId.world0 );
++	if ( world == NULL )
++	{
++		return;
++	}
++
++	uint32_t newFlag = flag ? b3_armatureContacts : 0;
++
++	b3Body* body = b3GetBodyFullId( world, bodyId );
++	if ( ( body->flags & b3_armatureContacts ) == newFlag )
++	{
++		return;
++	}
++
++	body->flags &= ~b3_armatureContacts;
++	body->flags |= newFlag;
++
++	// Re-color the touching contacts in the graph: in or out of the overflow
++	int contactKey = body->headContactKey;
++	while ( contactKey != B3_NULL_INDEX )
++	{
++		int contactId = contactKey >> 1;
++		int edgeIndex = contactKey & 1;
++		b3Contact* contact = b3Array_Get( world->contacts, contactId );
++		contactKey = contact->edges[edgeIndex].nextKey;
++
++		if ( contact->setIndex != b3_awakeSet || contact->colorIndex == B3_NULL_INDEX )
++		{
++			continue;
++		}
++
++		bool isMeshContact = ( contact->flags & b3_simMeshContact ) != 0;
++		b3RemoveContactFromGraph( world, contact->edges[0].bodyId, contact->edges[1].bodyId, contact->colorIndex,
++								  contact->localIndex, isMeshContact );
++		contact->colorIndex = B3_NULL_INDEX;
++		contact->localIndex = B3_NULL_INDEX;
++		b3AddContactToGraph( world, contact );
++	}
++}
++
++bool b3Body_HasArmatureContacts( b3BodyId bodyId )
++{
++	b3World* world = b3GetWorld( bodyId.world0 );
++	b3Body* body = b3GetBodyFullId( world, bodyId );
++	return ( body->flags & b3_armatureContacts ) != 0;
++}
++
+ void b3Body_AllowFastRotation( b3BodyId bodyId, bool flag )
+ {
+ 	b3World* world = b3GetUnlockedWorld( bodyId.world0 );
+diff --git a/src/body.h b/src/body.h
+index b03063d..cd71706 100644
+--- a/src/body.h
++++ b/src/body.h
+@@ -66,6 +66,10 @@ enum b3BodyFlags
+ 
+ 	b3_enableGyroscopicTorque = 0x00010000,
+ 
++	// Contacts of this body are overflow and solved again in the armature passes (b3Body_SetArmatureContacts).
++	// Only lives on b3Body.
++	b3_armatureContacts = 0x00020000,
++
+ 	// All lock flags
+ 	b3_allLocks = b3_lockLinearX | b3_lockLinearY | b3_lockLinearZ | b3_lockAngularX | b3_lockAngularY | b3_lockAngularZ,
+ 
+diff --git a/src/constraint_graph.c b/src/constraint_graph.c
+index c5e3d3e..20eef1e 100644
+--- a/src/constraint_graph.c
++++ b/src/constraint_graph.c
+@@ -92,8 +92,23 @@ void b3AddContactToGraph( b3World* world, b3Contact* contact )
+ 	b3BodyType typeB = bodyB->type;
+ 	B3_ASSERT( typeA == b3_dynamicBody || typeB == b3_dynamicBody );
+ 
++	// Armature contacts stay scalar in the overflow so the armature passes can solve them alone
++	bool armatureContact = ( ( bodyA->flags | bodyB->flags ) & b3_armatureContacts ) != 0;
++	if ( armatureContact )
++	{
++		contact->flags |= b3_simArmatureContact;
++	}
++	else
++	{
++		contact->flags &= ~b3_simArmatureContact;
++	}
++
+ #if B3_FORCE_OVERFLOW == 0
+-	if ( typeA == b3_dynamicBody && typeB == b3_dynamicBody )
++	if ( armatureContact )
++	{
++		// stays in the overflow
++	}
++	else if ( typeA == b3_dynamicBody && typeB == b3_dynamicBody )
+ 	{
+ 		// Dynamic constraint colors cannot encroach on colors reserved for static constraints
+ 		for ( int i = 0; i < B3_DYNAMIC_COLOR_COUNT; ++i )
+diff --git a/src/contact.h b/src/contact.h
+index c4388b3..7af4107 100644
+--- a/src/contact.h
++++ b/src/contact.h
+@@ -70,6 +70,9 @@ enum b3ContactFlags
+ 
+ 	// Enable speculative contact points
+ 	b3_enableSpeculativePoints = 0x01000000,
++
++	// A body has armature contacts: overflow, solved again in the armature passes (b3Body_SetArmatureContacts)
++	b3_simArmatureContact = 0x02000000,
+ };
+ 
+ // A contact edge is used to connect bodies and contacts together
+diff --git a/src/contact_solver.c b/src/contact_solver.c
+index ad41b41..9e24812 100644
+--- a/src/contact_solver.c
++++ b/src/contact_solver.c
+@@ -498,7 +498,8 @@ void b3PushContacts_Mesh( b3SolverBlock block, b3StepContext* context )
+ }
+ 
+ // Solve contacts: normal, friction and rolling resistance.
+-void b3SolveContacts_Mesh( b3SolverBlock block, b3StepContext* context )
++// The armature passes don't add to the total normal impulse (restitution, hit events, contact data).
++static void b3SolveContactsScalar( b3SolverBlock block, b3StepContext* context, bool addTotalImpulse )
+ {
+ 	b3World* world = context->world;
+ 	b3GraphColor* color = world->constraintGraph.colors + block.colorIndex;
+@@ -579,7 +580,10 @@ void b3SolveContacts_Mesh( b3SolverBlock block, b3StepContext* context )
+ 				float newImpulse = b3MaxFloat( cp->normalImpulse + deltaImpulse, 0.0f );
+ 				deltaImpulse = newImpulse - cp->normalImpulse;
+ 				cp->normalImpulse = newImpulse;
+-				cp->totalNormalImpulse += newImpulse;
++				if ( addTotalImpulse )
++				{
++					cp->totalNormalImpulse += newImpulse;
++				}
+ 				totalNormalImpulse += newImpulse;
+ 				totalTwistLimit += cp->leverArm * newImpulse;
+ 
+@@ -687,6 +691,43 @@ void b3SolveContacts_Mesh( b3SolverBlock block, b3StepContext* context )
+ 	}
+ }
+ 
++void b3SolveContacts_Mesh( b3SolverBlock block, b3StepContext* context )
++{
++	b3SolveContactsScalar( block, context, true );
++}
++
++// Extra Gauss-Seidel pass over the overflow contacts of bodies with armature contacts, single threaded between solver
++// stages after the armature joints (b3Body_SetArmatureContacts). Push with bias, solve without.
++void b3SolveArmatureContacts( b3StepContext* context, bool useBias )
++{
++	b3GraphColor* color = context->graph->colors + B3_OVERFLOW_INDEX;
++	b3ContactConstraint* constraints = color->contactConstraints;
++	int count = color->contacts.count;
++	for ( int i = 0; i < count; ++i )
++	{
++		if ( ( constraints[i].contact->flags & b3_simArmatureContact ) == 0 )
++		{
++			continue;
++		}
++
++		b3SolverBlock block = {
++			.startIndex = i,
++			.count = 1,
++			.blockType = b3_overflowBlock,
++			.colorIndex = B3_OVERFLOW_INDEX,
++		};
++
++		if ( useBias )
++		{
++			b3PushContacts_Mesh( block, context );
++		}
++		else
++		{
++			b3SolveContactsScalar( block, context, false );
++		}
++	}
++}
++
+ void b3ApplyRestitution_Mesh( b3SolverBlock block, b3StepContext* context )
+ {
+ 	b3TracyCZoneNC( restitution_mesh, "Restitution Mesh", b3_colorViolet, true );
+diff --git a/src/contact_solver.h b/src/contact_solver.h
+index d7773db..93c3390 100644
+--- a/src/contact_solver.h
++++ b/src/contact_solver.h
+@@ -61,6 +61,7 @@ void b3PushContacts_Overflow( b3StepContext* context );
+ void b3SolveContacts_Overflow( b3StepContext* context );
+ void b3ApplyRestitution_Overflow( b3StepContext* context );
+ void b3StoreImpulses_Overflow( b3StepContext* context );
++void b3SolveArmatureContacts( b3StepContext* context, bool useBias );
+ 
+ void b3PrepareContacts_Mesh( b3SolverBlock block, b3StepContext* context );
+ void b3WarmStartContacts_Mesh( b3SolverBlock block, b3StepContext* context );
+diff --git a/src/joint.c b/src/joint.c
+index 6231128..c8d9e9e 100644
+--- a/src/joint.c
++++ b/src/joint.c
+@@ -5,6 +5,7 @@
+ 
+ #include "body.h"
+ #include "contact.h"
++#include "contact_solver.h"
+ #include "core.h"
+ #include "island.h"
+ #include "physics_world.h"
+@@ -1834,6 +1835,9 @@ void b3SolveArmatureJoints( b3StepContext* context, bool useBias )
+ 				}
+ 			}
+ 		}
++
++		// then the contacts that carry those bodies (b3Body_SetArmatureContacts)
++		b3SolveArmatureContacts( context, useBias );
+ 	}
+ }
+ 

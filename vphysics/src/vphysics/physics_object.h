@@ -327,8 +327,8 @@ public:
 	void ApplyDrive( b3Vec3 force, b3Vec3 torque );
 	void SetInertiaTensor( const b3Matrix3 &tensor );
 
-	// set once IPhysicsNM drives or shapes the body
-	void SetNMDriven() { m_bNMDriven = true; }
+	// set once IPhysicsNM drives or shapes the body; its contacts join the armature passes from then on
+	void SetNMDriven();
 	// IPhysicsNM::SetBodyMaterial: the shapes take NM's friction and elasticity, tagged for the mixing callbacks
 	void SetNMMaterial( float flFriction, float flElasticity );
 	bool IsNMDriven() const { return m_bNMDriven; }

@@ -1659,6 +1659,17 @@ void CPhysicsObject::ApplyTorqueCenter( const AngularImpulse &torque )
 	ClampVelocity( true );
 }
 
+void CPhysicsObject::SetNMDriven()
+{
+	if ( m_bNMDriven )
+		return;
+
+	m_bNMDriven = true;
+	// A light part under the weight of the rest (a foot on the ground: 77 kg of body on 1 kg) needs its contacts
+	// in the same extra Gauss-Seidel passes as its joints, or the joints stretch (ADR 0019)
+	b3Body_SetArmatureContacts( m_Body, true );
+}
+
 void CPhysicsObject::CaptureNMStepStart( uint32_t nStep )
 {
 	m_NMStartVelocity = GetCoreVelocity();

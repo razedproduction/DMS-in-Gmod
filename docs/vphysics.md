@@ -13,7 +13,7 @@ GMod на Box3D) с NM-расширением `IPhysicsNM` (`include/vphysics_nm
   изменении интерфейса).
 - `vphysics/src/physics_nm.*` — реализация `IPhysicsNM`; остальные NM-правки — в `physics_object.*`,
   `physics_constraint.*`, `physics_environment.cpp` (step-callback) и `cmake/patches/*.patch` (патчи Box3D:
-  armature суставов, эллиптический конус, дополнительные проходы по суставам с armature).
+  armature суставов, эллиптический конус, дополнительные проходы по суставам с armature и контактам тел NM).
 - Сабмодули `vphysics/external/box3d` (erincatto/box3d) и `vphysics/external/source-sdk-2013` (ValveSoftware) —
   записаны в корневом `.gitmodules` (shallow). `vphysics/.gitmodules` — файл upstream'а, git его не читает; оставлен,
   чтобы `subtree pull` не конфликтовал.
@@ -69,7 +69,13 @@ git submodule update --init --depth 1   # один раз после clone
   часть) — `μA·μB` без обрезки и `min(eA·eB, 1)`, как физика NM; всё остальное — прежнее смешивание surfaceprop.
 - `CPhysicsConstraint::ApplyStiffnessBudget`: сустав между двумя телами NM не проходит бюджет жёсткости, коррекция
   дрейфа — потолок Box3D (¼ частоты сабстепов), ζ = 0.2 (`NM_JOINT_*`). Голеностоп под весом тела тянется ~6 мм
-  вместо ~9; остальное расхождение — несходимость «сустав ↔ контакт» (контакты не входят в доп. проходы, ADR 0018).
+  вместо ~9.
+- `box3d-armature-contacts.patch` (ADR 0019): `b3Body_SetArmatureContacts` — контакты тела не красятся, а идут в
+  overflow (скалярный путь) и решаются ещё раз в каждом доп. проходе после суставов (`b3SolveArmatureContacts`; без
+  прибавки к `totalNormalImpulse`). Форк ставит флаг в `CPhysicsObject::SetNMDriven`. Прочие контакты игры — в цветах,
+  как в upstream. Стационарное растяжение суставов NM (~5 мм) — упругость мягкого сустава `F / (m_eff · ω²)`, не
+  сходимость (ADR 0019).
+
 ## Свежий upstream Asphaltian
 
 ```powershell
