@@ -18,7 +18,7 @@ cargo run --release -p golden -- --game "E:\Downloads\TorrentDownloads\Grand The
 | `build` | `cargo build --release -p delirium-room --locked --manifest-path <SDK>\Cargo.toml --target-dir target-playroom`, запуск из этого репозитория; до и после — `git status` и `Cargo.lock` SDK, любое изменение — ошибка | `target-playroom\release\delirium-room.exe` |
 | `dump` | `NM_DUMP` Playroom (`--game … --headless 0`: Homer = `m_y_pmanhat_01` после `getup::homer` + `stand_up`) против build'а, который строит DMS (`tools/dms-game`); должно совпасть **байт в байт** | `homer.nmdump`, `homer.ours.nmdump` |
 | `links` | связи, которые DMS выводит из idle-клипа (`DERIVED_LINKS`), подаются Playroom через `NM_LINKS`; его 60 шагов должны совпасть бит в бит с прогоном без них | `homer.links`, `links.*.frames` |
-| `lead` | агент SDK в LEAD, собранный как в `dms_selftest` (build из дампа, пол CONCRETE, seed 0.3, `bodyBalance`), против первой секунды Playroom — бит в бит | `lead.dms.frames` |
+| `lead` | агент SDK в LEAD, собранный как в `dms_selftest` (build из дампа, пол комнаты Playroom CONCRETE — плитки 1 м с ямой бассейна, `world::floor_tris`, seed 0.3, `bodyBalance`), против первой секунды Playroom — бит в бит | `lead.dms.frames` |
 | `run [имена]` | сценарии `golden/scenarios/*.txt` (все или названные) | `<имя>.rec`, `<имя>.log`, `<имя>.frames` |
 | `all` | всё по порядку | |
 | `body [--no-game]` | тело Homer, как его портирует `dms-homer` (M3, [docs/homer.md](../docs/homer.md)): build против `NM_DUMP` и C API SDK (1e-5), `homer.phy` против build'а, в игре на стенде — кадры, массы, инерция, падение без NM | — |
@@ -43,6 +43,11 @@ Playroom запускается с рабочим каталогом `golden/out
    командами всё детерминировано, а шаг, на котором сработала команда, может гулять на ±1 кадр — **фактический шаг
    каждой команды записан в `.rec`** строкой `# <t> …` (t = шаг/60). Сверять нужно по этим отметкам, а не по
    времени из файла сценария. `<t> !quit` закрывает окно; `golden` останавливает Playroom, если он завис.
+   `golden` запускает окно с **`--safe`** (Safe Mode, с v0.2.1): без него Playroom применяет пользовательский
+   `%APPDATA%\delirium\settings.txt`, где есть и переключатели поведения (`look`, `avoid`, `extra_reactions`, …), а
+   на обычной графике окно идёт ~6 кадров/с и теряет шаги (60 с стойки — лишь 1436 шагов вместо 3600). Safe Mode —
+   умолчания Playroom и минимальная графика; на физику не влияет. Первая строка журнала тогда — `# 0.00 room  Safe
+   Mode: …` (в сверке отметок команд не участвует).
 
 Выключенная анимация вставания: Playroom после 2 с лежания поднимает тело клипом `get_up_fast` (это не NM).
 Кнопка `get-up` перебирает режимы `animation → muscles → off → learned`; два нажатия = `off`, поэтому сценарии
