@@ -77,7 +77,7 @@ function DMS_HomerReport(ent)
 	return table.concat(out, "\n")
 end
 
--- dms_homer: Homer standing in front of the player, facing him (superadmins).
+-- dms_homer: Homer standing in front of the player, facing him, NM on him (superadmins).
 concommand.Add("dms_homer", function(ply)
 	if IsValid(ply) and not ply:IsSuperAdmin() then return end
 	local pos, yaw
@@ -100,6 +100,9 @@ concommand.Add("dms_homer", function(ply)
 		undo.Finish()
 		ply:AddCleanup("ragdolls", ent)
 	end
-	say(ply, string.format("[DMS] Homer at (%.1f, %.1f, %.1f), bound to NM's body (%d parts)", pos.x, pos.y, pos.z,
-		ent:GetPhysicsObjectCount()))
+	-- ROADMAP M4: NM drives him (FOLLOW), standing under bodyBalance as the Playroom's "balance" button has it.
+	local id, err = DMS_Follow(ent)
+	if not id then return say(ply, "[DMS] dms_homer: NM isn't on him: " .. tostring(err)) end
+	DMS_Send(ent, "bodyBalance start=true")
+	say(ply, string.format("[DMS] Homer at (%.1f, %.1f, %.1f), NM agent #%d, bodyBalance", pos.x, pos.y, pos.z, id))
 end)

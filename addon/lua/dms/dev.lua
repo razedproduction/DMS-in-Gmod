@@ -39,6 +39,31 @@ local function runLua(code)
 	return true, table.concat(out, "\n")
 end
 
+-- A FOLLOW scenario (ROADMAP M4): Homer at the Playroom room's start (`up` m higher for its `fall`), facing as there,
+-- the player where the Playroom's camera starts (4 m back, 1.5 m up, looking at him); then the module runs it.
+local function benchSpawn(r)
+	local scene, err = DMS.BenchScene()
+	if not scene then error("bench scene: " .. err) end
+	for _, e in ipairs(ents.FindByModel(DMS_HOMER_MODEL)) do
+		if e.DMS_Bench then
+			DMS_Unfollow(e)
+			e:Remove()
+		end
+	end
+	for _, p in ipairs(player.GetAll()) do
+		p:SetPos(scene.origin + Vector(0, -4 / METRES_PER_UNIT, 0))
+		p:SetEyeAngles(Angle(10, 90, 0))
+	end
+	local up = tonumber(r.text) or 0
+	local ent, why = DMS_SpawnHomer(scene.origin + Vector(0, 0, up / METRES_PER_UNIT), 0)
+	if not ent then error(why) end
+	ent.DMS_Bench = true
+	local id = DMS.BenchFollow(DMS_HomerParts(ent), scene.origin * METRES_PER_UNIT)
+	ent.DMS_Agent = id
+	DMS_Agents[id] = ent
+	ent:CallOnRemove("DMS_Unfollow", function(e) DMS_Unfollow(e) end)
+end
+
 local function answer(r)
 	if r.kind == "exec" then
 		game.ConsoleCommand(r.text .. "\n")
@@ -50,8 +75,11 @@ end
 local function think()
 	local g = physenv.GetGravity().z * METRES_PER_UNIT
 	for _, r in ipairs(DMS.DevThink(CurTime(), engine.TickCount(), FrameTime(), -g)) do
-		local ok, ran, text = pcall(answer, r)
-		if ok then
+		local ok, ran, text = pcall(r.kind == "bench_spawn" and benchSpawn or answer, r)
+		if r.kind == "bench_spawn" then
+			-- The module answers as the scenario ends; only a failure to start is answered here.
+			if not ok then DMS.DevReply(r.conn, r.id, false, "the bench's Homer: " .. tostring(ran)) end
+		elseif ok then
 			DMS.DevReply(r.conn, r.id, ran, text or "")
 		else
 			DMS.DevReply(r.conn, r.id, false, tostring(ran))

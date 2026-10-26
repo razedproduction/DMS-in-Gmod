@@ -352,6 +352,7 @@ fn behaviour(ctx: &Ctx, args: &[String]) -> Result<(), String> {
         return Err("behaviour --source [names]: only the bench server (Source) is there to compare so far".into());
     };
     names.remove(i);
+    let lead = names.iter().position(|a| a == "--lead").map(|i| names.remove(i)).is_some();
     let bench = dms_ctl::Bench::load()?;
     let mut channel = dms_ctl::Channel::bench(&bench)?;
     let out = ctx.out.join("source");
@@ -365,8 +366,9 @@ fn behaviour(ctx: &Ctx, args: &[String]) -> Result<(), String> {
             failed.push(s.name);
             continue;
         }
-        println!("golden: {}: on the bench ({}, about {:.0} s)...", s.name, s.mode, s.seconds());
-        let rec = match dms_ctl::run(&mut channel, &s) {
+        println!("golden: {}: on the bench ({}, {}, about {:.0} s)...", s.name, s.mode, if lead { "LEAD" } else { "Homer in FOLLOW on Box3D" }, s.seconds());
+        let reference = dms_ctl::rec::parse(&read_text(&theirs)?);
+        let rec = match dms_ctl::run(&mut channel, &s, Some(&reference), lead) {
             Ok(r) => r,
             Err(e) => {
                 println!("golden: {}: FAILED on the bench: {e}", s.name);
@@ -377,7 +379,18 @@ fn behaviour(ctx: &Ctx, args: &[String]) -> Result<(), String> {
         write(&out.join(format!("{}.rec", s.name)), &rec)?;
         let (ours, theirs) = (dms_ctl::rec::parse(&rec), dms_ctl::rec::parse(&read_text(&theirs)?));
         let d = dms_ctl::rec::compare(&ours, &theirs, REC_TOLERANCE);
-        let same = d.steps == d.theirs_steps && d.first_off.is_none() && d.low_part_mismatch == 0;
+        let mut same = d.steps == d.theirs_steps && d.first_off.is_none() && d.low_part_mismatch == 0;
+        // Homer on Box3D (ROADMAP M4): the scenario's tolerances, not the record's three decimals.
+        if !lead {
+            let checks = tolerances(&s.tol, &ours, &theirs);
+            for (what, ok, detail) in &checks {
+                println!("golden: {}: {} {what}: {detail}", s.name, if *ok { "ok  " } else { "OFF " });
+            }
+            same = d.steps == d.theirs_steps && !checks.is_empty() && checks.iter().all(|c| c.1);
+            if checks.is_empty() {
+                println!("golden: {}: no `#! tol` line: nothing to hold Homer on Box3D to", s.name);
+            }
+        }
         println!("golden: {}: {} steps (Playroom {}); COM gap max {:.4} m at step {}, mean {:.4} m; |v| gap max {:.3} m/s; \
                   lowest part differs on {} steps; first step off by > {REC_TOLERANCE} m: {}",
             s.name, d.steps, d.theirs_steps, d.com_max.0, d.com_max.1 + 1, d.com_mean, d.speed_max, d.low_part_mismatch,
@@ -391,12 +404,67 @@ fn behaviour(ctx: &Ctx, args: &[String]) -> Result<(), String> {
             println!("golden: {}: {l}", s.name);
         }
         if same {
-            println!("golden: {}: OK, the bench's record is the Playroom's to its 3 decimals", s.name);
+            println!("golden: {}: OK, {}", s.name, if lead { "the bench's record is the Playroom's to its 3 decimals" } else { "within the scenario's tolerances" });
         } else {
             failed.push(s.name);
         }
     }
     if failed.is_empty() { Ok(()) } else { Err(format!("differ from the Playroom: {}", failed.join(", "))) }
+}
+
+/// The checks of a scenario's `#! tol` line on Homer's record against the Playroom's: `(check, held, what was
+/// measured)`. A physics engine that isn't the Playroom's can't keep its record to the millimetre: the checks hold
+/// what the behaviour is (golden/README.md).
+///   steps=N        the COM checks over the first N steps only
+///   com_max=M      the COM never further than M m from the Playroom's
+///   com_mean=M     on average no further than M m
+///   end_z=M        the COM's height at the end within M m of the Playroom's
+///   fall           NM's balancer gives up (`FB balance slot 8`) in both or in neither, within 0.25 s
+///   down=Z:S       the COM first drops below Z m within S s of when the Playroom's does (or in neither)
+///   marks          the commands at the same steps (each mark's first two words)
+fn tolerances(tol: &[String], ours: &dms_ctl::rec::Rec, theirs: &dms_ctl::rec::Rec) -> Vec<(String, bool, String)> {
+    let steps = tol.iter().find_map(|t| t.strip_prefix("steps=")?.parse::<usize>().ok()).unwrap_or(usize::MAX);
+    let n = ours.steps.len().min(theirs.steps.len()).min(steps);
+    let gaps: Vec<f32> = ours.steps.iter().zip(&theirs.steps).take(n)
+        .map(|(a, b)| ((a.com[0] - b.com[0]).powi(2) + (a.com[1] - b.com[1]).powi(2) + (a.com[2] - b.com[2]).powi(2)).sqrt())
+        .collect();
+    let max = gaps.iter().copied().fold(0.0f32, f32::max);
+    let mean = if n > 0 { gaps.iter().sum::<f32>() / n as f32 } else { 0.0 };
+    let fall = |r: &dms_ctl::rec::Rec| r.log.iter().find(|(_, l)| l.contains("FB balance slot 8")).map(|(t, _)| *t);
+    let down = |r: &dms_ctl::rec::Rec, z: f32| r.steps.iter().find(|s| s.com[2] < z).map(|s| s.t);
+    let short = |m: &[(f32, String)]| m.iter().map(|(t, l)| format!("{t:.2} {}", l.split_whitespace().take(3).collect::<Vec<_>>().join(" "))).collect::<Vec<_>>();
+    let when = |t: Option<f32>| t.map_or("never".to_string(), |t| format!("{t:.2} s"));
+    let mut out = vec![];
+    for t in tol {
+        let (k, v) = t.split_once('=').unwrap_or((t.as_str(), ""));
+        let num = v.parse::<f32>().unwrap_or(f32::NAN);
+        match k {
+            "steps" => {}
+            "com_max" => out.push((t.clone(), max <= num, format!("{max:.3} m over {n} steps"))),
+            "com_mean" => out.push((t.clone(), mean <= num, format!("{mean:.3} m over {n} steps"))),
+            "end_z" => {
+                let (a, b) = (ours.steps.last().map_or(f32::NAN, |s| s.com[2]), theirs.steps.last().map_or(f32::NAN, |s| s.com[2]));
+                out.push((t.clone(), (a - b).abs() <= num, format!("{a:.3} m (Playroom {b:.3})")));
+            }
+            "fall" => {
+                let (a, b) = (fall(ours), fall(theirs));
+                let ok = match (a, b) { (Some(a), Some(b)) => (a - b).abs() <= 0.25, (None, None) => true, _ => false };
+                out.push((t.clone(), ok, format!("{} (Playroom {})", when(a), when(b))));
+            }
+            "down" => {
+                let (z, s) = v.split_once(':').and_then(|(z, s)| Some((z.parse::<f32>().ok()?, s.parse::<f32>().ok()?))).unwrap_or((f32::NAN, f32::NAN));
+                let (a, b) = (down(ours, z), down(theirs, z));
+                let ok = match (a, b) { (Some(a), Some(b)) => (a - b).abs() <= s, (None, None) => true, _ => false };
+                out.push((t.clone(), ok, format!("below {z} m at {} (Playroom {})", when(a), when(b))));
+            }
+            "marks" => {
+                let (a, b) = (short(&dms_ctl::rec::marks(ours)), short(&dms_ctl::rec::marks(theirs)));
+                out.push((t.clone(), a == b, if a == b { format!("{} commands", a.len()) } else { format!("bench {} | playroom {}", a.join(", "), b.join(", ")) }));
+            }
+            _ => out.push((t.clone(), false, "unknown check".into())),
+        }
+    }
+    out
 }
 
 fn run(ctx: &Ctx, names: &[String]) -> Result<(), String> {

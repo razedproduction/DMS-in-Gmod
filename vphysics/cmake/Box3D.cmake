@@ -1,5 +1,5 @@
 set( BOX3D_SOURCE_DIR "${CMAKE_SOURCE_DIR}/external/box3d" )
-set( BOX3D_PATCHES "${CMAKE_SOURCE_DIR}/cmake/patches/box3d-joint-armature.patch" "${CMAKE_SOURCE_DIR}/cmake/patches/box3d-elliptical-cone.patch" )
+set( BOX3D_PATCHES "${CMAKE_SOURCE_DIR}/cmake/patches/box3d-joint-armature.patch" "${CMAKE_SOURCE_DIR}/cmake/patches/box3d-elliptical-cone.patch" "${CMAKE_SOURCE_DIR}/cmake/patches/box3d-armature-iterations.patch" )
 set( BOX3D_DIR "${CMAKE_BINARY_DIR}/box3d" )
 
 # Box3D is built from a patched copy in the build tree, the submodule stays untouched.

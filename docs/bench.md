@@ -57,38 +57,41 @@ cargo build --release -p dms-ctl -p golden
 | `bench reset\|stop\|cancel` | новый агент / убрать / прервать сценарий | модуль |
 | `snapshot [--fields a,b]` | последняя телеметрия (JSON) | модуль |
 | `watch --for 2s [--fields a,b] [--every N]` | поток телеметрии, JSON-строка на кадр сервера; **всегда с `--for`** | модуль |
-| `run <сценарий> [--out f.rec]` | сценарий `golden/scenarios/` в реальном времени → `.rec` (по умолчанию `golden/out/source/<имя>.rec`) | модуль |
+| `run <сценарий> [--out f.rec] [--ref p.rec] [--lead]` | сценарий `golden/scenarios/` на Homer в FOLLOW (`--lead`: LEAD-агент) в реальном времени → `.rec` (по умолчанию `golden/out/source/<имя>.rec`); команды — на шагах записи Playroom (`--ref`, по умолчанию `golden/out/<имя>.rec`) | модуль |
 
 PowerShell 5.1 выкидывает `"` из аргументов внешних программ: в Lua — одинарные кавычки или `lua -f`.
 
 Телеметрия (поля верхнего уровня, `--fields` выбирает): `t` (`CurTime`), `tick`, `frame_dt`, `hover` (сколько
-объектов держат drives `step.rs`), `gravity` (`nm` 9.8, `source` из `physenv`, `compensation` — `null` до M4,
-ADR 0007), `agents` (FOLLOW-агенты, M4: пока `[]`), `bench`; при тестовом агенте ещё `step`, `nm_t`, `mode`, `held`,
-`balancing`, `fallen`, `pelvis_z`, `head_z`, `com`, `com_v`, `parts` (21 × `x y z qx qy qz qw`), `contacts`, `drives`,
-`feedback`, `script`.
+объектов держат отладочные drives `DMS.Drive`), `gravity` (`nm` 9.8, `source` из `physenv`, `compensation` — режим
+`dms_gravity_mode`, ADR 0007), `source_gravity`, `nm_ms` (NM на шаг физики, мс), `agents` (FOLLOW-агенты: `id`, `step`,
+`awake`, `asleep`, `balancing`, `fallen`, `pelvis_z`, `head_z`, `com`, `com_v`, `compensation`, `parts`, `contacts`,
+`drives`, `armature`, `feedback`, `timestep` — шаг физики, `pred_err` — на сколько Box3D разошёлся за шаг с
+предсказанием собственной физики NM, `limit_use` — заполнение пределов суставов NM, `state_v` — скорости из
+`GetBodyState`, `script`), `bench`; при LEAD-агенте ещё `step`, `nm_t`, `mode`, `held`, `balancing`, `fallen`,
+`pelvis_z`, `head_z`, `com`, `com_v`, `parts`, `contacts`, `drives`, `feedback`, `script`.
 
-## Тестовый агент и сценарии (`module/src/bench.rs`)
+## Сценарии на Homer в FOLLOW (`module/src/follow.rs`, ROADMAP M4)
 
-До FOLLOW (M4) на стенде нет Homer'а на Box3D, поэтому сценарии исполняет **агент SDK в LEAD на полу Playroom**
-(как `dms_selftest` и `golden lead`): NM двигает своё тело, физика игры не участвует. Логика — как окно Playroom:
-команды по времени от начала сценария, до шагов кадра; шаги NM 1/60 по аккумулятору (≤ 0.25 с за кадр), не
-раньше первой команды (`held`). Headless-сценарии: `balance` и `press=` на шаге 0, шагов столько, сколько в `#!`.
-Запись — формат Playroom `--rec` (`golden/README.md`); `n` у частей — флаг `nm_agent_get_part_contact`, зазор 9.000
-и без точек (держащие контакты Playroom `held_world` C API не отдаёт; в FOLLOW касания будут из Box3D).
+`dms-ctl run` (и `golden behaviour --source`) ставит сценарий на **Homer в FOLLOW на Box3D**: Lua спавнит Homer в позе
+Playroom в начале комнаты (на 3 м выше для `!button fall`), игрока — туда, где у Playroom камера (4 м сзади), и
+отдаёт Homer модулю (`DMS.BenchFollow`); NM — агент на крейте `delirium` с пересылкой outbox и `in_air` Playroom
+(ADR 0016, 0017). Команды оконного сценария идут на тех **шагах NM**, где их выполнил Playroom (по меткам `#` его
+записи `golden/out/<имя>.rec`, `--ref`; без записи — по времени от первой команды), `!poke` — с импульсом из записи
+Playroom. Запись — формат Playroom `--rec`, в порядке его тика; `n`/`g` у частей — держащие контакты NM (`held_world`)
+на состоянии Box3D. По окончании NM с Homer снимается (до следующего прогона он обычный ragdoll).
 
-Умеет: сообщения NM, `!button` (`balance windmill pedal writhe rollup catchfall highfall stairs relax stayup
-foetal "STOP all"`, `fall` из позы build'а, `get-up` — только журнал, `RESET pose`), `!poke`, `!quit`. Не умеет
-(пишет `# dms: not run on the bench: …`): выстрел (`shot`, выстрел headless на шаге 60 — ShotTask Playroom, M6),
-кнопки, которым нужен взгляд тела (`drunk flinch brace look point lean grab overwall`), `!shoot`, `!grab`, `!blast`,
-`!strength` и прочие `!…`.
+Умеет: сообщения NM, `!button` (`balance windmill pedal writhe rollup catchfall highfall stairs relax stayup foetal
+"STOP all"`, `fall` только в начале, `get-up` — только журнал), `!poke`, `!quit`. Не умеет (пишет `# dms: not run on
+the bench: …`): выстрел (ShotTask, M6), кнопки со взглядом тела, `!shoot`, `!grab`, `!blast` и прочие `!…`.
 
-`golden behaviour --source [имена]` прогоняет сценарии на стенде и сравнивает с эталоном `golden/out/<имя>.rec`:
-COM, |v|, нижние части по шагам (допуск — три знака записи), шаги команд (строки `#`). Сейчас совпадают `stand`,
-`stand-1s`, `relax`, `relax-1s`. Не совпадают: `shot` (выстрела нет), `push` (`!poke` Playroom бьёт от своей
-камеры, которая в окне движется; стенд — от её начальной точки `(0, −4, 1.5)`), `catchfall` (Playroom шлёт агенту
-сообщения из `extras.outbox` — `pedalLegs`, `bodyRollUp`; C API SDK их не отдаёт — вопрос M4). У оконных сценариев
-шаг команды может гулять на ±1 кадр, как и в самом Playroom.
+`golden behaviour --source [имена]` сверяет записи с Playroom **по допускам сценария** — строка `#! tol` в файле
+сценария (`golden/README.md`): разрыв COM, конечная высота, падение, время оседания, шаги команд. Сейчас в допусках
+`stand` (60 с), `stand-1s`, `push`, `relax`, `catchfall`, первые 60 шагов `shot`; вне допуска `relax-1s` (ADR 0017).
+`--lead` — прежний LEAD-агент SDK на полу Playroom (как `dms_selftest`): его записи совпадают с Playroom до трёх
+знаков, кроме `push` (камера), `catchfall` и `shot`.
 
+`server.ps1 start -Tickrate 60` — тикрейт сервера 60; шаг физики при этом остаётся 0.015 с (его ставит игра),
+`DMS.EnvTimestep(physobj[, t])` читает и меняет его (только для опытов).
 ## Сцена
 
 `gm_flatgrass`: плоский пол; начало комнаты Playroom — пол под `info_player_start` (`dms_bench_scene`,

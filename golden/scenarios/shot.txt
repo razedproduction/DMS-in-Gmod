@@ -2,3 +2,4 @@
 # из weaponinfo.xml, ShotTask Playroom) на шаге 60 (1.00 с). 10 с. Детерминированно, бит в бит (.frames).
 # Встаёт Playroom анимацией (не NM) после 2 с лежания: get-up дважды = режим off.
 #! headless 600 press=get-up,get-up
+#! tol steps=60 com_max=0.08   # Homer in FOLLOW on Box3D against the Playroom (golden/README.md)

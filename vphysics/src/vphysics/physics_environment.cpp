@@ -38,6 +38,7 @@ static constexpr double MIN_SIMULATE_DELTA = 1e-4;
 static constexpr double MAX_STEP_DELTA = 0.1;
 static constexpr float ALIGNED_STEP_SCALE = 1.99999f;
 static constexpr float ISOTROPIC_INVERSE_INERTIA_FRACTION = 0.01f;
+static constexpr int NM_ARMATURE_ITERATIONS = 8;
 static constexpr float MIN_FRICTION_MASS = 1.0f;
 static constexpr float MAX_FRICTION_MASS = 50000.0f;
 static constexpr float PENETRATION_SPEED_SCALE = 4.0f;
@@ -288,6 +289,9 @@ CPhysicsEnvironment::CPhysicsEnvironment()
 	m_World = b3CreateWorld( &worldDef );
 	b3World_SetCustomFilterCallback( m_World, FilterShapes, this );
 	b3World_SetPreSolveCallback( m_World, PreSolveShapes, this );
+	// IPhysicsNM's ragdolls: their joints' armature (only IPhysicsNM sets any) makes them nearly rigid trees, which NM
+	// solves exactly and one Gauss-Seidel pass doesn't (box3d-armature-iterations.patch)
+	b3World_SetArmatureIterations( m_World, NM_ARMATURE_ITERATIONS );
 
 	SetSimulationTimestep( DEFAULT_TIMESTEP );
 	m_flNextStepTime = m_flTimestep;
@@ -647,6 +651,8 @@ void CPhysicsEnvironment::Step( double flTime )
 			pObject->Revive( m_flCurrentTime, ++m_nReviveSequence );
 		pObject->RebuildCoreMatrix( m_flCurrentTime );
 		pObject->ResetControllerCursor( m_nStepCount );
+		if ( pObject->IsNMDriven() )
+			pObject->CaptureNMStepStart( m_nStepCount );
 	}
 	BuildSimulationUnits();
 	UpdateRestTimers();

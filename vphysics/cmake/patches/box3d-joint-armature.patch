@@ -19,7 +19,7 @@ index 54d0baf..9f26e88 100644
   * @defgroup parallel_joint Parallel Joint
   * @brief Functions for the parallel joint.
 diff --git a/src/joint.c b/src/joint.c
-index 068a29d..1b65120 100644
+index 068a29d..96f4369 100644
 --- a/src/joint.c
 +++ b/src/joint.c
 @@ -443,6 +443,28 @@ float b3Joint_GetTorqueThreshold( b3JointId jointId )
@@ -61,8 +61,8 @@ index 068a29d..1b65120 100644
 +// Cdot = wB - wA
 +// J = [0 -I 0 I]
 +// P = -a * (Cdot - Cdot0)  =>  (K + I / a) * P = -(Cdot - Cdot0), K = invIA + invIB
-+// Cdot0 is taken when the step starts and after each relax pass, so applied torques (integrated before the
-+// solve) are resisted along with the other constraints.
++// Cdot0 is taken when the step starts and before each later sub-step integrates its forces
++// (b3StoreArmatureVelocities), so applied torques are resisted along with the other constraints.
 +static void b3PrepareJointArmature( b3JointSim* base, b3StepContext* context )
 +{
 +	if ( base->armature <= 0.0f )
@@ -200,21 +200,33 @@ index 068a29d..1b65120 100644
  	switch ( joint->type )
  	{
  		case b3_parallelJoint:
-@@ -1615,6 +1759,12 @@ void b3SolveJoint( b3JointSim* joint, b3StepContext* context, bool useBias )
- 		default:
- 			B3_ASSERT( false );
+@@ -1617,6 +1761,24 @@ void b3SolveJoint( b3JointSim* joint, b3StepContext* context, bool useBias )
  	}
-+
-+	if ( useBias == false )
-+	{
-+		// the relax pass ends the sub-step, its velocity is where the next sub-step starts
-+		b3StoreJointArmatureVelocity( joint, context );
-+	}
  }
  
++// Each armature's Cdot0 for a sub-step: the relative angular velocity the previous one ended with, taken before the
++// sub-step integrates its forces (the first sub-step's is taken by b3PrepareJoint). Once per sub-step, not per pass:
++// re-taken between passes it would undo the armature's own impulse (the one-sub-step version of this patch did that
++// inside every relax pass, unstable at more than one pass).
++void b3StoreArmatureVelocities( b3StepContext* context )
++{
++	b3ConstraintGraph* graph = context->graph;
++	for ( int c = 0; c < B3_GRAPH_COLOR_COUNT; ++c )
++	{
++		b3JointSim* joints = graph->colors[c].jointSims.data;
++		int jointCount = graph->colors[c].jointSims.count;
++		for ( int i = 0; i < jointCount; ++i )
++		{
++			b3StoreJointArmatureVelocity( joints + i, context );
++		}
++	}
++}
++
  void b3PrepareJoints_Overflow( b3StepContext* context )
+ {
+ 	b3TracyCZoneNC( prepare_joints, "PrepJoints", b3_colorOldLace, true );
 diff --git a/src/joint.h b/src/joint.h
-index 9a8c347..655a4a3 100644
+index 9a8c347..1fca5c1 100644
 --- a/src/joint.h
 +++ b/src/joint.h
 @@ -330,6 +330,14 @@ typedef struct b3JointSim
@@ -232,3 +244,28 @@ index 9a8c347..655a4a3 100644
  	bool fixedRotation;
  
  	union
+@@ -358,6 +366,7 @@ void b3SolveJoint( b3JointSim* joint, b3StepContext* context, bool useBias );
+ void b3PrepareJoints_Overflow( b3StepContext* context );
+ void b3WarmStartJoints_Overflow( b3StepContext* context );
+ void b3SolveJoints_Overflow( b3StepContext* context, bool useBias );
++void b3StoreArmatureVelocities( b3StepContext* context );
+ 
+ void b3GetJointReaction( b3World* world, b3JointSim* sim, float invTimeStep, float* force, float* torque );
+ 
+diff --git a/src/solver.c b/src/solver.c
+index 236c848..133cf76 100644
+--- a/src/solver.c
++++ b/src/solver.c
+@@ -1254,6 +1254,12 @@ static void b3SolverTask( void* taskContext )
+ 			// syncBits still increases monotonically because the upper bits increase each iteration
+ 			int iterationStageIndex = stageIndex;
+ 
++			// Joint armature: where this sub-step's relative angular velocities start from
++			if ( subStepIndex > 0 )
++			{
++				b3StoreArmatureVelocities( context );
++			}
++
+ 			// Integrate velocities
+ 			syncBits = ( bodySyncIndex << 16 ) | iterationStageIndex;
+ 			B3_ASSERT( stages[iterationStageIndex].type == b3_stageIntegrateVelocities );

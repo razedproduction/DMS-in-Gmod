@@ -331,6 +331,10 @@ public:
 	void SetNMDriven() { m_bNMDriven = true; }
 	bool IsNMDriven() const { return m_bNMDriven; }
 
+	// The velocity an NM-driven body starts step nStep with, before its controllers (gravity) add theirs: what
+	// GetBodyState reports during that step
+	void CaptureNMStepStart( uint32_t nStep );
+
 	void QueueStiffnessUpdate();
 
 	void ClearStiffnessQueued() { m_bStiffnessQueued = false; }
@@ -484,6 +488,9 @@ private:
 	b3Vec3 m_PreStepVelocity = b3Vec3_zero;
 	b3Vec3 m_PreStepAngularVelocity = b3Vec3_zero;
 	b3Quat m_PreStepRotation = b3Quat_identity;
+	b3Vec3 m_NMStartVelocity = b3Vec3_zero;
+	b3Vec3 m_NMStartAngularVelocity = b3Vec3_zero;
+	uint32_t m_nNMStartStep = UINT32_MAX;
 	b3Vec3 m_ImpactVelocity = b3Vec3_zero;
 	b3Vec3 m_ImpactAngularVelocity = b3Vec3_zero;
 	float m_flFastDistance = 0.0f;

@@ -2,3 +2,4 @@
 # 60 шагов — до выстрела, который headless делает на шаге 60. Детерминированно, бит в бит (.frames).
 # Встаёт Playroom анимацией (не NM) после 2 с лежания: get-up дважды = режим off.
 #! headless 60 press=get-up,get-up
+#! tol steps=60 com_max=0.08 fall marks   # Homer in FOLLOW on Box3D against the Playroom (golden/README.md)

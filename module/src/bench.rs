@@ -125,12 +125,12 @@ impl Bench {
                 if self.steps > 0 {
                     return self.unsupported("fall after steps (only from the build's pose)");
                 }
+                // The Playroom's `fall`: a new agent 3 m up (smartFall only with its additional reactions, off).
                 match new_agent(d, 3.0) {
-                    Ok(a) => self.agent = a,
+                    Ok(a) => (self.agent, self.held) = (a, false),
                     Err(e) => return self.say(&format!("ours  fall: {e}")),
                 }
-                let _ = self.send("smartFall start=true");
-                return self.say("ours  fall: from 3 m, smartFall");
+                return self.say("ours  fall: from 3 m");
             }
             "RESET pose" => {
                 match new_agent(d, 0.0) {
@@ -139,19 +139,10 @@ impl Bench {
                 }
                 return self.say("room  RESET pose");
             }
-            "balance" => &["bodyBalance start=true"],
-            "windmill" => &["bodyBalance start=true", "armsWindmillAdaptive start=true"],
-            "pedal" => &["pedalLegs start=true"],
-            "writhe" => &["bodyWrithe start=true"],
-            "rollup" => &["bodyRollUp start=true"],
-            "catchfall" => &["catchFall start=true"],
-            "highfall" => &["highFall start=true"],
-            "stairs" => &["rollDownStairs start=true"],
-            "relax" => &["bodyRelax start=true"],
-            "stayup" => &["stayUpright start=true stiffness=3"],
-            "foetal" => &["bodyFoetal start=true"],
-            "STOP all" => &["stopAllBehaviours"],
-            _ => return self.unsupported(&format!("!button {b}")),
+            _ => match crate::follow::button_lines(b) {
+                Some(l) => l,
+                None => return self.unsupported(&format!("!button {b}")),
+            },
         };
         self.say(&format!("room  {b}"));
         self.held = false;

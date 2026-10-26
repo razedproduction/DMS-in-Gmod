@@ -598,7 +598,9 @@ b3Vec3 CPhysicsObject::GetBodyAngularVelocity( b3Vec3 coreAngular ) const
 void CPhysicsObject::FlushVelocity()
 {
 	m_bVelocityFlushQueued = false;
-	const bool bContactGravity = m_bGravityApplied && !m_ContactKeys.empty();
+	// NM's bodies always take Box3D's continuous gravity, as NM's physics does, not the controller's step-start kick:
+	// a body held up by its joints would otherwise end each step moving up (and NM reads it as moving)
+	const bool bContactGravity = m_bGravityApplied && ( !m_ContactKeys.empty() || m_bNMDriven );
 	SetContactGravity( bContactGravity );
 	if ( m_bCoreVelocityValid )
 	{
@@ -1644,12 +1646,22 @@ void CPhysicsObject::ApplyTorqueCenter( const AngularImpulse &torque )
 	ClampVelocity( true );
 }
 
+void CPhysicsObject::CaptureNMStepStart( uint32_t nStep )
+{
+	m_NMStartVelocity = GetCoreVelocity();
+	m_NMStartAngularVelocity = GetCoreAngularVelocity();
+	m_nNMStartStep = nStep;
+}
+
 void CPhysicsObject::GetBodyState( b3Vec3 &center, b3Quat &rotation, b3Vec3 &velocity, b3Vec3 &angularVelocity ) const
 {
 	center = b3ToVec3( b3Body_GetWorldCenter( m_Body ) );
 	rotation = b3Body_GetRotation( m_Body );
-	velocity = IVPToSource( GetCoreVelocity() );
-	angularVelocity = GetBodyAngularVelocity( GetCoreAngularVelocity() );
+	// Inside a step the core velocity already has the step's gravity (the gravity controller, IVP style) and
+	// damping in it: a body at rest reads g * dt. The controller wants the state the step starts from.
+	const bool bStart = m_pEnvironment->IsInSimulation() && m_nNMStartStep == m_pEnvironment->GetStepCount();
+	velocity = IVPToSource( bStart ? m_NMStartVelocity : GetCoreVelocity() );
+	angularVelocity = GetBodyAngularVelocity( bStart ? m_NMStartAngularVelocity : GetCoreAngularVelocity() );
 }
 
 void CPhysicsObject::ApplyDrive( b3Vec3 force, b3Vec3 torque )

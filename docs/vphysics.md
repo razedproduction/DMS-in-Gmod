@@ -13,7 +13,7 @@ GMod на Box3D) с NM-расширением `IPhysicsNM` (`include/vphysics_nm
   изменении интерфейса).
 - `vphysics/src/physics_nm.*` — реализация `IPhysicsNM`; остальные NM-правки — в `physics_object.*`,
   `physics_constraint.*`, `physics_environment.cpp` (step-callback) и `cmake/patches/*.patch` (патчи Box3D:
-  armature суставов, эллиптический конус).
+  armature суставов, эллиптический конус, дополнительные проходы по суставам с armature).
 - Сабмодули `vphysics/external/box3d` (erincatto/box3d) и `vphysics/external/source-sdk-2013` (ValveSoftware) —
   записаны в корневом `.gitmodules` (shallow). `vphysics/.gitmodules` — файл upstream'а, git его не читает; оставлен,
   чтобы `subtree pull` не конфликтовал.
@@ -44,6 +44,20 @@ git submodule update --init --depth 1   # один раз после clone
 интерфейса (`VBOX3D_NM_004`…) с сохранением старых строк, заголовок копировать в модуль. Не связанное с NM не менять
 — иначе каждый `subtree pull` будет конфликтовать.
 
+## Правки под физику NM в M4 (ADR 0017)
+
+Интерфейс не менялся (`VBOX3D_NM_003`), изменилось поведение для тел и суставов под `IPhysicsNM`:
+
+- `box3d-joint-armature.patch`: `Cdot0` armature берётся один раз на сабстеп (до интегрирования сил), а не на каждом
+  проходе релаксации — иначе второй проход отменял импульс armature и при > 1 проходе тело разносило.
+- `box3d-armature-iterations.patch`: `b3World_SetArmatureIterations` — дополнительные проходы Гаусса–Зейделя только по
+  суставам с armature (её ставит лишь `IPhysicsNM`) перед каждой итерацией решения и релаксации; форк ставит 8
+  (`NM_ARMATURE_ITERATIONS`). Почти жёсткое дерево Homer (armature до 9 кг·м²) иначе не сходится за один проход.
+- `CPhysicsObject::GetBodyState` внутри шага отдаёт скорость начала шага (`CaptureNMStepStart`): «core velocity» к
+  step-callback уже содержит гравитацию шага от контроллера IVP (покоящееся тело читалось как падающее 0.23 м/с).
+- Тела под NM всегда берут непрерывную гравитацию Box3D (`FlushVelocity`), а не толчок `g·dt` контроллера в начале шага.
+
+Проверка после каждой правки физики — `golden body` и `golden behaviour --source` на стенде.
 ## Свежий upstream Asphaltian
 
 ```powershell

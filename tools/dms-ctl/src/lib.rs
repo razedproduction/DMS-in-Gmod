@@ -252,6 +252,8 @@ pub struct Scenario {
     pub headless_steps: Option<u64>,
     /// `<t> <command>`, sorted by time (stable).
     pub commands: Vec<(f32, String)>,
+    /// `#! tol <check> ...`: what Homer on Box3D has to keep of the Playroom's record (`golden behaviour`).
+    pub tol: Vec<String>,
 }
 
 impl Scenario {
@@ -284,17 +286,50 @@ impl Scenario {
         if headless_steps.is_none() && !commands.iter().any(|c| c.1 == "!quit") {
             return Err("a window scenario ends with `<t> !quit`".into());
         }
-        Ok(Scenario { name: name.to_string(), mode: words.join(" "), headless_steps, commands })
+        let tol = text
+            .lines()
+            .filter_map(|l| l.trim().strip_prefix("#!")?.trim().strip_prefix("tol ")?.split('#').next())
+            .flat_map(|l| l.split_whitespace().map(String::from).collect::<Vec<_>>())
+            .collect();
+        Ok(Scenario { name: name.to_string(), mode: words.join(" "), headless_steps, commands, tol })
     }
 
-    /// The module's `run` request: the mode line, then the commands (none for headless: the Playroom's headless
-    /// takes only its buttons).
-    pub fn request(&self) -> String {
-        let mut s = format!("{}\n", self.mode);
-        if self.headless_steps.is_none() {
-            for (t, c) in &self.commands {
-                s += &format!("{t} {c}\n");
+    /// The module's `run` request: the mode line (and `lead` for the LEAD bench), then the commands (none for
+    /// headless: the Playroom's headless takes only its buttons). A window's go as `@<step> <command>`, the NM step
+    /// before which the Playroom ran each (docs/adr/0011): read off its record `theirs` (the `#` line each leaves;
+    /// `!quit` after its last step), or else from the time since the first command. `!poke` takes the impulse the
+    /// Playroom's record shows (its camera, which the poke comes from, moves in the window).
+    pub fn request(&self, theirs: Option<&rec::Rec>, lead: bool) -> String {
+        let mut s = format!("{}{}\n", self.mode, if lead { " lead" } else { "" });
+        if self.headless_steps.is_some() {
+            return s;
+        }
+        let t0 = self.commands.first().map_or(0.0, |c| c.0);
+        let mut next = 0;
+        for (t, c) in &self.commands {
+            let estimate = ((t - t0) * 60.0).round() as i64;
+            let mut step = estimate.max(0) as u64;
+            let mut line = c.clone();
+            if let Some(r) = theirs {
+                if c == "!quit" {
+                    step = r.steps.len() as u64;
+                } else if let Some(sig) = mark_of(c) {
+                    let found = r.log.iter().enumerate().skip(next).find(|(_, (lt, text))| {
+                        text.starts_with(&sig) && ((lt * 60.0).round() as i64 - estimate).abs() <= 6
+                    });
+                    if let Some((i, (lt, _))) = found {
+                        step = (lt * 60.0).round() as u64;
+                        next = i + 1;
+                        if c.starts_with("!poke") {
+                            let imp = r.log[next..].iter().find_map(|(_, l)| l.strip_prefix("ours  MSG applyImpulse")?.split_whitespace().find_map(|w| w.strip_prefix("impulse=")));
+                            if let (Some(imp), Some(k)) = (imp, c.split_whitespace().nth(1)) {
+                                line = format!("!poke {k} {imp}");
+                            }
+                        }
+                    }
+                }
             }
+            s += &format!("@{step} {line}\n");
         }
         s
     }
@@ -308,10 +343,24 @@ impl Scenario {
     }
 }
 
-/// Runs a scenario on the bench (real time) and gives its `.rec`.
-pub fn run(c: &mut Channel, s: &Scenario) -> Result<String, String> {
-    let limit = Duration::from_secs_f32(s.seconds() + 60.0);
-    c.request("run", &s.request(), limit)
+/// The start of the `#` line the Playroom's record has for a command (`room  <button>`, `ours  MSG <message>`...).
+fn mark_of(c: &str) -> Option<String> {
+    let mut w = c.splitn(2, ' ');
+    Some(match (w.next()?, w.next().map(str::trim)) {
+        ("!button", Some("get-up")) => "ours  get-up:".into(),
+        ("!button", Some("fall")) => "ours  fall:".into(),
+        ("!button", Some(b)) => format!("room  {b}"),
+        ("!poke", _) => "room  poke".into(),
+        (m, _) if m.starts_with('!') => return None,
+        (m, _) => format!("ours  MSG {m}"),
+    })
+}
+
+/// Runs a scenario on the bench (real time) and gives its `.rec`: on Homer in FOLLOW, or on the LEAD bench
+/// (`lead`); a window's commands at the Playroom's steps when its record `theirs` is given.
+pub fn run(c: &mut Channel, s: &Scenario, theirs: Option<&rec::Rec>, lead: bool) -> Result<String, String> {
+    let limit = Duration::from_secs_f32(s.seconds() + 90.0);
+    c.request("run", &s.request(theirs, lead), limit)
 }
 
 /// A `--rec` record, read back (`golden/README.md`).
