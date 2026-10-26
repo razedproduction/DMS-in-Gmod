@@ -87,7 +87,7 @@ the bench: …`): выстрел (ShotTask, M6), кнопки со взгляд�
 `golden behaviour --source [имена]` сверяет записи с Playroom **по допускам сценария** — строка `#! tol` в файле
 сценария (`golden/README.md`): разрыв COM, конечная высота, падение, время оседания, шаги команд, реакции слоя
 комнаты. Сейчас в допусках `stand` (60 с), `stand-1s`, `push`, `relax`, `catchfall`, первые 60 шагов `shot`, стадия
-`kerb`; вне допуска `relax-1s`, `lowwall`, `stairs`, приземление в `rooftop` (ADR 0018).
+`stairs`; вне допуска `relax-1s`, `lowwall` (близко), конечная поза `kerb`, приземление в `rooftop` (ADR 0019).
 `--lead` — прежний LEAD-агент SDK на полу Playroom (как `dms_selftest`): его записи совпадают с Playroom до трёх
 знаков, кроме `push` (камера), `catchfall` и `shot`.
 
