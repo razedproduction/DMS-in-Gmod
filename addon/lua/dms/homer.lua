@@ -84,9 +84,10 @@ concommand.Add("dms_homer", function(ply)
 	if IsValid(ply) then
 		local tr = util.TraceLine({ start = ply:EyePos(), endpos = ply:EyePos() + ply:GetAimVector() * 150,
 			filter = ply })
+		-- His feet on Box3D's floor: the trace's plane moved out by the fork's shell (docs/adr/0018).
 		local down = util.TraceLine({ start = tr.HitPos + Vector(0, 0, 8), endpos = tr.HitPos - Vector(0, 0, 400),
 			filter = ply })
-		pos = down.HitPos
+		pos = down.Hit and (DMS_FloorBelow(down.HitPos + Vector(0, 0, 1), ply) or down.HitPos) or down.HitPos
 		yaw = ply:EyeAngles().y + 180
 	else
 		pos, yaw = Vector(0, 0, 0), 0

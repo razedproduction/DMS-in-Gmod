@@ -24,6 +24,8 @@ function DMS_Follow(ent)
 	local parts, why = DMS_HomerParts(ent)
 	if not parts then return nil, why end
 	local s = ent.DMS_Spawn or { pos = ent:GetPos(), yaw = ent:GetAngles().y }
+	-- NM's world: the map's (ROADMAP M5), or the Playroom's floor at his feet' level.
+	DMS_MapWorld()
 	local ok, id = pcall(DMS.Follow, parts, math.rad(s.yaw), s.pos * METRES_PER_UNIT, false)
 	if not ok then return nil, tostring(id) end
 	ent.DMS_Agent = id

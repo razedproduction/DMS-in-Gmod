@@ -1,0 +1,10 @@
+# Стадия Playroom «kerb» (--stage kerb, ROADMAP M5): уступ 0.44 м в 0.3 м впереди, через 2 с — applyImpulse 90 Н·с в
+# грудь (часть 9) на уступ: спотыкается, балансир сдаётся, падает за уступ.
+# Оконный режим (--script): первая команда на 3 с, пока окно грузится; get-up дважды = режим off.
+#! window stage=kerb
+#! tol fall down=0.5:0.25 end_z=0.1 steps=150 com_max=0.25   # Homer in FOLLOW on Box3D against the Playroom (golden/README.md)
+3 !button get-up
+3 !button get-up
+3 !button balance
+5 applyImpulse start=true partIndex=9 impulse=0,90,0
+11 !quit

@@ -256,6 +256,11 @@ fn parse_run(text: &str) -> Result<Run, String> {
     let mut lines = text.lines();
     let head: Vec<&str> = lines.next().unwrap_or("").split_whitespace().collect();
     let lead = head.contains(&"lead");
+    // `stage=<name>`: the Playroom's `--stage` (ROADMAP M5), on the stages map.
+    let stage = head.iter().find_map(|w| w.strip_prefix("stage=")).map(String::from);
+    if let Some(s) = stage.as_deref().filter(|s| dms_game::stage::stage(s).is_none()) {
+        return Err(format!("stage {s}: the bench has {}", dms_game::stage::NAMES.join(", ")));
+    }
     let mode = match head[..] {
         ["headless", steps, ref rest @ ..] => ScriptMode::Headless {
             steps: steps.parse().map_err(|_| format!("headless {steps}: not a step count"))?,
@@ -288,7 +293,10 @@ fn parse_run(text: &str) -> Result<Run, String> {
         let lines = commands.iter().map(|(a, c)| (match *a { At::Time(t) => t, At::Step(s) => s as f32 / 60.0 }, c.clone())).collect();
         return Ok(Run::Lead(mode, lines));
     }
-    let script = match mode {
+    if lead && stage.is_some() {
+        return Err("the LEAD bench has the room only (no stage)".into());
+    }
+    let mut script = match mode {
         ScriptMode::Headless { steps, press } => {
             let buttons = std::iter::once("balance".to_string()).chain(press).map(|b| (0, format!("!button {b}"))).collect();
             Script::new(buttons, steps, true, None)
@@ -301,6 +309,7 @@ fn parse_run(text: &str) -> Result<Run, String> {
             Script::new(steps, end, false, fall.then_some(3.0))
         }
     };
+    script.stage = stage;
     Ok(Run::Follow(script))
 }
 
@@ -383,8 +392,11 @@ unsafe fn think(api: &Api, l: *mut LuaState, now: f64, tick: f64, dt: f32, gravi
         } else if let Some((conn, id, s)) = main.pending.as_ref().filter(|p| p.0 == r.conn && p.1 == r.id) {
             // A FOLLOW scenario: Lua spawns Homer at the room's start (up high for the Playroom's `fall`) and hands
             // him over with DMS.BenchFollow.
+            // On a stage, at its start (the Playroom's `room.start`): `<up> <stage> <x> <y> <z>`.
             let up = s.fallen_from.unwrap_or(0.0);
-            for_lua.push(Request { conn: *conn, id: *id, kind: "bench_spawn".into(), text: format!("{up}") });
+            let stage = s.stage.as_deref().unwrap_or("room");
+            let [x, y, z] = s.stage.as_deref().and_then(dms_game::stage::stage).map_or([0.0; 3], |s| s.start);
+            for_lua.push(Request { conn: *conn, id: *id, kind: "bench_spawn".into(), text: format!("{up} {stage} {x} {y} {z}") });
         }
     }
     for (agent, f) in step::finished() {

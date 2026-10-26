@@ -26,6 +26,8 @@ pub struct Data {
     /// CONCRETE's surface row, the Playroom's floor.
     pub floor_material: u8,
     pub surfaces: usize,
+    /// materials.dat's surface rows by name (a map's surfaces pick theirs, `world.rs`).
+    pub surface_names: Vec<String>,
     /// Where taskparams.txt came from, or why NM runs its defaults.
     pub taskparams: String,
 }
@@ -104,6 +106,7 @@ fn read(dir: &str) -> Result<Data, String> {
         dump,
         floor_material: dms_game::concrete(&rows),
         surfaces: rows.len(),
+        surface_names: rows.iter().map(|r| r.0.clone()).collect(),
         taskparams,
     })
 }

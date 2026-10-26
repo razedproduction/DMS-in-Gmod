@@ -27,6 +27,9 @@ static constexpr float IVP_TO_SOURCE_SQUARED = IVP_TO_SOURCE * IVP_TO_SOURCE;
 static constexpr int IVP_TO_SOURCE_AXIS[3] = { 0, 2, 1 };
 static constexpr float CONE_UPPER_BOUND = 100.0f;
 static constexpr float MAX_SCALED_MASS = 10000.0f;
+// The drift correction of joints between bodies NM drives (ApplyStiffnessBudget): Box3D's cap, and damping.
+static constexpr float NM_JOINT_HERTZ_FRACTION = 0.25f;
+static constexpr float NM_JOINT_DAMPING_RATIO = 0.2f;
 static constexpr float ITERATION_ALPHA[CPhysicsConstraintGroup::MAX_ITERATIONS] = { 1.0f, 1.0f, 0.8f, 0.6f, 0.4f, 0.4f, 0.4f, 0.4f, 0.4f };
 static constexpr float ITERATION_BETA[CPhysicsConstraintGroup::MAX_ITERATIONS] = { 1.0f, 1.0f, 0.8f, 0.8f, 0.8f, 0.8f, 0.8f, 0.8f, 0.8f };
 
@@ -1510,6 +1513,14 @@ void CPhysicsConstraint::ApplyStiffnessBudget()
 {
 	if ( !HasJoint() || m_nJointType == b3_filterJoint )
 		return;
+
+	// NM's joints don't stretch (its articulated body is exact): a joint between two bodies NM drives corrects its
+	// drift as stiffly as Box3D allows (a quarter of the substep rate) and barely damped, instead of the budget.
+	if ( m_pReference->IsNMDriven() && m_pAttached->IsNMDriven() )
+	{
+		b3Joint_SetConstraintTuning( m_Joint, NM_JOINT_HERTZ_FRACTION * m_pEnvironment->GetSubstepRate(), NM_JOINT_DAMPING_RATIO );
+		return;
+	}
 
 	const float flScale = std::min( m_pReference->GetStiffnessScale(), m_pAttached->GetStiffnessScale() );
 	b3Joint_SetConstraintTuning( m_Joint, m_flStiffnessHertz * std::sqrt( flScale ), GetBaseDefinition( m_Definition, m_nJointType ).constraintDampingRatio );
