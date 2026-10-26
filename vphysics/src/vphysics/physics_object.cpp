@@ -8,6 +8,7 @@
 #include "physics_environment.h"
 #include "physics_fluid_controller.h"
 #include "physics_friction_snapshot.h"
+#include "physics_nm.h"
 #include "physics_spring.h"
 #include "physics_surface_props.h"
 #include "physics_vehicle_controller.h"
@@ -1304,6 +1305,18 @@ void CPhysicsObject::SetMaterialIndex( int materialIndex )
 
 	if ( m_pShadow )
 		m_pShadow->ObjectMaterialChanged( materialIndex );
+}
+
+void CPhysicsObject::SetNMMaterial( float flFriction, float flElasticity )
+{
+	b3SurfaceMaterial material = GetSurfaceMaterial( m_nMaterialIndex );
+	material.friction = flFriction;
+	material.restitution = flElasticity;
+	material.userMaterialId = NM_BODY_MATERIAL | static_cast<uint64_t>( m_nMaterialIndex );
+	ForEachShape( m_Body, [&]( b3ShapeId shape ) {
+		if ( !GetShapeWorldMaterial( shape ) )
+			b3Shape_SetSurfaceMaterial( shape, material );
+	} );
 }
 
 void CPhysicsObject::UpdateWorldMaterials()

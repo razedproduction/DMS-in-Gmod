@@ -1,7 +1,7 @@
 # Форк VPhysics-Box3D в `vphysics/`
 
 `vphysics/` — форк [Asphaltian/VPhysics-Box3D](https://github.com/Asphaltian/VPhysics-Box3D) (замена `vphysics.dll`
-GMod на Box3D) с NM-расширением `IPhysicsNM` (`include/vphysics_nm.h`, сейчас `VBOX3D_NM_003`). Он живёт в этом
+GMod на Box3D) с NM-расширением `IPhysicsNM` (`include/vphysics_nm.h`, сейчас `VBOX3D_NM_004`). Он живёт в этом
 репозитории как **git subtree** с полной историей (ADR 0015): правки модуля и физики идут одним PR, upstream берётся
 `git subtree pull`. Прежний отдельный репозиторий `razedproduction/VPhysics-Box3D` больше не обновляется.
 
@@ -58,6 +58,18 @@ git submodule update --init --depth 1   # один раз после clone
 - Тела под NM всегда берут непрерывную гравитацию Box3D (`FlushVelocity`), а не толчок `g·dt` контроллера в начале шага.
 
 Проверка после каждой правки физики — `golden body` и `golden behaviour --source` на стенде.
+
+## Правки под мир NM в M5 (ADR 0018, `VBOX3D_NM_004`)
+
+- Новые методы в конце vtable (строки `VBOX3D_NM_003…001` по-прежнему отдают тот же объект):
+  `SetBodyMaterial(obj, μ, e)` — материал части NM (фигуры тела получают его трение и упругость, в `userMaterialId` —
+  тег `NM_BODY_MATERIAL` и прежний surfaceprop); `SetSurfaceMaterial(surfaceprop, μ, e)` — значения NM для
+  surfaceprop (таблица в `physics_nm.cpp`, на все окружения).
+- `MixFriction`/`MixRestitution` (`physics_environment.cpp`): часть NM × поверхность с материалом NM (или часть ×
+  часть) — `μA·μB` без обрезки и `min(eA·eB, 1)`, как физика NM; всё остальное — прежнее смешивание surfaceprop.
+- `CPhysicsConstraint::ApplyStiffnessBudget`: сустав между двумя телами NM не проходит бюджет жёсткости, коррекция
+  дрейфа — потолок Box3D (¼ частоты сабстепов), ζ = 0.2 (`NM_JOINT_*`). Голеностоп под весом тела тянется ~6 мм
+  вместо ~9; остальное расхождение — несходимость «сустав ↔ контакт» (контакты не входят в доп. проходы, ADR 0018).
 ## Свежий upstream Asphaltian
 
 ```powershell
@@ -73,7 +85,7 @@ git submodule update --init --depth 1   # если upstream сдвинул Box3D
 поменял URL или добавил сабмодуль — тогда перенести это в корневой с префиксом `vphysics/`).
 
 Проверка после слияния: патчи Box3D наложились (configure пишет `Patching Box3D`, без `Failed to apply`), игра
-отдаёт `VBOX3D_NM_003` (`DMS.InterfaceVersion()`), `golden body` на стенде проходит и цифры пивотов/лимитов не
+отдаёт `VBOX3D_NM_004` (`DMS.InterfaceVersion()`), `golden body` на стенде проходит и цифры пивотов/лимитов не
 хуже прежних (сравнить с прогоном до слияния). PR — как обычно, описание с таблицей конфликтов.
 
 ### Конфликты NM-правок

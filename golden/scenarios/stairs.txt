@@ -1,0 +1,10 @@
+# Стадия Playroom «big stairs» (--stage bigstairs, ROADMAP M5): стоит наверху лестницы (6 м), через 2 с —
+# applyImpulse 90 Н·с в грудь (часть 9) к ступеням: сходит/съезжает вниз по лестнице, держась bodyBalance.
+# Оконный режим (--script): первая команда на 3 с, пока окно грузится; get-up дважды = режим off.
+#! window stage=bigstairs
+#! tol down=6.5:0.5 down=5.5:1.0 steps=150 com_max=0.25   # Homer in FOLLOW on Box3D against the Playroom (golden/README.md)
+3 !button get-up
+3 !button get-up
+3 !button balance
+5 applyImpulse start=true partIndex=9 impulse=0,90,0
+12 !quit

@@ -15,6 +15,7 @@ mod nm;
 mod nm_natives;
 mod selftest;
 mod step;
+mod world;
 
 use std::ffi::{CString, c_int};
 
@@ -42,7 +43,12 @@ unsafe fn nm_version_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> 
 /// Looks for `IPhysicsNM` and says in the console what came of it (docs/adr/0005).
 fn acquire_message() -> String {
     match vphysics_nm::acquire() {
-        Ok(Version::V003) => format!("[DMS] IPhysicsNM {} found", Version::V003.name()),
+        Ok(Version::V004) => format!("[DMS] IPhysicsNM {} found", Version::V004.name()),
+        Ok(Version::V003) => format!(
+            "[DMS] WARNING: only IPhysicsNM {} found, NM's contact materials (SetBodyMaterial, SetSurfaceMaterial) are \
+             unavailable and Homer can't be bound: update VPhysics-Box3D",
+            Version::V003.name()
+        ),
         Ok(Version::V002) => format!(
             "[DMS] WARNING: only IPhysicsNM {} found, Homer's full inertia and NM's ball joints (SetBodyInertia, \
              SetJointBallLimits) are unavailable: update VPhysics-Box3D",
@@ -71,7 +77,7 @@ pub unsafe extern "C" fn gmod13_open(l: *mut LuaState) -> c_int {
     let Ok(api) = lua::api() else { return 0 };
     let nm_message = acquire_message();
     unsafe {
-        let natives = natives::NATIVES.iter().chain(nm_natives::NATIVES).chain(bind::NATIVES).chain(agents::NATIVES).chain(dev::NATIVES);
+        let natives = natives::NATIVES.iter().chain(nm_natives::NATIVES).chain(bind::NATIVES).chain(agents::NATIVES).chain(dev::NATIVES).chain(world::NATIVES);
         (api.createtable)(l, 0, 2 + natives.clone().count() as c_int);
         let version = CString::new(MODULE_VERSION).unwrap_or_default();
         (api.pushstring)(l, version.as_ptr());

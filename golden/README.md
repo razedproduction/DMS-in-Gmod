@@ -60,7 +60,7 @@ Playroom запускается с рабочим каталогом `golden/out
 ```
 # комментарий (всё после # игнорируется)
 #! headless <шагов> [press=кнопка,кнопка]     ← либо
-#! window                                      ← и тогда строки команд:
+#! window [stage=<стадия>]                     ← и тогда строки команд (stage= → Playroom --stage, M5):
 #! tol <проверка> ...                          ← допуски Homer в FOLLOW (после строки режима)
 <t, с> <команда>
 ```
@@ -99,6 +99,10 @@ Playroom запускается с рабочим каталогом `golden/out
 | `push` | window | стойка, через 2 с `!poke 9` (8 Н·с в грудь) |
 | `catchfall` | window | `fall` (3 м, `smartFall`) и сразу `catchFall start=true` |
 | `relax` | window | `bodyRelax` из стойки |
+| `kerb` | window, stage=kerb | стойка, толчок 90 Н·с на уступ 0.44 м: спотыкается и падает |
+| `lowwall` | window, stage=lowwall | стойка, толчок 90 Н·с на стену 0.9 м: стена останавливает |
+| `rooftop` | window, stage=rooftop | стойка на крыше 4 м, толчок к краю: armHang, highFall |
+| `stairs` | window, stage=bigstairs | стойка наверху лестницы 6 м, толчок к ступеням |
 
 ## Формат `--rec`
 
@@ -146,5 +150,10 @@ Playroom идёт без физики).
 | `fall` | балансир сдаётся (`FB balance slot 8`) в обоих или ни в одном, в пределах 0.25 с |
 | `down=Z:S` | COM впервые ниже Z м — в пределах S с от Playroom (или ни там, ни там) |
 | `marks` | команды на тех же шагах (первые слова каждой отметки) |
+| `said=TEXT:S` | первая строка журнала, начинающаяся с TEXT (`_` — пробел), в пределах S с от Playroom (реакции слоя комнаты) |
+
+Стадии Playroom (`#! window stage=<имя>`, ADR 0018): Playroom идёт с `--stage <имя>`, стенд — на карте `dms_stages`
+(`tools/dms-map`, `server.ps1 start -Map dms_stages`), Homer — на старте стадии (`room.start`). Стадийные сценарии:
+`kerb`, `lowwall`, `rooftop`, `stairs` (толчок `applyImpulse` 90 Н·с в грудь к уступу, стене, краю, ступеням).
 
 `golden behaviour --source --lead` — прежняя сверка LEAD-агента SDK до трёх знаков записи.

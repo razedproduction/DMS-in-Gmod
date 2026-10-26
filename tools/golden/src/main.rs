@@ -457,6 +457,15 @@ fn tolerances(tol: &[String], ours: &dms_ctl::rec::Rec, theirs: &dms_ctl::rec::R
                 let ok = match (a, b) { (Some(a), Some(b)) => (a - b).abs() <= s, (None, None) => true, _ => false };
                 out.push((t.clone(), ok, format!("below {z} m at {} (Playroom {})", when(a), when(b))));
             }
+            "said" => {
+                // `said=TEXT:S`: the log's first line starting with TEXT (`_` for a space) within S s of the
+                // Playroom's (or in neither): the room layer reacted as the Playroom's did.
+                let (text, s) = v.rsplit_once(':').map(|(t, s)| (t.replace('_', " "), s.parse::<f32>().unwrap_or(f32::NAN))).unwrap_or_default();
+                let said = |r: &dms_ctl::rec::Rec| r.log.iter().find(|(_, l)| l.starts_with(&text)).map(|(t, _)| *t);
+                let (a, b) = (said(ours), said(theirs));
+                let ok = match (a, b) { (Some(a), Some(b)) => (a - b).abs() <= s, (None, None) => true, _ => false };
+                out.push((t.clone(), ok, format!("\"{text}\" at {} (Playroom {})", when(a), when(b))));
+            }
             "marks" => {
                 let (a, b) = (short(&dms_ctl::rec::marks(ours)), short(&dms_ctl::rec::marks(theirs)));
                 out.push((t.clone(), a == b, if a == b { format!("{} commands", a.len()) } else { format!("bench {} | playroom {}", a.join(", "), b.join(", ")) }));
@@ -484,7 +493,11 @@ fn run(ctx: &Ctx, names: &[String]) -> Result<(), String> {
 }
 
 fn run_one(ctx: &Ctx, path: &Path, name: &str) -> Result<String, String> {
-    let mode = scenario(&read_text(path)?)?;
+    let text = read_text(path)?;
+    let mode = scenario(&text)?;
+    // `stage=<name>` on the mode line: the Playroom's `--stage` (ROADMAP M5).
+    let stage = text.lines().find_map(|l| l.trim().strip_prefix("#!")).and_then(|h| h.split_whitespace().find_map(|w| w.strip_prefix("stage=")));
+    let stage_args: Vec<&str> = stage.map_or(vec![], |s| vec!["--stage", s]);
     let rec = ctx.out.join(format!("{name}.rec"));
     let log = ctx.out.join(format!("{name}.log"));
     let rec_s = rec.to_string_lossy().into_owned();
@@ -495,6 +508,7 @@ fn run_one(ctx: &Ctx, path: &Path, name: &str) -> Result<String, String> {
             if !press.is_empty() {
                 a.extend(["--press", press.as_str()]);
             }
+            a.extend(&stage_args);
             let mut c = ctx.room(&a)?;
             c.env("ROOM_LOG", "1");
             run_to(c, Some(&ctx.out.join(format!("{name}.frames"))), &log, Duration::from_secs(600))?;
@@ -504,7 +518,9 @@ fn run_one(ctx: &Ctx, path: &Path, name: &str) -> Result<String, String> {
             let s = script.to_string_lossy().into_owned();
             // Safe Mode: the Playroom's defaults, not the user's settings.txt (its behaviour switches too, read by
             // the window since 0.2.1), and the lowest graphics, so the window keeps up with 60 steps a second.
-            let mut c = ctx.room(&["--script", s.as_str(), "--rec", rec_s.as_str(), "--safe"])?;
+            let mut a = vec!["--script", s.as_str(), "--rec", rec_s.as_str(), "--safe"];
+            a.extend(&stage_args);
+            let mut c = ctx.room(&a)?;
             c.env("ROOM_LOG", "1");
             run_to(c, None, &log, Duration::from_secs_f32(last + 120.0))?;
         }

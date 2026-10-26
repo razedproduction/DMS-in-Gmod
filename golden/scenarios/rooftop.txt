@@ -1,0 +1,10 @@
+# Стадия Playroom «rooftop» (--stage rooftop, ROADMAP M5): стоит на крыше 4 м у края (y 0.5), через 2 с — applyImpulse
+# 90 Н·с в грудь (часть 9) к краю; слой комнаты Playroom (ledge): за краем хватается (armHang), потом highFall.
+# Оконный режим (--script): первая команда на 3 с, пока окно грузится; get-up дважды = режим off.
+#! window stage=rooftop
+#! tol down=4.5:0.3 said=rooftop__over_the_edge:0.3 said=rooftop__he_lets_go:1.0 end_z=0.15 steps=150 com_max=0.25   # Homer in FOLLOW on Box3D against the Playroom (golden/README.md)
+3 !button get-up
+3 !button get-up
+3 !button balance
+5 applyImpulse start=true partIndex=9 impulse=0,90,0
+12 !quit

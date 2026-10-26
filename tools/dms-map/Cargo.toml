@@ -1,0 +1,9 @@
+[package]
+name = "dms-map"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+dms-game = { path = "../dms-game" }

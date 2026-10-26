@@ -2,6 +2,8 @@
 
 #include "vphysics_nm.h"
 
+#include <cstdint>
+
 class CPhysicsNM final : public IPhysicsNM
 {
 public:
@@ -18,6 +20,16 @@ public:
 	bool SetBodyInertia( IPhysicsObject *pObject, const float *pTensor ) override;
 	bool SetJointBallLimits( IPhysicsConstraint *pConstraint, IPhysicsObject *pParent, const float *pWorldFrames, const float *pLimits ) override;
 	bool GetBodyInertia( const IPhysicsObject *pObject, float *pTensor ) override;
+	bool SetBodyMaterial( IPhysicsObject *pObject, float flFriction, float flElasticity ) override;
+	bool SetSurfaceMaterial( int nSurfaceProp, float flFriction, float flElasticity ) override;
 };
 
 extern CPhysicsNM g_PhysicsNM;
+
+// A Box3D shape material's userMaterialId of a body SetBodyMaterial gave NM's material: this bit, with its surface
+// property in the low bits.
+inline constexpr uint64_t NM_BODY_MATERIAL = 1ull << 62;
+inline constexpr uint64_t NM_SURFACE_MASK = 0xFFFFFFFFull;
+
+// SetSurfaceMaterial's friction and elasticity of a surface property, false for none.
+bool GetNMSurfaceMaterial( uint64_t nSurfaceProp, float &flFriction, float &flElasticity );

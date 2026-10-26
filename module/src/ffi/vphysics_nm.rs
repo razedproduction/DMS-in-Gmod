@@ -1,4 +1,4 @@
-//! VPhysics-Box3D's `IPhysicsNM` (`VBOX3D_NM_003`), as `include/vphysics_nm.h` of the fork declares it (a copy
+//! VPhysics-Box3D's `IPhysicsNM` (`VBOX3D_NM_004`), as `include/vphysics_nm.h` of the fork declares it (a copy
 //! is beside this file).
 //!
 //! Win64 only: a C++ virtual call is a plain C call with `this` first, so the vtable is a struct of
@@ -26,7 +26,8 @@ pub struct IPhysicsEnvironment {
     _private: [u8; 0],
 }
 
-pub const INTERFACE_VERSION: &str = "VBOX3D_NM_003";
+pub const INTERFACE_VERSION: &str = "VBOX3D_NM_004";
+pub const INTERFACE_VERSION_003: &str = "VBOX3D_NM_003";
 pub const INTERFACE_VERSION_002: &str = "VBOX3D_NM_002";
 pub const INTERFACE_VERSION_001: &str = "VBOX3D_NM_001";
 
@@ -101,14 +102,18 @@ pub struct IPhysicsNMVtbl {
         limits: *const f32,
     ) -> bool,
     pub get_body_inertia: unsafe extern "C" fn(this: *mut IPhysicsNM, object: *const IPhysicsObject, tensor: *mut f32) -> bool,
+    /// From `VBOX3D_NM_004` on: an `_003` vtable ends before them.
+    pub set_body_material: unsafe extern "C" fn(this: *mut IPhysicsNM, object: *mut IPhysicsObject, friction: f32, elasticity: f32) -> bool,
+    pub set_surface_material: unsafe extern "C" fn(this: *mut IPhysicsNM, surface_prop: c_int, friction: f32, elasticity: f32) -> bool,
 }
 
 /// Which version of the interface the loaded vphysics gave.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Version {
     V001 = 1,
     V002 = 2,
     V003 = 3,
+    V004 = 4,
 }
 
 impl Version {
@@ -116,7 +121,8 @@ impl Version {
         match self {
             Version::V001 => INTERFACE_VERSION_001,
             Version::V002 => INTERFACE_VERSION_002,
-            Version::V003 => INTERFACE_VERSION,
+            Version::V003 => INTERFACE_VERSION_003,
+            Version::V004 => INTERFACE_VERSION,
         }
     }
 }
@@ -137,7 +143,7 @@ static VERSION: AtomicU8 = AtomicU8::new(0);
 pub fn acquire() -> Result<Version, AcquireError> {
     release();
     let create = sys::create_interface().ok_or(AcquireError::NoVphysics)?;
-    for (version, name) in [(Version::V003, c"VBOX3D_NM_003"), (Version::V002, c"VBOX3D_NM_002"), (Version::V001, c"VBOX3D_NM_001")] {
+    for (version, name) in [(Version::V004, c"VBOX3D_NM_004"), (Version::V003, c"VBOX3D_NM_003"), (Version::V002, c"VBOX3D_NM_002"), (Version::V001, c"VBOX3D_NM_001")] {
         // SAFETY: vphysics' exported factory, given a null terminated name and no return code.
         let p = unsafe { create(name.as_ptr(), ptr::null_mut()) }.cast::<IPhysicsNM>();
         if !p.is_null() {
@@ -162,6 +168,7 @@ pub fn get() -> Option<Nm> {
         1 => Version::V001,
         2 => Version::V002,
         3 => Version::V003,
+        4 => Version::V004,
         _ => return None,
     };
     (!p.is_null()).then_some(Nm { this: p, version })
@@ -262,7 +269,7 @@ impl Nm {
     /// # Safety
     /// `object` is null or a live `IPhysicsObject` of this vphysics.
     pub unsafe fn set_body_inertia(&self, object: *mut IPhysicsObject, tensor: &[f32; 9]) -> Option<bool> {
-        if self.version != Version::V003 {
+        if self.version < Version::V003 {
             return None;
         }
         Some(unsafe { (self.vtbl().set_body_inertia)(self.this, object, tensor.as_ptr()) })
@@ -280,7 +287,7 @@ impl Nm {
         world_frames: &[[f32; 4]; 2],
         limits: &[f32; 3],
     ) -> Option<bool> {
-        if self.version != Version::V003 {
+        if self.version < Version::V003 {
             return None;
         }
         let frames = world_frames.as_ptr().cast::<f32>();
@@ -293,11 +300,33 @@ impl Nm {
     /// # Safety
     /// `object` is null or a live `IPhysicsObject` of this vphysics.
     pub unsafe fn body_inertia(&self, object: *const IPhysicsObject) -> Option<[f32; 9]> {
-        if self.version != Version::V003 {
+        if self.version < Version::V003 {
             return None;
         }
         let mut t = [0.0f32; 9];
         unsafe { (self.vtbl().get_body_inertia)(self.this, object, t.as_mut_ptr()) }.then_some(t)
+    }
+
+    /// `SetBodyMaterial`: the friction and elasticity NM's physics gives the part, for its contacts with NM's
+    /// surfaces and parts. `None` before `VBOX3D_NM_004`.
+    ///
+    /// # Safety
+    /// `object` is null or a live `IPhysicsObject` of this vphysics.
+    pub unsafe fn set_body_material(&self, object: *mut IPhysicsObject, friction: f32, elasticity: f32) -> Option<bool> {
+        if self.version < Version::V004 {
+            return None;
+        }
+        Some(unsafe { (self.vtbl().set_body_material)(self.this, object, friction, elasticity) })
+    }
+
+    /// `SetSurfaceMaterial`: NM's friction and elasticity of a Source surface property (a negative friction takes it
+    /// back). `None` before `VBOX3D_NM_004`.
+    pub fn set_surface_material(&self, surface_prop: i32, friction: f32, elasticity: f32) -> Option<bool> {
+        if self.version < Version::V004 {
+            return None;
+        }
+        // SAFETY: plain values on the live interface.
+        Some(unsafe { (self.vtbl().set_surface_material)(self.this, surface_prop, friction, elasticity) })
     }
 }
 

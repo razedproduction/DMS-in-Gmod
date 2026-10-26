@@ -219,6 +219,20 @@ impl Api {
         Ok(String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(p.cast::<u8>(), len) }).into_owned())
     }
 
+    /// The bytes of the string at `arg`, as they are (a file's contents).
+    ///
+    /// # Safety
+    /// `l` is a live Lua state, called from its own thread; the slice lives while the string is on the stack.
+    pub unsafe fn check_bytes<'a>(&self, l: *mut LuaState, arg: c_int) -> Result<&'a [u8], String> {
+        if unsafe { (self.type_)(l, arg) } != TSTRING {
+            return Err(format!("bad argument #{arg} (string expected)"));
+        }
+        let mut len = 0;
+        let p = unsafe { (self.tolstring)(l, arg, &mut len) };
+        // SAFETY: Lua's string of `len` bytes, alive while it's on the stack.
+        Ok(unsafe { std::slice::from_raw_parts(p.cast::<u8>(), len) })
+    }
+
     /// Pushes `{x =, y =, z = [, w =]}` from 3 or 4 components.
     ///
     /// # Safety

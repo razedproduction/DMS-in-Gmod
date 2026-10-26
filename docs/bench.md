@@ -85,15 +85,27 @@ Playroom. Запись — формат Playroom `--rec`, в порядке ег
 the bench: …`): выстрел (ShotTask, M6), кнопки со взглядом тела, `!shoot`, `!grab`, `!blast` и прочие `!…`.
 
 `golden behaviour --source [имена]` сверяет записи с Playroom **по допускам сценария** — строка `#! tol` в файле
-сценария (`golden/README.md`): разрыв COM, конечная высота, падение, время оседания, шаги команд. Сейчас в допусках
-`stand` (60 с), `stand-1s`, `push`, `relax`, `catchfall`, первые 60 шагов `shot`; вне допуска `relax-1s` (ADR 0017).
+сценария (`golden/README.md`): разрыв COM, конечная высота, падение, время оседания, шаги команд, реакции слоя
+комнаты. Сейчас в допусках `stand` (60 с), `stand-1s`, `push`, `relax`, `catchfall`, первые 60 шагов `shot`, стадия
+`kerb`; вне допуска `relax-1s`, `lowwall`, `stairs`, приземление в `rooftop` (ADR 0018).
 `--lead` — прежний LEAD-агент SDK на полу Playroom (как `dms_selftest`): его записи совпадают с Playroom до трёх
 знаков, кроме `push` (камера), `catchfall` и `shot`.
 
 `server.ps1 start -Tickrate 60` — тикрейт сервера 60; шаг физики при этом остаётся 0.015 с (его ставит игра),
 `DMS.EnvTimestep(physobj[, t])` читает и меняет его (только для опытов).
-## Сцена
 
-`gm_flatgrass`: плоский пол; начало комнаты Playroom — пол под `info_player_start` (`dms_bench_scene`,
-`DMS.BenchScene()` проверяет, что пол ровный на ±5 м). Стадии Playroom (лестница, стена, уступ, мост) — M5 вместе с
-миром NM из карты (в игре есть `vbsp/vvis/vrad`, карту можно будет собрать).
+## Сцена и мир NM (M5, ADR 0018)
+
+`gm_flatgrass`: плоский пол; начало комнаты Playroom — пол Box3D (`DMS_FloorBelow`: плоскость BSP + оболочка форка
+6.35 мм) под `info_player_start` (`dms_bench_scene`, `DMS.BenchScene()` проверяет, что пол ровный на ±5 м).
+
+Мир NM — из `.bsp` текущей карты (`world.lua`, `dms_map [reload]`, в логе `[DMS] NM's world: …`); пол — квадратами
+1 м по кадру агента, как пол Playroom. `DMS_MapCheck(pos, half, n)` сравнивает высоты мира NM с трассами игры.
+Пропы в 3 м от агента — препятствия NM (`obstacles` в телеметрии), `pivot_gap` — разрыв пивотов суставов на
+состоянии Box3D.
+
+Стадии Playroom — карта `dms_stages` (её делает `cargo run --release -p dms-map`: `.vmf` в `target/dms-map/`,
+`vbsp/vvis/vrad` игры, `garrysmod/maps/dms_stages.bsp`; в git не попадает): `bigstairs`, `stairsdown`, `rooftop`,
+`highledge`, `lowwall`, `kerb`, `rail`, `open` и наклон, сайт на стадию (`info_target dms_stage_<имя>`,
+`DMS.BenchScene(<имя>)`). Сценарии стадий (`#! window stage=<имя>`) — на стенде с `server.ps1 start -Map dms_stages`;
+сценарии комнаты идут на любой из двух карт.

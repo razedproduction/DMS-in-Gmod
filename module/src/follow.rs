@@ -23,7 +23,7 @@ use delirium::collision::Collision;
 use delirium::msg::{self, Kind, Value};
 use delirium::nm::Agent;
 use delirium::prelude::*;
-use delirium::ragdoll::{GRAVITY, Ragdoll};
+use delirium::ragdoll::{GRAVITY, Obstacle, Ragdoll};
 
 use crate::data::Data;
 use crate::ffi::vphysics_nm::{IPhysicsConstraint, IPhysicsObject, Nm};
@@ -160,6 +160,8 @@ pub struct Script {
     pub headless: bool,
     /// The spawn was the Playroom's `fall`: Homer 3 m up.
     pub fallen_from: Option<f32>,
+    /// The Playroom's stage it runs on (`--stage`), none for its room.
+    pub stage: Option<String>,
     rec: String,
     unsupported: Vec<String>,
     getup: usize,
@@ -179,6 +181,7 @@ impl Script {
             end,
             headless,
             fallen_from,
+            stage: None,
             rec: format!("{REC_HEADER}\n"),
             unsupported: vec![],
             getup: 0,
@@ -212,6 +215,8 @@ pub struct Follower {
     kicks: Vec<(usize, Vec3, Vec3)>,
     /// Lines from Lua for the next step.
     queued: Vec<String>,
+    /// The props near him as NM's boxes, in NM's frame (Lua's `DMS.FollowObstacles`, ROADMAP M5).
+    pub obstacles: Vec<Obstacle>,
     /// How much of gravity's compensation is on (0 to 1), and the parts the game doesn't pull (`EnableGravity`).
     pub comp: f32,
     pub gravity_off: u32,
@@ -220,6 +225,11 @@ pub struct Follower {
     was_fallen: bool,
     /// The body's velocity a step ago, which the Playroom's room layer acts on (in_air).
     prev_com_v: Option<Vec3>,
+    /// The Playroom room's stage state: he rolled down stairs since last balancing (`stairs_rolled`); how long he's
+    /// hung from the rooftop's edge (`room.snapped`), and that he let go (`room.fell`).
+    stairs_rolled: bool,
+    snapped: Option<f32>,
+    fell: bool,
     pub script: Option<Script>,
     /// Physics time since the last NM step (s), the last Source step's length, and how NM's own physics would have
     /// moved the body over that step: each part's velocity and spin before it and after (`doll.motion` once
@@ -233,6 +243,9 @@ pub struct Follower {
     /// How far each joint is into NM's limits on Box3D's state, by part: a ball's swing (its ellipse, 1 on the
     /// edge) and twist (of its range), a hinge's angle (of the nearer bound's).
     limit_use: Vec<(f32, f32)>,
+    /// How far each joint's pivot on its parent is from the one on the part, on Box3D's state (m, by part): NM's
+    /// joints don't stretch (ROADMAP M5).
+    pivot_gap: Vec<f32>,
 }
 
 // SAFETY: the pointers are only used on the game's main thread, where the physics and Lua both run.
@@ -286,11 +299,15 @@ impl Follower {
             armature: vec![0.0; PARTS],
             kicks: vec![],
             queued: vec![],
+            obstacles: vec![],
             comp: 1.0,
             gravity_off: 0,
             bodies_asleep: false,
             was_fallen: false,
             prev_com_v: None,
+            stairs_rolled: false,
+            snapped: None,
+            fell: false,
             script: None,
             since: 0.0,
             timestep: 0.0,
@@ -298,6 +315,7 @@ impl Follower {
             predicted: vec![],
             pred_err: vec![],
             limit_use: vec![],
+            pivot_gap: vec![],
             data,
         })
     }
@@ -384,6 +402,7 @@ impl Follower {
         self.since = 0.0;
         self.before = (0..PARTS).map(|k| self.agent.doll.motion(k)).collect();
         self.limit_use = self.limit_use();
+        self.pivot_gap = self.pivot_gap();
         // `set_body` wakes the doll; the Playroom's only wakes when it moves (`Ragdoll::sleep`'s tolerances).
         let [v2, w2, mean2] = self.agent.doll.sleep_tol;
         if moved.0 <= v2 && moved.1 <= w2 && moved.2 <= mean2 {
@@ -401,10 +420,12 @@ impl Follower {
         // `in_air` takes the last step's velocity.
         let com_v = self.agent.doll.com().1;
         self.extras_frame();
+        self.ledge();
         if self.steps % 2 == 0 {
             self.in_air(self.prev_com_v.unwrap_or(com_v));
         }
         self.prev_com_v = Some(com_v);
+        self.stairs_frame();
         // The record's line of the step about to run: by the same token, the state the step starts from.
         let line = self.script.as_ref().filter(|s| !s.done).map(|_| self.rec_line(self.steps + 1));
         // NM's balancer steadies the body with impulses (`nmdbm::stabilise` while `bodyBalance` runs: the feet one
@@ -416,7 +437,7 @@ impl Follower {
             let body = delirium::nmdbm::Body { ch, build: &self.data.homer, doll: &self.agent.doll, frames: &frames };
             delirium::nmdbm::stabilise(&body, 1.0, dt)
         });
-        self.agent.step_follow(&self.data.homer, &self.world, dt, &[], &[]);
+        self.agent.step_follow(&self.data.homer, &self.world, dt, &self.obstacles, &[]);
         self.steps += 1;
         if let (Some(unit), Some((gain, _))) = (unit, self.agent.character().and_then(|ch| ch.stabilise)) {
             for (k, j) in unit.into_iter().enumerate().filter(|(_, j)| *j != Vec3::ZERO) {
@@ -527,6 +548,17 @@ impl Follower {
         out
     }
 
+    /// [`Follower::pivot_gap`] of the doll's state.
+    fn pivot_gap(&self) -> Vec<f32> {
+        let frames: Vec<Transform> = self.agent.doll.frames().collect();
+        let mut out = vec![0.0; PARTS];
+        for j in &self.data.body.joints {
+            let (p, c) = (&frames[j.parent], &frames[j.part]);
+            out[j.part] = (p.translation + p.rotation * j.anchor_parent).distance(c.translation + c.rotation * j.anchor_child);
+        }
+        out
+    }
+
     /// Takes NM off the ragdoll: no armature (the drives stop with the callback).
     ///
     /// # Safety
@@ -614,6 +646,64 @@ impl Follower {
         self.send("stopAllBehaviours");
         delirium::nm::task_high_fall(&mut self.agent, &self.data.homer, &self.world, &self.data.tp, "*", false);
         self.say("ours  in the air: the game's NMHighFall");
+    }
+
+    /// The Playroom room's `ground` under `p` on NM's world: the highest top at most 5 cm over `p` (its blocks', or
+    /// the floor), here the first surface NM's world has under that.
+    fn ground(&self, p: Vec3) -> f32 {
+        self.world.ground(p + Vec3::Z * 0.05, 100.0).unwrap_or(p.z - 100.0)
+    }
+
+    /// The Playroom room's `stairs_ahead`: the ground drops step by step (each under 0.4 m) for 1.2 m along `dir`,
+    /// more than 0.3 m in all.
+    fn stairs_ahead(&self, p: Vec3, dir: Vec3) -> bool {
+        let g = [0.0, 0.3, 0.6, 0.9, 1.2].map(|d| self.ground(p + dir * d));
+        g.windows(2).all(|w| (0.0..0.4).contains(&(w[0] - w[1]))) && g[0] - g[4] > 0.3
+    }
+
+    /// The Playroom's `stairs_frame`: once off balance and moving over stairs that go down ahead, he rolls down them.
+    fn stairs_frame(&mut self) {
+        if self.agent.balancing() {
+            self.stairs_rolled = false;
+            return;
+        }
+        let (com, v) = self.agent.doll.com();
+        let on = v.with_z(0.0);
+        if !self.stairs_rolled && on.length() > 0.5 && self.stairs_ahead(com, on.normalize()) {
+            self.stairs_rolled = true;
+            self.send("rollDownStairs start=true");
+            self.say("room  stairs: rolls down");
+        }
+    }
+
+    /// The Playroom's `ledge`, on its rooftop stage: the pelvis over the roof's edge (y 0.5 m) and 3 to 3.9 m up, he
+    /// catches the edge (`armHang`); 3 s later, or once he's let go after 0.5 s, `highFall`.
+    fn ledge(&mut self) {
+        const EDGE: f32 = 0.5;
+        const HANG_SECS: f32 = 3.0;
+        if self.script.as_ref().and_then(|s| s.stage.as_deref()) != Some("rooftop") || self.fell {
+            return;
+        }
+        let Some(p) = self.agent.doll.frames().next().map(|f| f.translation) else { return };
+        match self.snapped.as_mut() {
+            None if p.y > EDGE - 0.05 && (3.0..3.9).contains(&p.z) => {
+                self.snapped = Some(0.0);
+                self.send(&format!("armHang start=true constraintPosition={}", v3(Vec3::new(p.x.clamp(-2.85, 2.85), EDGE, 4.0))));
+                self.say("rooftop  over the edge: he catches it (armHang)");
+            }
+            Some(t) => {
+                *t += 1.0 / 60.0;
+                let t = *t;
+                let held = self.agent.extras.on.iter().any(|(n, _)| *n == "armHang");
+                if t > HANG_SECS || t > 0.5 && !held {
+                    self.fell = true;
+                    self.send("armHang start=false");
+                    self.send("highFall start=true");
+                    self.say("rooftop  he lets go: highFall");
+                }
+            }
+            None => {}
+        }
     }
 
     /// The scenario's part of a step, before it: its end, this step's commands.
@@ -753,6 +843,8 @@ impl Follower {
             ("timestep", json::num(self.timestep)),
             ("state_v", json::array(self.before.iter().map(|(v, w)| json::array(v.to_array().iter().chain(&w.to_array()).map(|&x| json::num(x)))))),
             ("limit_use", json::array(self.limit_use.iter().map(|(a, b)| json::array([json::num(*a), json::num(*b)])))),
+            ("obstacles", json::array(self.obstacles.iter().map(|b| json::array([b.id.to_string(), vec(b.centre + o), vec(b.half), vec(b.vel)])))),
+            ("pivot_gap", json::array(self.pivot_gap.iter().map(|&g| json::num(g)))),
             ("pred_err", json::array(self.pred_err.iter().map(|(v, w)| json::array(v.to_array().iter().chain(&w.to_array()).map(|&x| json::num(x)))))),
             ("script", self.script.as_ref().map_or("null".into(), |s| format!("{{\"commands_left\":{},\"end\":{}}}", s.commands.len(), s.end))),
         ];

@@ -32,7 +32,10 @@ class IPhysicsConstraint;
 class IPhysicsEnvironment;
 class IPhysicsObject;
 
-#define VPHYSICS_NM_INTERFACE_VERSION "VBOX3D_NM_003"
+#define VPHYSICS_NM_INTERFACE_VERSION "VBOX3D_NM_004"
+
+// The same interface without SetBodyMaterial and SetSurfaceMaterial, for controllers built against the third version
+#define VPHYSICS_NM_INTERFACE_VERSION_003 "VBOX3D_NM_003"
 
 // The same interface without SetBodyInertia and SetJointBallLimits, for controllers built against the second version
 #define VPHYSICS_NM_INTERFACE_VERSION_002 "VBOX3D_NM_002"
@@ -146,4 +149,19 @@ public:
 	// The inertia tensor the solver turns the body with: 9 floats into pTensor, row by row, about its centre of mass
 	// in its own frame, kg m^2 (SetBodyInertia's, or VPhysics' own diagonal). False for a null pointer.
 	virtual bool GetBodyInertia( const IPhysicsObject *pObject, float *pTensor ) = 0;
+
+	// VBOX3D_NM_004 from here on.
+
+	// Gives the body the friction and elasticity a controller's model has for it (NM: its part's), which its
+	// contacts take instead of its surface property's: with surfaces given a material (SetSurfaceMaterial) and with
+	// other such bodies, friction fA * fB and elasticity eA * eB (at most 1), as an NM-style controller's own physics
+	// mixes them; with anything else VPhysics' mixing of the surface properties, as before. Kept until the object's
+	// material is changed (IPhysicsObject::SetMaterialIndex). False for a null pointer or a negative or non-finite
+	// value.
+	virtual bool SetBodyMaterial( IPhysicsObject *pObject, float flFriction, float flElasticity ) = 0;
+
+	// The friction and elasticity a controller's model has for a surface property (an IPhysicsSurfaceProps index),
+	// for the contacts of SetBodyMaterial's bodies with it. A negative friction takes it back. For every environment,
+	// until changed. False for an index out of range or a non-finite value.
+	virtual bool SetSurfaceMaterial( int nSurfaceProp, float flFriction, float flElasticity ) = 0;
 };

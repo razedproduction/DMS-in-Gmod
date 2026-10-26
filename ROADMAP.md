@@ -9,7 +9,7 @@ Delirium (active ragdoll, NM-style) нативно в Garry's Mod в режим�
 | Компонент | Где | Что даёт | Правило |
 |---|---|---|---|
 | Delirium SDK **v0.2.2** (`91ee246`) | `../delirium-physics (CLAUDE DONT CHANGE ANYTHING HERE)/crates/delirium-sdk` | C API `delirium_physics.h` (`nm_*`), Rust-крейт `delirium_physics` (`rlib` + `cdylib`) | **только чтение**, подключается path-зависимостью |
-| VPhysics-Box3D (форк) | `vphysics/` (git subtree, ADR 0015) | `vphysics.dll` + `IPhysicsNM` (`VBOX3D_NM_003`, `vphysics/include/vphysics_nm.h`) | менять только ради совпадения с Playroom (ADR 0008), upstream — `git subtree pull` ([docs/vphysics.md](docs/vphysics.md)) |
+| VPhysics-Box3D (форк) | `vphysics/` (git subtree, ADR 0015) | `vphysics.dll` + `IPhysicsNM` (`VBOX3D_NM_004`, `vphysics/include/vphysics_nm.h`) | менять только ради совпадения с Playroom (ADR 0008), upstream — `git subtree pull` ([docs/vphysics.md](docs/vphysics.md)) |
 | Документация Delirium (v0.2.2) | `../delirium-physics (…)/docs/how-it-works.md`, `docs/modding.md`, `CHANGELOG.md` | устройство движка, шаг, LEAD/FOLLOW, сообщения и их параметры, скрипты и `settings.txt` Playroom | справочник; где расходится с кодом — прав код Playroom |
 | Прошлая попытка | `../delirium-physics (gmod addon & api)` | заметки и грабли (README) | только как справочник, код не переносим |
 
@@ -296,6 +296,7 @@ Playroom (outbox, `in_air`, импульсы NM мимо `doll.out`), и пон�
       тел NM. `golden body` проходит.
 - [ ] Известные расхождения (план — следующий шаг по физике, ADR 0017): `relax-1s` вне допуска (опорная стопа
       проседает в мягкий контакт Box3D на 2–4 см под ударной нагрузкой); пол Box3D на 6.35 мм выше BSP; выстрел — M6.
+      → M5 (ADR 0018): пол учтён; причина `relax-1s` уточнена — растяжение суставов, а не контакт.
 
 **DoD:** стойка `bodyBalance` 60 с, толчок, `catchFall`, `relax`, первые 60 шагов выстрела — в допусках сценария;
 `relax-1s` — вне допуска, причина и план в ADR 0017; 4 Homer одновременно — 67 тиков/с при цели 66.7 (~1 мс NM на
@@ -303,15 +304,34 @@ Playroom (outbox, `in_air`, импульсы NM мимо `doll.out`), и пон�
 
 ### M5. Мир для NM — 4–6 дней (параллельно с концом M4)
 
-- [ ] Статика: чтение `.bsp` карты (из файловой системы игры): брашевые грани без `NODRAW/SKY/trigger`,
-      displacement'ы → `nm_world_add_mesh`, материалы поверхностей → байт материала → `nm_set_surface`
-      (трение льда, грязи и т.п.). Кэш меша на карту.
-- [ ] Динамика: пропы рядом с агентами (AABB-запрос) → `nm_world_set_boxes` каждый шаг (центр, поворот,
-      полуразмеры, скорость); транспорт — тоже боксами.
-- [ ] Fallback: если карта не читается — пол на высоте трассировки вниз (`nm_world_add_floor`).
+Сделано (ADR 0018). Отличия от плана: мир строится крейтом `delirium` (`Collision`, как у FOLLOW-агента M4), а не
+C API; пол режется на квадраты 1 м, как пол Playroom; понадобились правки форка — материалы контактов NM
+(`VBOX3D_NM_004`) и жёсткость суставов NM.
+
+- [x] Статика: `.bsp` карты (Lua читает файл игры, `module/src/world.rs`): грани модели мира без
+      `SKY/SKY2D/WARP/TRIGGER/NODRAW/HINT/SKIP`, displacement'ы, обход против часовой вокруг внешней нормали, без
+      T-стыков; пол — квадратами 1 м по сетке кадра NM (как `world::floor_tris`) в радиусе 50 м. Материалы:
+      `$surfaceprop` → строка materials.dat (`world::SURFACES`, неизвестное — CONCRETE). Кэш: карта — на сессию, мир —
+      по началу кадра агента. Проверка `DMS_MapCheck`: высоты NM и трассы игры совпадают до 0.1 мм.
+- [x] Динамика: пропы в 3 м от агента → `Obstacle` каждый тик (OBB, скорость, вращение, центр масс; `DMS.FollowObstacles`,
+      телеметрия `obstacles`); транспорт — тем же путём (боксом по OBB).
+- [x] Fallback: карта не читается — пол Playroom на высоте трассы вниз (`DMS_FloorBelow`).
+- [x] Пол Box3D на 6.35 мм выше BSP: грани мира NM сдвинуты наружу на оболочку форка, пол под Homer — плоскость
+      трассы (минус `DIST_EPSILON`) плюс оболочка; кадр NM каждого агента — на полу под ним.
+- [x] Трение и упругость контактов как в физике NM: форк `VBOX3D_NM_004` (`SetBodyMaterial`, `SetSurfaceMaterial`):
+      `μ_части × μ_строки materials.dat`, `0.4 × e`; суставы между телами NM — без «бюджета жёсткости» Box3D.
+- [x] Слой комнаты Playroom на стадиях тем же кодом (ADR 0016): `stairs_frame` (`rollDownStairs`), `ledge` (rooftop).
 - [ ] Вода: Homer в воде карты — как в бассейне Playroom (v0.2.1): то же сообщение `buoyancy` с теми же
       параметрами и поверхностью воды из карты; GPU-симуляцию воды Playroom не переносим.
-- [ ] Тестовая карта/сцена: лестница, уступ, стена, наклон, лёд.
+- [x] Тестовая карта: `tools/dms-map` → `dms_stages.bsp` (стадии Playroom `bigstairs`, `stairsdown`, `rooftop`,
+      `highledge`, `lowwall`, `kerb`, `rail`, `open` и наклон 20°, сайт на стадию); лёд — не сделан (с водой).
+- [x] Golden-сценарии на стадиях (`#! window stage=…` → Playroom `--stage`, стенд `server.ps1 start -Map dms_stages`):
+      `kerb`, `rooftop`, `lowwall`, `stairs`; проверка `said=` (реакции слоя комнаты). В допусках: `kerb`, все прежние
+      сценарии кроме `relax-1s`, у `rooftop` — реакции и падение (кроме позы после приземления).
+- [ ] Известные расхождения (ADR 0018): `relax-1s` (0.77 с против 1.00) — не мягкий контакт, а растяжение суставов
+      Box3D под весом (голеностоп 6–10 мм; доп. проходы форка не включают контакты стоп); `lowwall`, `stairs` и
+      приземление `rooftop` — хаотическое усиление того же расхождения стойки (2 см до толчка). План — контакты тел NM в
+      доп. проходах Гаусса–Зейделя форка.
 
 **DoD:** golden-сценарии на стадиях Playroom (`--stage`: лестница, стена, уступ) совпадают с Playroom на той же
 геометрии, собранной в GMod; контакты NM (`nm_agent_get_part_contact`) совпадают с касаниями в Box3D.

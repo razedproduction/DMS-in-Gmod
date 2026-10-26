@@ -41,21 +41,28 @@ end
 
 -- A FOLLOW scenario (ROADMAP M4): Homer at the Playroom room's start (`up` m higher for its `fall`), facing as there,
 -- the player where the Playroom's camera starts (4 m back, 1.5 m up, looking at him); then the module runs it.
+-- `r.text`: `<up> <stage> <start x y z>` (m; the stage's start, where the Playroom puts Homer on it, ROADMAP M5).
 local function benchSpawn(r)
-	local scene, err = DMS.BenchScene()
+	local w = string.Explode(" ", r.text)
+	local stage = w[2] or "room"
+	local start = Vector(tonumber(w[3]) or 0, tonumber(w[4]) or 0, tonumber(w[5]) or 0) / METRES_PER_UNIT
+	local scene, err = DMS.BenchScene(stage)
 	if not scene then error("bench scene: " .. err) end
+	DMS_MapWorld()
 	for _, e in ipairs(ents.FindByModel(DMS_HOMER_MODEL)) do
 		if e.DMS_Bench then
 			DMS_Unfollow(e)
 			e:Remove()
 		end
 	end
+	-- The player out of the way of the stage's boxes (4 m back in the room, 8 m on a stage).
+	local back = stage == "room" and 4 or 8
 	for _, p in ipairs(player.GetAll()) do
-		p:SetPos(scene.origin + Vector(0, -4 / METRES_PER_UNIT, 0))
+		p:SetPos(scene.origin + Vector(0, -back / METRES_PER_UNIT, 0))
 		p:SetEyeAngles(Angle(10, 90, 0))
 	end
-	local up = tonumber(r.text) or 0
-	local ent, why = DMS_SpawnHomer(scene.origin + Vector(0, 0, up / METRES_PER_UNIT), 0)
+	local up = tonumber(w[1]) or 0
+	local ent, why = DMS_SpawnHomer(scene.origin + start + Vector(0, 0, up / METRES_PER_UNIT), 0)
 	if not ent then error(why) end
 	ent.DMS_Bench = true
 	local id = DMS.BenchFollow(DMS_HomerParts(ent), scene.origin * METRES_PER_UNIT)

@@ -48,7 +48,7 @@ cargo build --release -p dms-homer
 (≤ 1 мм, ≤ 0.5°), массы, инерция (≤ 1 %), FindConstraint на 20 суставах, затем падение без NM 4 с (всё конечно,
 пивоты вместе, суставы в пределах NM ± 5°).
 
-Нужен форк с `IPhysicsNM` `VBOX3D_NM_003` (ADR 0014): `DMS.BindHomer` ставит каждой части полный тензор инерции NM
+Нужен форк с `IPhysicsNM` `VBOX3D_NM_004` (ADR 0014, 0018: ещё материал контактов части NM): `DMS.BindHomer` ставит каждой части полный тензор инерции NM
 (`SetBodyInertia`), шарам — семантику NM (`SetJointBallLimits`), хинжам — `SetJointLimits`.
 
 ## Визуальная проверка (пользователю)

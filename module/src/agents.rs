@@ -6,15 +6,18 @@ use std::ffi::{CStr, c_int};
 use std::sync::Arc;
 
 use delirium::prelude::*;
+use delirium::ragdoll::Obstacle;
 
 use crate::data;
 use crate::ffi::vphysics_nm::{self, IPhysicsConstraint, IPhysicsObject, Version};
 use crate::follow::{Follower, GravityMode, PARTS};
 use crate::lua::{self, Api, LuaState, TTABLE, native};
 use crate::step;
+use crate::world;
 
 pub const NATIVES: &[(&CStr, lua::CFunction)] = &[
     (c"Follow", follow),
+    (c"FollowObstacles", follow_obstacles),
     (c"Unfollow", unfollow),
     (c"FollowSend", follow_send),
     (c"FollowList", follow_list),
@@ -67,14 +70,14 @@ pub unsafe fn parts(api: &Api, l: *mut LuaState, arg: c_int) -> Result<Vec<*mut 
 }
 
 /// NM on the ragdoll `objects` (bound by `DMS.BindHomer`): its joints found, the agent made on them as they are now.
-/// `room`: NM's frame at `floor` with the Playroom room's floor (the bench); else the game's frame, with the Playroom's
-/// floor (no pool) at `floor`.
+/// NM's frame is at `floor`; its world the map's (`world.rs`), or without one the Playroom's floor there (with the
+/// room's pool for `room`, the bench).
 ///
 /// # Safety
 /// The objects are live until the agent is unfollowed.
 pub unsafe fn start(objects: Vec<*mut IPhysicsObject>, yaw: f32, floor: Vec3, room: bool) -> Result<u32, String> {
     let nm = vphysics_nm::get().ok_or("IPhysicsNM isn't available (vphysics.dll isn't VPhysics-Box3D)")?;
-    if nm.version != Version::V003 {
+    if nm.version < Version::V004 {
         return Err(format!("{} is too old for Homer: update VPhysics-Box3D", nm.version.name()));
     }
     let d = data::get().ok_or_else(|| format!("NM's data isn't loaded (DMS.LoadData): {}", data::how_to()))?;
@@ -92,12 +95,10 @@ pub unsafe fn start(objects: Vec<*mut IPhysicsObject>, yaw: f32, floor: Vec3, ro
             }
         })
         .collect::<Result<Vec<_>, String>>()?;
-    let (origin, world) = if room {
-        (floor, data::floor_collision(&d, [0.0; 3], true))
-    } else {
-        (Vec3::ZERO, data::floor_collision(&d, floor.to_array(), false))
-    };
-    let world = Arc::new(world);
+    // NM's frame starts on the floor under him, as the Playroom's room does under its Homer: its world is the map's
+    // (M5), its floor's squares round him; without a map, the Playroom's floor (its room's on the bench, with the pool).
+    let origin = floor;
+    let world = world::collision(origin).unwrap_or_else(|| Arc::new(data::floor_collision(&d, [0.0; 3], room)));
     // SAFETY: the caller's promise.
     unsafe { step::follow(|nm, id| Follower::new(nm, id, d.clone(), world, objects, joints, origin, yaw)) }
 }
@@ -105,7 +106,8 @@ pub unsafe fn start(objects: Vec<*mut IPhysicsObject>, yaw: f32, floor: Vec3, ro
 native!(follow => follow_impl);
 /// `DMS.Follow(parts, yaw, floor[, room])`: NM drives Homer's ragdoll from the next physics step. `parts` its 21
 /// PhysObj in NM's part order, bound (`DMS.BindHomer`); `yaw` where he faces (rad); `floor` the floor under him
-/// (m, the game's frame); `room` true for the bench: NM's frame at `floor`, the Playroom room's floor. The agent's id.
+/// (m, the game's frame: Box3D's, DMS_FloorBelow), where NM's frame starts; `room` true for the bench (the Playroom
+/// room's floor if the map has no world). The agent's id.
 /// `DMS.Unfollow` it before the ragdoll goes.
 unsafe fn follow_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
     let objects = unsafe { parts(api, l, 1)? };
@@ -133,7 +135,7 @@ unsafe fn agent_id(api: &Api, l: *mut LuaState) -> Result<u32, String> {
 
 native!(follow_send => follow_send_impl);
 /// `DMS.FollowSend(id, line)`: a message line (`<message> [param=value ...]`, as the Playroom's console takes it) for
-/// the agent's next NM step. Vectors are in NM's frame (the bench's: the Playroom room's).
+/// the agent's next NM step. Vectors are in NM's frame (from the floor he was put on; the bench's: the Playroom room's).
 unsafe fn follow_send_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
     let id = unsafe { agent_id(api, l)? };
     let line = unsafe { api.check_string(l, 2)? };
@@ -200,6 +202,51 @@ unsafe fn follow_events_impl(api: &Api, l: *mut LuaState) -> Result<c_int, Strin
             api.append(l, i + 1);
         }
     }
+    Ok(1)
+}
+
+/// Numbers per obstacle in `DMS.FollowObstacles`' list.
+const OBSTACLE_NUMBERS: usize = 25;
+
+native!(follow_obstacles => follow_obstacles_impl);
+/// `DMS.FollowObstacles(id, list)`: the props near the agent as NM's obstacles (boxes, as the Playroom's cars and
+/// planks) for its steps until the next call. `list` is flat, 25 numbers a box (m, s, the game's frame): its id, the
+/// box's centre, its forward, left and up axes, its half sizes, velocity, spin (rad/s), centre of mass. False for no
+/// such agent.
+unsafe fn follow_obstacles_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
+    let id = unsafe { api.check_number(l, 1)? } as u32;
+    if unsafe { (api.type_)(l, 2) } != TTABLE {
+        return Err("bad argument #2 (a flat table of numbers expected)".into());
+    }
+    let mut n = vec![];
+    for i in 1.. {
+        unsafe { (api.rawgeti)(l, 2, i) };
+        let v = unsafe { ((api.type_)(l, -1) == lua::TNUMBER).then(|| (api.tonumber)(l, -1) as f32) };
+        unsafe { (api.settop)(l, -2) };
+        match v {
+            Some(x) if x.is_finite() => n.push(x),
+            Some(_) => return Err(format!("bad argument #2 (number {i} isn't finite)")),
+            None => break,
+        }
+    }
+    if n.len() % OBSTACLE_NUMBERS != 0 {
+        return Err(format!("bad argument #2 ({OBSTACLE_NUMBERS} numbers a box)"));
+    }
+    let found = step::with(id, |f| {
+        let o = f.origin();
+        f.obstacles = n
+            .chunks(OBSTACLE_NUMBERS)
+            .map(|b| {
+                let v = |k: usize| Vec3::new(b[k], b[k + 1], b[k + 2]);
+                let rot = Quat::from_mat3(&Mat3::from_cols(v(4).normalize_or_zero(), v(7).normalize_or_zero(), v(10).normalize_or_zero())).normalize();
+                let centre = v(1) - o;
+                // Box3D's shell around the prop's hull (docs/adr/0018).
+                let half = v(13) + Vec3::splat(world::SHAPE_INFLATION);
+                Obstacle { id: b[0] as i32, at: centre, rot, centre, half, vel: v(16), spin: v(19), com: v(22) - o, ..Default::default() }
+            })
+            .collect();
+    });
+    unsafe { (api.pushboolean)(l, found.is_some().into()) };
     Ok(1)
 }
 

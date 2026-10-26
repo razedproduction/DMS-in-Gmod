@@ -1,5 +1,5 @@
 [workspace]
-members = ["module", "tools/dms-ctl", "tools/dms-game", "tools/dms-homer", "tools/golden"]
+members = ["module", "tools/dms-ctl", "tools/dms-game", "tools/dms-homer", "tools/dms-map", "tools/golden"]
 resolver = "3"
 
 [workspace.package]

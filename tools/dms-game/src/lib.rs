@@ -5,6 +5,7 @@
 //! what Homer's agent needs is read; anything else of the Playroom's (get-up clips, weapons, the room) isn't.
 
 pub mod body;
+pub mod stage;
 
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
