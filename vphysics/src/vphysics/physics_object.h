@@ -329,6 +329,8 @@ public:
 
 	// set once IPhysicsNM drives or shapes the body
 	void SetNMDriven() { m_bNMDriven = true; }
+	// IPhysicsNM::SetBodyMaterial: the shapes take NM's friction and elasticity, tagged for the mixing callbacks
+	void SetNMMaterial( float flFriction, float flElasticity );
 	bool IsNMDriven() const { return m_bNMDriven; }
 
 	// The velocity an NM-driven body starts step nStep with, before its controllers (gravity) add theirs: what

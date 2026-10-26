@@ -427,7 +427,40 @@ pub fn collision(origin: Vec3) -> Option<Arc<Collision>> {
     Some(c)
 }
 
-pub const NATIVES: &[(&CStr, lua::CFunction)] = &[(c"MapLoad", map_load), (c"MapSurfaces", map_surfaces), (c"MapUnload", map_unload), (c"MapGround", map_ground)];
+pub const NATIVES: &[(&CStr, lua::CFunction)] = &[
+    (c"MapLoad", map_load),
+    (c"MapSurfaces", map_surfaces),
+    (c"MapUnload", map_unload),
+    (c"MapGround", map_ground),
+    (c"SurfaceMaterials", surface_materials),
+];
+
+native!(surface_materials => surface_materials_impl);
+/// `DMS.SurfaceMaterials({surfaceprop...})`: every Source surface property by index (`[i + 1]` index `i`'s name):
+/// Box3D's contacts of Homer's parts with it take NM's friction and elasticity of the materials.dat row it stands for
+/// (`SetSurfaceMaterial`, the same rows as NM's world). The number set.
+unsafe fn surface_materials_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
+    if unsafe { (api.type_)(l, 1) } != TTABLE {
+        return Err("bad argument #1 (a table of surface property names expected)".into());
+    }
+    let nm = crate::ffi::vphysics_nm::get().ok_or("IPhysicsNM isn't available")?;
+    let d = data::get().ok_or("NM's data isn't loaded")?;
+    let rows = delirium::ragdoll::SURFACES.read().map_err(|_| "NM's surfaces aren't readable")?.clone();
+    let mut set = 0;
+    for i in 0.. {
+        unsafe { (api.rawgeti)(l, 1, i + 1) };
+        let name = unsafe { ((api.type_)(l, -1) == TSTRING).then(|| api.check_string(l, -1).unwrap_or_default()) };
+        unsafe { (api.settop)(l, -2) };
+        let Some(name) = name else { break };
+        // NM's physics: a surface row's friction and elasticity (CONCRETE's for an unknown one).
+        let [friction, elasticity] = rows.get(surface_row(&name, &d.surface_names, d.floor_material) as usize).copied().unwrap_or([1.0, 0.1]);
+        if nm.set_surface_material(i, friction, elasticity) == Some(true) {
+            set += 1;
+        }
+    }
+    unsafe { (api.pushnumber)(l, f64::from(set)) };
+    Ok(1)
+}
 
 unsafe fn push_info(api: &Api, l: *mut LuaState, m: &MapMesh) {
     unsafe {

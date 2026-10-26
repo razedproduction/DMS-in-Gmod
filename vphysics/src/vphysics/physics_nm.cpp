@@ -4,11 +4,13 @@
 #include "physics_constraint.h"
 #include "physics_environment.h"
 #include "physics_object.h"
+#include "physics_surface_props.h"
 
 #include "box3d/box3d.h"
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 static constexpr float SOURCE_TO_IVP_SQUARED = SOURCE_TO_IVP * SOURCE_TO_IVP;
 static constexpr float IVP_TO_SOURCE_SQUARED = IVP_TO_SOURCE * IVP_TO_SOURCE;
@@ -209,6 +211,46 @@ bool CPhysicsNM::SetJointBallLimits( IPhysicsConstraint *pConstraint, IPhysicsOb
 		return false;
 
 	return MarkConstraintBodies( pConstraint, static_cast<CPhysicsConstraint *>( pConstraint )->SetJointBall( static_cast<CPhysicsObject *>( pParent ), frames, limits ) );
+}
+
+struct NMSurfaceMaterial_t
+{
+	bool m_bSet = false;
+	float m_flFriction = 0.0f;
+	float m_flElasticity = 0.0f;
+};
+
+static std::vector<NMSurfaceMaterial_t> s_NMSurfaces;
+
+bool GetNMSurfaceMaterial( uint64_t nSurfaceProp, float &flFriction, float &flElasticity )
+{
+	if ( nSurfaceProp >= s_NMSurfaces.size() || !s_NMSurfaces[nSurfaceProp].m_bSet )
+		return false;
+
+	flFriction = s_NMSurfaces[nSurfaceProp].m_flFriction;
+	flElasticity = s_NMSurfaces[nSurfaceProp].m_flElasticity;
+	return true;
+}
+
+bool CPhysicsNM::SetBodyMaterial( IPhysicsObject *pObject, float flFriction, float flElasticity )
+{
+	if ( !pObject || !std::isfinite( flFriction ) || !std::isfinite( flElasticity ) || flFriction < 0.0f || flElasticity < 0.0f )
+		return false;
+
+	static_cast<CPhysicsObject *>( pObject )->SetNMMaterial( flFriction, flElasticity );
+	static_cast<CPhysicsObject *>( pObject )->SetNMDriven();
+	return true;
+}
+
+bool CPhysicsNM::SetSurfaceMaterial( int nSurfaceProp, float flFriction, float flElasticity )
+{
+	if ( nSurfaceProp < 0 || nSurfaceProp >= g_PhysicsSurfaceProps.SurfacePropCount() || !std::isfinite( flFriction ) || !std::isfinite( flElasticity ) )
+		return false;
+
+	if ( s_NMSurfaces.size() <= static_cast<size_t>( nSurfaceProp ) )
+		s_NMSurfaces.resize( nSurfaceProp + 1 );
+	s_NMSurfaces[nSurfaceProp] = { flFriction >= 0.0f, flFriction, std::max( flElasticity, 0.0f ) };
+	return true;
 }
 
 bool CPhysicsNM::GetBodyInertia( const IPhysicsObject *pObject, float *pTensor )

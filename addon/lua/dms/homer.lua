@@ -32,6 +32,8 @@ function DMS_SpawnHomer(pos, yaw)
 		local ok, err = pcall(DMS.LoadData, GetConVar("dms_game_dir"):GetString())
 		if not ok then return nil, "NM's data isn't loaded: " .. tostring(err) end
 	end
+	-- NM's world and friction (world.lua) before NM's materials go on his parts.
+	DMS_MapWorld()
 	local ent = ents.Create("prop_ragdoll")
 	ent:SetModel(DMS_HOMER_MODEL)
 	ent:SetPos(pos)

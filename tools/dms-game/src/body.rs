@@ -12,6 +12,19 @@ use delirium::ragdoll::{Build, Ragdoll};
 /// a sphere of `margin`.
 pub const BOX_MARGIN: f32 = 0.01;
 
+/// A part's contact friction and elasticity as NM's physics has them (`delirium::ragdoll`'s `part_friction` and
+/// `PART_ELASTICITY`), by the build part's name: they multiply the surface's (materials.dat) in its contacts.
+pub fn part_material(name: &str) -> (f32, f32) {
+    let friction = if name.ends_with("Foot") {
+        1.0
+    } else if name.ends_with("Hand") {
+        2.25
+    } else {
+        0.75
+    };
+    (friction, 0.4)
+}
+
 /// A part's collision shape, in the part's frame, centred on its origin.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Shape {

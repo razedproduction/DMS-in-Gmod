@@ -77,7 +77,7 @@ pub unsafe fn parts(api: &Api, l: *mut LuaState, arg: c_int) -> Result<Vec<*mut 
 /// The objects are live until the agent is unfollowed.
 pub unsafe fn start(objects: Vec<*mut IPhysicsObject>, yaw: f32, floor: Vec3, room: bool) -> Result<u32, String> {
     let nm = vphysics_nm::get().ok_or("IPhysicsNM isn't available (vphysics.dll isn't VPhysics-Box3D)")?;
-    if nm.version != Version::V003 {
+    if nm.version < Version::V004 {
         return Err(format!("{} is too old for Homer: update VPhysics-Box3D", nm.version.name()));
     }
     let d = data::get().ok_or_else(|| format!("NM's data isn't loaded (DMS.LoadData): {}", data::how_to()))?;

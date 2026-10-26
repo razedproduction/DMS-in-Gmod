@@ -24,8 +24,11 @@ function DMS.BenchScene(stage)
 		local start = ents.FindByClass("info_player_start")[1]
 		from = IsValid(start) and start:GetPos() or Vector(0, 0, 0)
 	end
-	local origin, normal = DMS_FloorBelow(from)
+	-- A stage's start is inside its boxes (the stairs, the roof): its floor's height is taken 20 m to its side.
+	local clear = stage and stage ~= "" and stage ~= "room" and Vector(0, -20 / METRES_PER_UNIT, 0) or Vector(0, 0, 0)
+	local origin, normal = DMS_FloorBelow(from + clear)
 	if not origin then return nil, "no floor under the scene's start" end
+	origin = Vector(from.x, from.y, origin.z)
 	local half, worst = ROOM_HALF / METRES_PER_UNIT, 0
 	for x = -1, 1, 0.5 do
 		for y = -1, 1, 0.5 do

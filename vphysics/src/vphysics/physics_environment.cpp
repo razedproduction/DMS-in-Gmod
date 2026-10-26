@@ -6,6 +6,7 @@
 #include "physics_fluid_controller.h"
 #include "physics_friction_snapshot.h"
 #include "physics_motion_controller.h"
+#include "physics_nm.h"
 #include "physics_object.h"
 #include "physics_player_controller.h"
 #include "physics_shadow_controller.h"
@@ -183,21 +184,71 @@ static Vector NormalizeSurfaceNormal( const Vector &n )
 	return n * FastInverseSquareRoot( flLengthSquared );
 }
 
-static float MixFriction( float flFrictionA, uint64_t, float flFrictionB, uint64_t )
-{
-	return std::clamp( flFrictionA * flFrictionB, 0.0f, 1.0f );
-}
-
-static float MixRestitution( float flRestitutionA, uint64_t, float flRestitutionB, uint64_t )
-{
-	return std::sqrt( std::clamp( flRestitutionA * flRestitutionB, 0.0f, 1.0f ) );
-}
-
 static float GetMaterialFriction( int nMaterial )
 {
 	float flDensity, flThickness, flFriction, flElasticity;
 	g_PhysicsSurfaceProps.GetPhysicsProperties( nMaterial, &flDensity, &flThickness, &flFriction, &flElasticity );
 	return flFriction;
+}
+
+static float GetMaterialElasticity( int nMaterial )
+{
+	float flDensity, flThickness, flFriction, flElasticity;
+	g_PhysicsSurfaceProps.GetPhysicsProperties( nMaterial, &flDensity, &flThickness, &flFriction, &flElasticity );
+	return flElasticity;
+}
+
+// A contact's two sides as NM's physics takes them (IPhysicsNM::SetBodyMaterial, SetSurfaceMaterial): an NM body's
+// own value, or its surface property's NM value; false unless one side is an NM body and the other one of the two.
+static bool GetNMContact( float flA, uint64_t nIdA, float flB, uint64_t nIdB, bool bFriction, float &flOutA, float &flOutB )
+{
+	const bool bBodyA = ( nIdA & NM_BODY_MATERIAL ) != 0, bBodyB = ( nIdB & NM_BODY_MATERIAL ) != 0;
+	if ( !bBodyA && !bBodyB )
+		return false;
+
+	const auto side = [bFriction]( float flValue, uint64_t nId, bool bBody, float &flOut ) {
+		if ( bBody )
+		{
+			flOut = flValue;
+			return true;
+		}
+		float flFriction, flElasticity;
+		if ( !GetNMSurfaceMaterial( nId & NM_SURFACE_MASK, flFriction, flElasticity ) )
+			return false;
+		flOut = bFriction ? flFriction : flElasticity;
+		return true;
+	};
+	return side( flA, nIdA, bBodyA, flOutA ) && side( flB, nIdB, bBodyB, flOutB );
+}
+
+// VPhysics' mixing of a side's surface property (an NM body's own surface property, not NM's values)
+static float SourceFriction( float flFriction, uint64_t nId )
+{
+	return ( nId & NM_BODY_MATERIAL ) ? GetMaterialFriction( static_cast<int>( nId & NM_SURFACE_MASK ) ) : flFriction;
+}
+
+static float SourceElasticity( float flElasticity, uint64_t nId )
+{
+	return ( nId & NM_BODY_MATERIAL ) ? GetMaterialElasticity( static_cast<int>( nId & NM_SURFACE_MASK ) ) : flElasticity;
+}
+
+static float MixFriction( float flFrictionA, uint64_t nIdA, float flFrictionB, uint64_t nIdB )
+{
+	// NM's physics: the part's friction times the surface's (or the other part's), unclamped
+	float flA, flB;
+	if ( GetNMContact( flFrictionA, nIdA, flFrictionB, nIdB, true, flA, flB ) )
+		return std::max( flA * flB, 0.0f );
+
+	return std::clamp( SourceFriction( flFrictionA, nIdA ) * SourceFriction( flFrictionB, nIdB ), 0.0f, 1.0f );
+}
+
+static float MixRestitution( float flRestitutionA, uint64_t nIdA, float flRestitutionB, uint64_t nIdB )
+{
+	float flA, flB;
+	if ( GetNMContact( flRestitutionA, nIdA, flRestitutionB, nIdB, false, flA, flB ) )
+		return std::clamp( flA * flB, 0.0f, 1.0f );
+
+	return std::sqrt( std::clamp( SourceElasticity( flRestitutionA, nIdA ) * SourceElasticity( flRestitutionB, nIdB ), 0.0f, 1.0f ) );
 }
 
 static float GetRangeSpeed( const CPhysicsObject *pObject )

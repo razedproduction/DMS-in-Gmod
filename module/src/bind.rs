@@ -43,8 +43,8 @@ native!(bind_homer => bind_homer_impl);
 /// joint, or a Lua error naming the part or joint that failed.
 unsafe fn bind_homer_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
     let nm = vphysics_nm::get().ok_or("IPhysicsNM isn't available (vphysics.dll isn't VPhysics-Box3D)")?;
-    if nm.version != Version::V003 {
-        return Err(format!("{} has no SetBodyInertia / SetJointBallLimits: update VPhysics-Box3D", nm.version.name()));
+    if nm.version < Version::V004 {
+        return Err(format!("{} has no SetBodyMaterial (or SetBodyInertia / SetJointBallLimits): update VPhysics-Box3D", nm.version.name()));
     }
     let d = data::get().ok_or_else(|| format!("NM's data isn't loaded (DMS.LoadData): {}", data::how_to()))?;
     let body = &d.body;
@@ -56,6 +56,12 @@ unsafe fn bind_homer_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> 
         // SAFETY: a PhysObj of the ragdoll, alive for this call; 9 floats.
         if unsafe { nm.set_body_inertia(o, &tensor) } != Some(true) {
             return Err(format!("{}: SetBodyInertia refused NM's tensor {tensor:?}", p.name));
+        }
+        // NM's contact material of the part (ROADMAP M5): its friction and elasticity against NM's surfaces.
+        let (friction, elasticity) = dms_game::body::part_material(&p.bone);
+        // SAFETY: as above.
+        if unsafe { nm.set_body_material(o, friction, elasticity) } != Some(true) {
+            return Err(format!("{}: SetBodyMaterial refused {friction} {elasticity}", p.name));
         }
     }
     unsafe { (api.createtable)(l, body.joints.len() as c_int, 0) };

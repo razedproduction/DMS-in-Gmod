@@ -23,11 +23,27 @@ end
 
 local loaded -- the map whose world the module has, with its surfaces named
 local failed -- why it couldn't be read
+local surfaces -- Box3D's contacts of Homer's parts have NM's friction (DMS.SurfaceMaterials)
+
+-- Every Source surface property, for Box3D's contacts with Homer's parts: NM's friction and elasticity of the
+-- materials.dat row each stands for (VBOX3D_NM_004), as NM's own physics takes them.
+local function surfaceMaterials()
+	if surfaces then return end
+	local names = {}
+	for i = 0, 1023 do
+		if not util.GetSurfaceData(i) then break end
+		names[i + 1] = util.GetSurfacePropName(i)
+	end
+	local ok, n = pcall(DMS.SurfaceMaterials, names)
+	surfaces = ok
+	print(ok and string.format("[DMS] NM's friction on %d surface properties", n) or ("[DMS] NM's friction: " .. tostring(n)))
+end
 
 -- The map's world for NM, once a map (it needs NM's data for the surfaces). True, or false and why (agents then
 -- stand on a traced floor).
 function DMS_MapWorld()
 	local map = game.GetMap()
+	if DMS.DataInfo() then surfaceMaterials() end
 	if loaded == map then return true end
 	if failed and failed.map == map then return false, failed.why end
 	if not DMS.DataInfo() then return false, "NM's data isn't loaded" end
@@ -72,7 +88,7 @@ local function admin(ply) return not IsValid(ply) or ply:IsSuperAdmin() end
 -- dms_map: NM's world of this map (read again with "reload").
 concommand.Add("dms_map", function(ply, _, args)
 	if not admin(ply) then return end
-	if args[1] == "reload" then loaded, failed = nil, nil end
+	if args[1] == "reload" then loaded, failed, surfaces = nil, nil, nil end
 	local ok, why = DMS_MapWorld()
 	say(ply, ok and ("[DMS] NM's world: " .. game.GetMap()) or ("[DMS] NM's world: none: " .. tostring(why)))
 end)

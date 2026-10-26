@@ -43,7 +43,12 @@ unsafe fn nm_version_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> 
 /// Looks for `IPhysicsNM` and says in the console what came of it (docs/adr/0005).
 fn acquire_message() -> String {
     match vphysics_nm::acquire() {
-        Ok(Version::V003) => format!("[DMS] IPhysicsNM {} found", Version::V003.name()),
+        Ok(Version::V004) => format!("[DMS] IPhysicsNM {} found", Version::V004.name()),
+        Ok(Version::V003) => format!(
+            "[DMS] WARNING: only IPhysicsNM {} found, NM's contact materials (SetBodyMaterial, SetSurfaceMaterial) are \
+             unavailable and Homer can't be bound: update VPhysics-Box3D",
+            Version::V003.name()
+        ),
         Ok(Version::V002) => format!(
             "[DMS] WARNING: only IPhysicsNM {} found, Homer's full inertia and NM's ball joints (SetBodyInertia, \
              SetJointBallLimits) are unavailable: update VPhysics-Box3D",
