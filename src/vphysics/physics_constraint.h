@@ -79,6 +79,13 @@ private:
 	bool m_bOrderDirty = false;
 };
 
+struct StiffnessCoupling_t
+{
+	b3Matrix3 m_Linear;
+	b3Matrix3 m_Angular;
+	b3Vec3 m_Lever;
+};
+
 class CPhysicsConstraint final : public IPhysicsConstraint
 {
 public:
@@ -133,15 +140,24 @@ public:
 
 	bool HasJoint() const { return B3_IS_NON_NULL( m_Joint ); }
 
-	bool IsSolvedByRows() const { return m_nType == CONSTRAINT_PULLEY || ( m_nType == CONSTRAINT_RAGDOLL && ( m_bOnlyAngularLimits || m_Ragdoll.IsPlaneOnly() ) ); }
+	b3JointType GetJointType() const { return m_nJointType; }
+
+	bool IsSolvedByRows() const { return m_nType == CONSTRAINT_PULLEY || m_nType == CONSTRAINT_LENGTH || m_nType == CONSTRAINT_SLIDING || ( m_nType == CONSTRAINT_RAGDOLL && ( m_bOnlyAngularLimits || m_Ragdoll.IsPlaneOnly() ) ); }
 
 	void SetupRows( const ConstraintStep_t &step );
 	void SolveRows( float flAlpha, float flBeta, const ConstraintStep_t &step );
 
 	void CreateJoint();
 	void DestroyJoint( bool bWakeAttached );
-	void UpdateBreakThresholds( float flTimestep );
+	void UpdateBreakThresholds();
+	bool IsOverloaded( float flTimestep ) const;
 	float GetJointSeparation() const;
+	void ApplyHingeServo( const ConstraintStep_t &step );
+	void UpdateStiffnessCoupling();
+	void ApplyStiffnessBudget();
+
+	const StiffnessCoupling_t &GetStiffnessCoupling( const CPhysicsObject *pObject ) const { return m_StiffnessCoupling[pObject == m_pReference ? 0 : 1]; }
+
 	void ObjectDestroyed( CPhysicsObject *pObject );
 
 	void GroupDestroyed() { m_pGroup = nullptr; }
@@ -173,7 +189,9 @@ private:
 	void RunRows( Function function );
 	void DetachObjects();
 	void NotifyWokenObjects() const;
-	float GetBreakMass() const;
+	float GetBreakMass( int nBody ) const;
+	void UpdateJointAnchor();
+	float GetSlidePosition() const;
 	constraint_breakableparams_t GetSavedBreakableParams() const;
 
 	union JointDef_t
@@ -182,7 +200,6 @@ private:
 		b3PrismaticJointDef m_Prismatic;
 		b3WeldJointDef m_Weld;
 		b3SphericalJointDef m_Spherical;
-		b3DistanceJointDef m_Distance;
 		b3FilterJointDef m_Filter;
 	};
 
@@ -213,6 +230,8 @@ private:
 	JointDef_t m_Definition = {};
 	RagdollFrames_t m_RagdollFrames = {};
 	CPulleySolver m_Pulley;
+	CLengthSolver m_Length;
+	CSlidingSolver m_Sliding;
 	CRagdollSolver m_Ragdoll;
 	matrix3x4_t m_AttachedRefXform = {};
 	b3Vec3 m_Anchors[2] = {};
@@ -223,7 +242,10 @@ private:
 	float m_flTorqueLimit = 0.0f;
 	float m_BodyMassScale[2] = { 1.0f, 1.0f };
 	float m_flBreakMass = -1.0f;
-	float m_flBreakTimestep = 0.0f;
+	float m_flBreakSubstepRate = 0.0f;
+	StiffnessCoupling_t m_StiffnessCoupling[2] = {};
+	float m_flStiffnessHertz = 0.0f;
+	float m_flServoAngle = 0.0f;
 	float m_flArmature = 0.0f;
 	Type_t m_nType;
 	bool m_bBreakable = false;

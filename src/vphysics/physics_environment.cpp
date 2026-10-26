@@ -28,6 +28,9 @@
 #include <tuple>
 
 static constexpr float DEFAULT_TIMESTEP = 1.0f / 66.0f;
+static constexpr float JOINT_HERTZ_FRACTION = 0.25f;
+static constexpr int STIFFEST_MODE_ITERATIONS = 16;
+static constexpr ptrdiff_t UNIT_STEP_TAIL = 3;
 static constexpr int PARALLEL_OBJECT_COUNT = 48;
 static constexpr float IVP_DEFAULT_GRAVITY = 9.83f;
 static constexpr float MAX_SIMULATE_DELTA = 1.0f;
@@ -47,7 +50,30 @@ static constexpr float FRICTION_ENERGY_THRESHOLD = 0.05f;
 static constexpr float IVP_ENERGY_TO_SOURCE = 1550.0032f;
 static constexpr float SURFACE_NORMAL_BIAS = 1e-10f;
 static constexpr float IMPACT_SEPARATION = COLLISION_TOLERANCE * IVP_TO_SOURCE;
+static constexpr float IMPACT_APPROACH_EPSILON = 1e-4f;
+static constexpr float IMPACT_PUSH_FRACTION = 0.1f;
+static constexpr int IMPACT_MAX_ITERATIONS = 100;
+static constexpr float IMPACT_FIXED_MASS_RATIO = 1e5f;
+static constexpr float IMPACT_NORMALIZE_EPSILON = 1e-10f;
+static constexpr float IMPACT_RESPONSE_EPSILON = 1e-15f;
+static constexpr float IMPACT_COSINE_QUARTIC = 1.0f / 24.0f;
+static constexpr float IMPACT_RESCUE_ROTATION_SCALE = 2.5e-5f;
+static constexpr float IMPACT_RESCUE_ROTATION_LIMIT = 0.25f;
+static constexpr float IMPACT_RESCUE_GAP = 2.0f * COLLISION_TOLERANCE;
+static constexpr float IMPACT_RESCUE_SPEED_SCALE = 1.2f;
+static constexpr float IMPACT_HEAVY_SEPARATION = 0.8333333f;
+static constexpr int IMPACT_REPEAT_LIMIT = 10;
+static constexpr float IMPACT_REPEAT_ELASTICITY_SCALE = 0.5f;
+static constexpr float IMPACT_REPEAT_SEPARATION = 0.01f;
+static constexpr float IMPACT_PROPAGATION_MAX_GAP = 22.0f * COLLISION_TOLERANCE;
+static constexpr int IMPACT_PROPAGATION_PASSES = 5000;
 static constexpr float PENETRATION_SEPARATION = -2.0f * SHAPE_INFLATION;
+static constexpr float PENETRATION_MIN_DISTANCE = 0.01f;
+static constexpr float COLLISION_RANGE_SPEED_SCALE = 0.5f;
+static constexpr float COLLISION_RANGE_RADIUS_SCALE = 0.9f;
+static constexpr float COLLISION_RANGE_MIN = 0.8f;
+static constexpr float COLLISION_RANGE_MAX = 10.0f;
+static constexpr float COLLISION_RANGE_SPEED_FLOOR = 0.06f;
 static constexpr float MESH_COPLANAR_COSINE = 0.996f;
 static constexpr float FRICTION_RELEASE_SEPARATION = 4.5f * COLLISION_TOLERANCE * IVP_TO_SOURCE - 2.0f * SHAPE_INFLATION;
 static constexpr float FRICTION_SPAN_TOLERANCE = 1e-6f * IVP_TO_SOURCE * IVP_TO_SOURCE;
@@ -173,15 +199,65 @@ static float GetMaterialFriction( int nMaterial )
 	return flFriction;
 }
 
+static float GetRangeSpeed( const CPhysicsObject *pObject )
+{
+	const b3BodyId body = pObject->GetBody();
+	return b3Length( b3Body_GetLinearVelocity( body ) ) * SOURCE_TO_IVP + b3Length( b3Body_GetAngularVelocity( body ) ) * pObject->GetRadiusDeviation();
+}
+
+static float GetCollisionRange( const CPhysicsObject *pObject0, const CPhysicsObject *pObject1, float flTimestep )
+{
+	const float flSpeed = GetRangeSpeed( pObject0 ) + GetRangeSpeed( pObject1 );
+	const float flRange = std::clamp( std::min( std::min( pObject0->GetRestRadius(), pObject1->GetRestRadius() ) * COLLISION_RANGE_RADIUS_SCALE, flSpeed * COLLISION_RANGE_SPEED_SCALE ), COLLISION_RANGE_MIN, COLLISION_RANGE_MAX );
+	return std::max( flRange - flSpeed * flTimestep, flSpeed * COLLISION_RANGE_SPEED_FLOOR );
+}
+
+static bool IsLedgeReachable( b3ShapeId ledgeShape, b3ShapeId shape, float flTimestep )
+{
+	if ( b3Shape_GetType( ledgeShape ) != b3_hullShape )
+		return true;
+
+	const CPhysConvex &ledge = *static_cast<const CPhysConvex *>( b3Shape_GetUserData( ledgeShape ) );
+	if ( !ledge.IsDetached() )
+		return true;
+
+	const CPhysicsObject *pLedgeObject = GetShapeObject( ledgeShape );
+	const CPhysicsObject *pObject = GetShapeObject( shape );
+	const b3Vec3 center = b3Body_GetLocalPoint( pLedgeObject->GetBody(), b3Body_GetWorldCenter( pObject->GetBody() ) );
+	return ledge.IsReachable( SourceToIVP( center ), pLedgeObject->GetIVPSphereRadius() + pObject->GetRestRadius() + GetCollisionRange( pLedgeObject, pObject, flTimestep ) );
+}
+
+static bool IsShapePairReachable( b3ShapeId shapeA, b3ShapeId shapeB, float flTimestep )
+{
+	return IsLedgeReachable( shapeA, shapeB, flTimestep ) && IsLedgeReachable( shapeB, shapeA, flTimestep );
+}
+
 static bool FilterShapes( b3ShapeId shapeA, b3ShapeId shapeB, void *pContext )
 {
 	CPhysicsEnvironment *pEnvironment = static_cast<CPhysicsEnvironment *>( pContext );
-	return !pEnvironment->IsShapePairHeld( shapeA, shapeB ) && pEnvironment->IsCollisionAllowed( GetShapeObject( shapeA ), GetShapeObject( shapeB ) );
+	return !pEnvironment->IsShapePairHeld( shapeA, shapeB ) && IsShapePairReachable( shapeA, shapeB, pEnvironment->GetSimulationTimestep() ) && pEnvironment->IsCollisionAllowed( GetShapeObject( shapeA ), GetShapeObject( shapeB ) );
 }
 
-static bool PreSolveShapes( b3ShapeId shapeA, b3ShapeId shapeB, b3Pos, b3Vec3, void *pContext )
+static bool PreSolveShapes( b3ShapeId shapeA, b3ShapeId shapeB, b3Pos point, b3Vec3 normal, void *pContext )
 {
-	return static_cast<CPhysicsEnvironment *>( pContext )->IsContactEnabled( GetShapeObject( shapeA ), GetShapeObject( shapeB ) );
+	return static_cast<CPhysicsEnvironment *>( pContext )->IsContactActive( shapeA, shapeB, point, normal );
+}
+
+static float GetRotationChord( b3Quat q1, b3Quat q2 )
+{
+	return 2.0f * b3Length( b3InvMulQuat( q1, q2 ).v );
+}
+
+static b3ShapeProxy MakeShapeProxy( b3ShapeId shape, b3Sphere &sphere )
+{
+	if ( b3Shape_GetType( shape ) == b3_sphereShape )
+	{
+		sphere = b3Shape_GetSphere( shape );
+		return { &sphere.center, 1, sphere.radius };
+	}
+
+	const b3HullData *pHull = b3Shape_GetHull( shape );
+	return { b3GetHullPoints( pHull ), pHull->vertexCount, 0.0f };
 }
 
 static ConVar vbox_threads( "vbox_threads", "0", FCVAR_ARCHIVE, "Physics worker threads, 0 uses one per physical CPU core. Takes effect on the next map load", true, 0.0f, true, B3_MAX_WORKERS );
@@ -191,7 +267,7 @@ static int GetWorkerCount()
 	if ( vbox_threads.GetInt() > 0 )
 		return vbox_threads.GetInt();
 
-	return std::max( 1, static_cast<int>( GetCPUInformation()->m_nPhysicalProcessors ) );
+	return std::max( 1, CTaskPool::GetPhysicalCoreCount() );
 }
 
 CPhysicsEnvironment::CPhysicsEnvironment()
@@ -562,9 +638,11 @@ void CPhysicsEnvironment::Step( double flTime )
 	}
 	m_WokenObjects.clear();
 	m_TaskPool.SetSerial( static_cast<int>( m_SimulatedObjects.size() ) < PARALLEL_OBJECT_COUNT );
+	m_TaskPool.SetActive( true );
 
-	for ( CPhysicsObject *pObject : m_SimulatedObjects )
+	for ( auto it = m_SimulatedObjects.rbegin(); it != m_SimulatedObjects.rend(); ++it )
 	{
+		CPhysicsObject *pObject = *it;
 		if ( pObject->GetRestState() == CPhysicsObject::REST_FROZEN )
 			pObject->Revive( m_flCurrentTime, ++m_nReviveSequence );
 		pObject->RebuildCoreMatrix( m_flCurrentTime );
@@ -604,13 +682,17 @@ void CPhysicsEnvironment::Step( double flTime )
 	if ( m_pNMStepCallback )
 		m_pNMStepCallback( this, m_flTimestep, m_pNMStepContext );
 
+	UpdateStiffnessBudgets();
+	CaptureBulletSweeps();
 	m_TaskPool.Reset();
+	m_nStepContactSequence = m_nContactSequence;
 	b3World_Step( m_World, m_flTimestep, SUBSTEP_COUNT );
+	m_TaskPool.SetActive( false );
 	m_flLastStepTime = flTime;
 	m_flNextStepTime = flTime + static_cast<double>( m_flTimestep );
 
 	ResolvePendingFilterPairs();
-	ProcessJointEvents();
+	ProcessConstraintBreaks();
 
 	m_SteppedObjects.clear();
 	std::vector<CPhysicsObject *> woken;
@@ -620,7 +702,8 @@ void CPhysicsEnvironment::Step( double flTime )
 		const b3BodyMoveEvent &event = events.moveEvents[i];
 		CPhysicsObject *pObject = static_cast<CPhysicsObject *>( event.userData );
 		pObject->UpdateTransform( event.transform );
-		pObject->ClampVelocity( false );
+		if ( pObject->GetFrictionHead() )
+			pObject->ClampVelocity( false );
 		m_SteppedObjects.push_back( pObject );
 		if ( pObject->GetSleepState() == CPhysicsObject::AWAKE )
 			continue;
@@ -632,6 +715,8 @@ void CPhysicsEnvironment::Step( double flTime )
 		m_ActiveObjects.push_back( pObject );
 		woken.push_back( pObject );
 	}
+
+	ResolveBulletPairs();
 
 	for ( CPhysicsObject *pObject : woken )
 	{
@@ -657,24 +742,155 @@ void CPhysicsEnvironment::Step( double flTime )
 	ProcessPenetration();
 }
 
-void CPhysicsEnvironment::ProcessJointEvents()
+void CPhysicsEnvironment::CaptureBulletSweeps()
 {
-	const b3JointEvents events = b3World_GetJointEvents( m_World );
-	if ( events.count == 0 || !m_pConstraintEvents )
+	m_BulletSweeps.clear();
+	for ( CPhysicsObject *pObject : m_SimulatedObjects )
+	{
+		if ( !pObject->IsBullet() )
+			continue;
+
+		const b3Pos center = b3Body_GetWorldCenter( pObject->GetBody() );
+		const b3Quat rotation = b3Body_GetRotation( pObject->GetBody() );
+		m_BulletSweeps.push_back( { pObject, center, rotation, center, rotation, {}, 0, 0 } );
+	}
+}
+
+void CPhysicsEnvironment::ResolveBulletPairs()
+{
+	if ( m_BulletSweeps.size() < 2 )
+		return;
+
+	m_BulletShapes.clear();
+	for ( BulletSweep_t &sweep : m_BulletSweeps )
+	{
+		const b3BodyId body = sweep.m_pObject->GetBody();
+		sweep.m_nFirstShape = m_BulletShapes.size();
+		m_BulletShapes.resize( sweep.m_nFirstShape + b3Body_GetShapeCount( body ) );
+		sweep.m_nShapeCount = b3Body_GetShapes( body, m_BulletShapes.data() + sweep.m_nFirstShape, static_cast<int>( m_BulletShapes.size() - sweep.m_nFirstShape ) );
+		sweep.m_EndCenter = b3Body_GetWorldCenter( body );
+		sweep.m_EndRotation = b3Body_GetRotation( body );
+		const b3Vec3 radius = b3MulSV( sweep.m_pObject->GetMaxExtent(), b3Vec3_one );
+		const b3Vec3 start = b3ToVec3( sweep.m_Center ), end = b3ToVec3( sweep.m_EndCenter );
+		sweep.m_Bounds = { b3Sub( b3Min( start, end ), radius ), b3Add( b3Max( start, end ), radius ) };
+	}
+	std::sort( m_BulletSweeps.begin(), m_BulletSweeps.end(), []( const BulletSweep_t &a, const BulletSweep_t &b ) { return a.m_Bounds.lowerBound.x < b.m_Bounds.lowerBound.x; } );
+
+	m_BulletHits.clear();
+	for ( size_t i = 0; i < m_BulletSweeps.size(); ++i )
+	{
+		const BulletSweep_t &a = m_BulletSweeps[i];
+		const b3BodyId bodyA = a.m_pObject->GetBody();
+		for ( size_t j = i + 1; j < m_BulletSweeps.size() && m_BulletSweeps[j].m_Bounds.lowerBound.x <= a.m_Bounds.upperBound.x; ++j )
+		{
+			const BulletSweep_t &b = m_BulletSweeps[j];
+			if ( !b3AABB_Overlaps( a.m_Bounds, b.m_Bounds ) )
+				continue;
+
+			const b3Vec3 startOffset = b3InvRotateVector( a.m_Rotation, b3SubPos( b.m_Center, a.m_Center ) );
+			const b3Vec3 endOffset = b3InvRotateVector( a.m_EndRotation, b3SubPos( b.m_EndCenter, a.m_EndCenter ) );
+			const float flChord = GetRotationChord( b3InvMulQuat( a.m_Rotation, b.m_Rotation ), b3InvMulQuat( a.m_EndRotation, b.m_EndRotation ) );
+			const float flMotion = b3Distance( startOffset, endOffset ) + flChord * b.m_pObject->GetMaxExtent();
+			if ( flMotion <= std::min( a.m_pObject->GetFastDistance(), b.m_pObject->GetFastDistance() ) || !IsCollisionAllowed( a.m_pObject, b.m_pObject ) || !IsContactEnabled( a.m_pObject, b.m_pObject ) )
+				continue;
+
+			const b3BodyId bodyB = b.m_pObject->GetBody();
+
+			b3TOIInput input;
+			input.sweepA = { b3Body_GetLocalCenter( bodyA ), b3Vec3_zero, b3SubPos( a.m_EndCenter, a.m_Center ), a.m_Rotation, a.m_EndRotation };
+			input.sweepB = { b3Body_GetLocalCenter( bodyB ), b3SubPos( b.m_Center, a.m_Center ), b3SubPos( b.m_EndCenter, a.m_Center ), b.m_Rotation, b.m_EndRotation };
+			float flFraction = 1.0f;
+			for ( size_t nShapeA = a.m_nFirstShape; nShapeA < a.m_nFirstShape + a.m_nShapeCount; ++nShapeA )
+			{
+				const b3ShapeId shapeA = m_BulletShapes[nShapeA];
+				if ( b3Shape_IsSensor( shapeA ) )
+					continue;
+
+				const b3Filter filterA = b3Shape_GetFilter( shapeA );
+				for ( size_t nShapeB = b.m_nFirstShape; nShapeB < b.m_nFirstShape + b.m_nShapeCount; ++nShapeB )
+				{
+					const b3ShapeId shapeB = m_BulletShapes[nShapeB];
+					const b3Filter filterB = b3Shape_GetFilter( shapeB );
+					if ( b3Shape_IsSensor( shapeB ) || ( filterA.maskBits & filterB.categoryBits ) == 0 || ( filterA.categoryBits & filterB.maskBits ) == 0 || IsShapePairHeld( shapeA, shapeB ) )
+						continue;
+
+					b3Sphere sphereA, sphereB;
+					input.proxyA = MakeShapeProxy( shapeA, sphereA );
+					input.proxyB = MakeShapeProxy( shapeB, sphereB );
+					input.maxFraction = flFraction;
+					const b3TOIOutput output = b3TimeOfImpact( &input );
+					if ( output.state == b3_toiStateHit && output.fraction > 0.0f && output.fraction < flFraction )
+						flFraction = output.fraction;
+				}
+			}
+
+			if ( flFraction < 1.0f )
+				m_BulletHits.push_back( { { i, j }, flFraction } );
+		}
+	}
+
+	std::sort( m_BulletHits.begin(), m_BulletHits.end(), []( const BulletHit_t &a, const BulletHit_t &b ) { return a.m_flFraction < b.m_flFraction; } );
+	const auto getSweepPose = []( const BulletSweep_t &sweep, b3Pos base, float flFraction ) -> b3Transform {
+		const b3Quat rotation = b3NLerp( sweep.m_Rotation, sweep.m_EndRotation, flFraction );
+		const b3Vec3 center = b3MulAdd( b3SubPos( sweep.m_Center, base ), flFraction, b3SubPos( sweep.m_EndCenter, sweep.m_Center ) );
+		return { b3Sub( center, b3RotateVector( rotation, b3Body_GetLocalCenter( sweep.m_pObject->GetBody() ) ) ), rotation };
+	};
+	const b3Vec3 gravity = b3World_GetGravity( m_World );
+	for ( const BulletHit_t &hit : m_BulletHits )
+	{
+		BulletSweep_t &first = m_BulletSweeps[hit.m_nIndex[0]];
+		BulletSweep_t &second = m_BulletSweeps[hit.m_nIndex[1]];
+		if ( !first.m_pObject || !second.m_pObject )
+			continue;
+
+		const bool bFirstMoves = b3Body_GetMass( first.m_pObject->GetBody() ) <= b3Body_GetMass( second.m_pObject->GetBody() );
+		BulletSweep_t &moved = bFirstMoves ? first : second;
+		const BulletSweep_t &held = bFirstMoves ? second : first;
+		const b3BodyId body = moved.m_pObject->GetBody();
+		const b3Transform heldEnd = getSweepPose( held, held.m_Center, 1.0f );
+		const b3Transform heldImpact = getSweepPose( held, held.m_Center, hit.m_flFraction );
+		const b3Transform movedImpact = getSweepPose( moved, held.m_Center, hit.m_flFraction );
+		const b3Transform target = b3MulTransforms( heldEnd, b3InvMulTransforms( heldImpact, movedImpact ) );
+		b3Body_SetTransform( body, b3OffsetPos( held.m_Center, target.p ), target.q );
+		b3Body_SetLinearVelocity( body, b3MulAdd( b3Body_GetLinearVelocity( body ), -( 1.0f - hit.m_flFraction ) * m_flTimestep * b3Body_GetGravityScale( body ), gravity ) );
+		moved.m_pObject->UpdateTransform( b3Body_GetTransform( body ) );
+		moved.m_pObject = nullptr;
+	}
+}
+
+void CPhysicsEnvironment::ProcessConstraintBreaks()
+{
+	if ( !m_pConstraintEvents || m_BreakableConstraints.empty() )
 		return;
 
 	m_BrokenConstraints.clear();
+	const b3JointEvents events = b3World_GetJointEvents( m_World );
 	for ( int i = 0; i < events.count; ++i )
 	{
 		if ( events.jointEvents[i].userData )
 			m_BrokenConstraints.push_back( static_cast<CPhysicsConstraint *>( events.jointEvents[i].userData ) );
 	}
 
+	const size_t nPeakBreaks = m_BrokenConstraints.size();
+	for ( CPhysicsConstraint *pConstraint : m_BreakableConstraints )
+	{
+		pConstraint->UpdateBreakThresholds();
+		if ( pConstraint->IsOverloaded( m_flTimestep ) && std::find( m_BrokenConstraints.begin(), m_BrokenConstraints.begin() + nPeakBreaks, pConstraint ) == m_BrokenConstraints.begin() + nPeakBreaks )
+			m_BrokenConstraints.push_back( pConstraint );
+	}
+
 	for ( CPhysicsConstraint *pConstraint : m_BrokenConstraints )
 	{
-		if ( pConstraint->HasJoint() && m_pConstraintEvents )
+		if ( m_pConstraintEvents && std::find( m_BreakableConstraints.begin(), m_BreakableConstraints.end(), pConstraint ) != m_BreakableConstraints.end() )
 			m_pConstraintEvents->ConstraintBroken( pConstraint );
 	}
+}
+
+void CPhysicsEnvironment::RemoveBreakableConstraint( CPhysicsConstraint *pConstraint )
+{
+	auto it = std::find( m_BreakableConstraints.begin(), m_BreakableConstraints.end(), pConstraint );
+	if ( it != m_BreakableConstraints.end() )
+		m_BreakableConstraints.erase( it );
 }
 
 void CPhysicsEnvironment::NotifyWoken( CPhysicsObject *pObject )
@@ -720,6 +936,111 @@ void CPhysicsEnvironment::RemoveVelocityFlush( CPhysicsObject *pObject )
 	auto it = std::find( m_VelocityFlushObjects.begin(), m_VelocityFlushObjects.end(), pObject );
 	if ( it != m_VelocityFlushObjects.end() )
 		m_VelocityFlushObjects.erase( it );
+}
+
+void CPhysicsEnvironment::RemoveStiffnessUpdate( CPhysicsObject *pObject )
+{
+	auto it = std::find( m_StiffnessObjects.begin(), m_StiffnessObjects.end(), pObject );
+	if ( it != m_StiffnessObjects.end() )
+		m_StiffnessObjects.erase( it );
+}
+
+static float ApplyStiffness( const CPhysicsObject *pObject, b3Vec3 linear, b3Vec3 angular, b3Vec3 &force, b3Vec3 &torque )
+{
+	force = b3Vec3_zero;
+	torque = b3Vec3_zero;
+	float flEnergy = 0.0f;
+	for ( const CPhysicsConstraint *pConstraint : pObject->GetConstraints() )
+	{
+		const StiffnessCoupling_t &coupling = pConstraint->GetStiffnessCoupling( pObject );
+		const b3Vec3 velocity = b3Add( linear, b3Cross( angular, coupling.m_Lever ) );
+		const b3Vec3 linearForce = b3MulMV( coupling.m_Linear, velocity );
+		const b3Vec3 angularTorque = b3MulMV( coupling.m_Angular, angular );
+		force = b3Add( force, linearForce );
+		torque = b3Add( torque, b3Add( b3Cross( coupling.m_Lever, linearForce ), angularTorque ) );
+		flEnergy += b3Dot( velocity, linearForce ) + b3Dot( angular, angularTorque );
+	}
+	return flEnergy;
+}
+
+static float ComputeStiffnessScale( const CPhysicsObject *pObject, float flLimitSquared )
+{
+	const b3MassData massData = b3Body_GetMassData( pObject->GetBody() );
+	if ( !( massData.mass > 0.0f ) )
+		return 1.0f;
+
+	const b3Matrix3 inverseInertia = b3InvertMatrix( massData.inertia );
+	const auto getMass = [&]( b3Vec3 linear, b3Vec3 angular ) { return massData.mass * b3Dot( linear, linear ) + b3Dot( angular, b3MulMV( massData.inertia, angular ) ); };
+	const b3Vec3 axes[3] = { b3Vec3_axisX, b3Vec3_axisY, b3Vec3_axisZ };
+	b3Vec3 linear = b3Vec3_zero, angular = b3Vec3_zero, force, torque;
+	float flPeak = 0.0f;
+	for ( int i = 0; i < 6; ++i )
+	{
+		b3Vec3 axisLinear = i < 3 ? axes[i] : b3Vec3_zero;
+		b3Vec3 axisAngular = i < 3 ? b3Vec3_zero : b3MulMV( inverseInertia, axes[i - 3] );
+		const float flMass = getMass( axisLinear, axisAngular );
+		if ( !( flMass > 0.0f ) )
+			continue;
+
+		axisLinear = b3MulSV( 1.0f / std::sqrt( flMass ), axisLinear );
+		axisAngular = b3MulSV( 1.0f / std::sqrt( flMass ), axisAngular );
+		const float flEnergy = ApplyStiffness( pObject, axisLinear, axisAngular, force, torque );
+		if ( flEnergy > flPeak )
+		{
+			flPeak = flEnergy;
+			linear = axisLinear;
+			angular = axisAngular;
+		}
+	}
+
+	for ( int i = 0; i < STIFFEST_MODE_ITERATIONS && flPeak > 0.0f; ++i )
+	{
+		flPeak = std::max( flPeak, ApplyStiffness( pObject, linear, angular, force, torque ) );
+		linear = b3MulSV( 1.0f / massData.mass, force );
+		angular = b3MulMV( inverseInertia, torque );
+		const float flMass = getMass( linear, angular );
+		if ( !( flMass > 0.0f ) )
+			break;
+
+		linear = b3MulSV( 1.0f / std::sqrt( flMass ), linear );
+		angular = b3MulSV( 1.0f / std::sqrt( flMass ), angular );
+	}
+	return flPeak > flLimitSquared ? flLimitSquared / flPeak : 1.0f;
+}
+
+void CPhysicsEnvironment::UpdateStiffnessBudgets()
+{
+	if ( m_StiffnessObjects.empty() )
+		return;
+
+	++m_nStiffnessPass;
+	m_StiffnessBodies.clear();
+	for ( CPhysicsObject *pObject : m_StiffnessObjects )
+	{
+		pObject->ClearStiffnessQueued();
+		for ( CPhysicsConstraint *pConstraint : pObject->GetConstraints() )
+		{
+			pConstraint->UpdateStiffnessCoupling();
+			for ( CPhysicsObject *pBody : { pConstraint->GetReference(), pConstraint->GetAttached() } )
+			{
+				if ( pBody->IsStatic() || pBody->GetStiffnessPass() == m_nStiffnessPass )
+					continue;
+
+				pBody->SetStiffnessPass( m_nStiffnessPass );
+				m_StiffnessBodies.push_back( pBody );
+			}
+		}
+	}
+	m_StiffnessObjects.clear();
+
+	const float flLimit = JOINT_HERTZ_FRACTION * GetSubstepRate();
+	for ( CPhysicsObject *pBody : m_StiffnessBodies )
+		pBody->SetStiffnessScale( ComputeStiffnessScale( pBody, flLimit * flLimit ) );
+	for ( CPhysicsObject *pBody : m_StiffnessBodies )
+	{
+		for ( CPhysicsConstraint *pConstraint : pBody->GetConstraints() )
+			pConstraint->ApplyStiffnessBudget();
+	}
 }
 
 static uint32_t s_nSleepSeed = 1;
@@ -788,7 +1109,7 @@ void CPhysicsEnvironment::BuildSimulationUnits()
 		unit.m_nFirst = static_cast<int>( m_UnitObjects.size() );
 		CollectUnit( pObject, nStamp, m_UnitObjects );
 		unit.m_nCount = static_cast<int>( m_UnitObjects.size() ) - unit.m_nFirst;
-		unit.m_nSequence = 0;
+		unit.m_nSequence = std::numeric_limits<uint32_t>::max();
 		unit.m_bCheckRest = false;
 		for ( int i = unit.m_nFirst; i < unit.m_nFirst + unit.m_nCount; ++i )
 		{
@@ -801,10 +1122,11 @@ void CPhysicsEnvironment::BuildSimulationUnits()
 				pMember->ResetControllerCursor( m_nStepCount );
 				m_SimulatedObjects.push_back( pMember );
 			}
-			unit.m_nSequence = std::max( unit.m_nSequence, pMember->GetReviveSequence() );
+			unit.m_nSequence = std::min( unit.m_nSequence, pMember->GetReviveSequence() );
 		}
 	}
 	std::sort( m_SimulationUnits.begin(), m_SimulationUnits.end(), []( const SimulationUnit_t &a, const SimulationUnit_t &b ) { return a.m_nSequence != b.m_nSequence ? a.m_nSequence > b.m_nSequence : a.m_nFirst < b.m_nFirst; } );
+	std::reverse( m_SimulationUnits.end() - std::min( static_cast<ptrdiff_t>( m_SimulationUnits.size() ), UNIT_STEP_TAIL ), m_SimulationUnits.end() );
 }
 
 void CPhysicsEnvironment::UpdateRestTimers()
@@ -878,7 +1200,7 @@ void CPhysicsEnvironment::FreezeIsland( const SimulationUnit_t &unit )
 
 	for ( CPhysicsObject *pObject : m_IslandObjects )
 	{
-		if ( !pObject->IsMoveable() )
+		if ( pObject->IsStatic() )
 			continue;
 
 		pObject->Freeze( true );
@@ -945,6 +1267,12 @@ void CPhysicsEnvironment::SetSimulationTimestep( float timestep )
 	m_flTimestep = timestep;
 	m_flInverseTimestep = static_cast<float>( 1.0 / static_cast<double>( timestep ) );
 	UpdateContactTuning();
+	for ( IPhysicsObject *pObject : m_Objects )
+	{
+		CPhysicsObject *pPhysicsObject = static_cast<CPhysicsObject *>( pObject );
+		if ( !pPhysicsObject->GetConstraints().empty() )
+			pPhysicsObject->QueueStiffnessUpdate();
+	}
 }
 
 void CPhysicsEnvironment::UpdateWorldMaterials()
@@ -1103,6 +1431,20 @@ bool CPhysicsEnvironment::IsContactEnabled( const CPhysicsObject *pObject0, cons
 		return false;
 
 	return m_DisabledPairs.empty() || !m_DisabledPairs.contains( GetPairKey( pObject0, pObject1 ) );
+}
+
+bool CPhysicsEnvironment::IsContactActive( b3ShapeId shapeA, b3ShapeId shapeB, b3Pos point, b3Vec3 normal ) const
+{
+	const CPhysicsObject *pObjectA = GetShapeObject( shapeA );
+	const CPhysicsObject *pObjectB = GetShapeObject( shapeB );
+	if ( !IsContactEnabled( pObjectA, pObjectB ) || !IsShapePairReachable( shapeA, shapeB, m_flTimestep ) )
+		return false;
+
+	const b3BodyId bodies[2] = { pObjectA->GetBody(), pObjectB->GetBody() };
+	b3Vec3 velocities[2];
+	for ( int i = 0; i < 2; ++i )
+		velocities[i] = b3Add( b3Body_GetLinearVelocity( bodies[i] ), b3Cross( b3Body_GetAngularVelocity( bodies[i] ), b3SubPos( point, b3Body_GetWorldCenter( bodies[i] ) ) ) );
+	return b3Dot( b3Sub( velocities[1], velocities[0] ), normal ) < 0.0f || HasShapeFriction( pObjectA, shapeA, shapeB );
 }
 
 b3AABB CPhysicsEnvironment::GetFilterQueryBounds( const CPhysicsObject *pObject, const b3AABB &bounds ) const
@@ -1432,9 +1774,9 @@ void CPhysicsEnvironment::RemoveObjectContacts( CPhysicsObject *pObject )
 	std::erase( m_PendingHoldChecks, pObject );
 	std::erase( m_PenetrationResets, pObject );
 	std::erase_if( m_PenetrationHolds, [&]( const PenetrationHold_t &hold ) {
-		const bool bMember = hold.m_pObject == pObject || ( b3Shape_IsValid( hold.m_MeshShape ) && GetShapeObject( hold.m_MeshShape ) == pObject );
+		const bool bMember = hold.m_pObject == pObject || ( b3Shape_IsValid( hold.m_PartnerShape ) && GetShapeObject( hold.m_PartnerShape ) == pObject );
 		if ( bMember )
-			m_HeldShapePairs.erase( GetShapePairKey( hold.m_Shape, hold.m_MeshShape ) );
+			m_HeldShapePairs.erase( GetShapePairKey( hold.m_Shape, hold.m_PartnerShape ) );
 		return bMember;
 	} );
 
@@ -1667,7 +2009,16 @@ void CPhysicsEnvironment::QueueContactEvent( ContactEvent_t::Type_t nType, const
 	event.m_Materials[1] = friction.m_Materials[1];
 	event.m_Point = friction.m_Point;
 	event.m_Normal = friction.m_Normal;
+	event.m_Anchors[0] = friction.m_Anchors[0];
+	event.m_Anchors[1] = friction.m_Anchors[1];
 	event.m_flApproachSpeed = flApproachSpeed;
+	event.m_flFriction = friction.m_flFriction;
+	event.m_flSeparation = friction.m_flSeparation;
+	event.m_nSequence = friction.m_nSequence;
+	event.m_nContactKey = GetContactKey( contact.m_ContactId );
+	event.m_nFeatureId = friction.m_nFeatureId;
+	event.m_nTriangle = friction.m_nTriangle;
+	event.m_bFollowing = false;
 	event.m_pEnding = nullptr;
 }
 
@@ -1690,7 +2041,497 @@ void CPhysicsEnvironment::ReportTouch( CPhysicsObject *pObject0, CPhysicsObject 
 		m_pCollisionEvents->EndTouch( pObject0, pObject1, &data );
 }
 
-void CPhysicsEnvironment::ReportImpact( const ContactEvent_t &event )
+struct ImpactBody_t
+{
+	CPhysicsObject *m_pObject;
+	b3Vec3 m_Velocity;
+	b3Vec3 m_AngularVelocity;
+	b3Vec3 m_Speed;
+	b3Vec3 m_AngularSpeed;
+	float m_flInvMass;
+	int m_nImpacts;
+	bool m_bFixed;
+	bool m_bPinned;
+	bool m_bFrozen;
+	bool m_bTouched = false;
+	bool m_bExpanded = false;
+
+	ImpactBody_t( CPhysicsObject *pObject, uint32_t nStep )
+	: m_pObject( pObject )
+	, m_flInvMass( pObject->IsMoveable() ? pObject->GetInvMass() : 0.0f )
+	, m_nImpacts( pObject->GetImpactCount( nStep ) )
+	, m_bFixed( pObject->IsStatic() )
+	, m_bPinned( !pObject->IsStatic() && !pObject->IsMoveable() )
+	, m_bFrozen( pObject->IsImpactFrozen( nStep ) )
+	{
+		const bool bReport = pObject->IsReportingPreStepVelocity();
+		pObject->SetReportPreStepVelocity( true );
+		m_Velocity = pObject->GetReportedTotalVelocity();
+		m_AngularVelocity = pObject->CoreToIVP( pObject->GetReportedTotalAngularVelocity() );
+		m_Speed = m_bFrozen ? b3Vec3_zero : pObject->GetReportedVelocity();
+		m_AngularSpeed = m_bFrozen ? b3Vec3_zero : pObject->CoreToIVP( pObject->GetReportedAngularVelocity() );
+		pObject->SetReportPreStepVelocity( bReport );
+	}
+
+	b3Vec3 RotateInverseInertia( b3Vec3 vector ) const
+	{
+		if ( m_bFixed || m_bPinned )
+			return b3Vec3_zero;
+
+		const b3Vec3 local = m_pObject->IVPToCore( vector );
+		const b3Vec3 inverseInertia = m_pObject->GetCoreInverseInertia();
+		return m_pObject->CoreToIVP( { local.x * inverseInertia.x, local.y * inverseInertia.y, local.z * inverseInertia.z } );
+	}
+
+	b3Vec3 GetPointVelocity( b3Vec3 lever ) const { return b3Add( m_Velocity, b3Cross( m_AngularVelocity, lever ) ); }
+
+	b3Vec3 GetPointSpeed( b3Vec3 lever ) const { return b3Add( m_Speed, b3Cross( m_AngularSpeed, lever ) ); }
+
+	b3Vec3 GetResponse( b3Vec3 lever, b3Vec3 direction ) const { return b3MulAdd( b3Cross( RotateInverseInertia( b3Cross( lever, direction ) ), lever ), m_flInvMass, direction ); }
+
+	float GetEffectiveMass( b3Vec3 lever, b3Vec3 direction ) const { return m_bFixed || m_bPinned ? 1.0f : 1.0f / b3Length( GetResponse( lever, direction ) ); }
+
+	void Apply( b3Vec3 lever, b3Vec3 impulse )
+	{
+		if ( m_bFixed || m_bPinned )
+			return;
+
+		m_Velocity = b3MulAdd( m_Velocity, m_flInvMass, impulse );
+		m_AngularVelocity = b3Add( m_AngularVelocity, RotateInverseInertia( b3Cross( lever, impulse ) ) );
+	}
+
+	float GetRescueSpeed( float flInverseTimestep ) const
+	{
+		if ( m_bFixed || IsBall( m_pObject ) )
+			return 0.0f;
+
+		const float flRotation = std::min( b3LengthSquared( m_AngularSpeed ) * IMPACT_RESCUE_ROTATION_SCALE, IMPACT_RESCUE_ROTATION_LIMIT );
+		return ( 1.0f - std::cos( std::sqrt( flRotation ) ) ) * m_pObject->GetRestRadius() * flInverseTimestep;
+	}
+};
+
+struct ImpactPoint_t
+{
+	CPhysicsObject *m_pObjects[2];
+	b3Vec3 m_Levers[2];
+	b3Vec3 m_Normal;
+	float m_flElasticity;
+	float m_flFriction;
+	uint64_t m_nSequence;
+	uint32_t m_nRun;
+	float m_flTime;
+	float m_flGap;
+};
+
+struct ImpactContact_t
+{
+	const void *m_pKey;
+	int m_nBodies[2];
+	b3Vec3 m_Levers[2];
+	b3Vec3 m_Normal;
+	float m_flGap;
+	float m_flElasticity;
+	float m_flFriction;
+	float m_flPredicted;
+	float m_flRescue;
+	int m_nImpacts;
+	bool m_bComputed;
+};
+
+static float GetImpactElasticity( int nMaterial0, int nMaterial1 )
+{
+	float flDensity, flThickness, flFriction, flElasticity0, flElasticity1;
+	g_PhysicsSurfaceProps.GetPhysicsProperties( nMaterial0, &flDensity, &flThickness, &flFriction, &flElasticity0 );
+	g_PhysicsSurfaceProps.GetPhysicsProperties( nMaterial1, &flDensity, &flThickness, &flFriction, &flElasticity1 );
+	return std::clamp( flElasticity0 * flElasticity1, 0.0f, 1.0f );
+}
+
+struct ImpactSystem_t
+{
+	std::vector<ImpactBody_t> &m_Bodies;
+	std::vector<ImpactContact_t> &m_Contacts;
+	const std::vector<ImpactPoint_t> &m_Points;
+	uint64_t m_nStepSequence;
+	IPhysicsCollisionSolver *m_pSolver;
+	uint32_t m_nStep;
+	int m_nMaxImpacts;
+	float m_flTimestep;
+	float m_flInverseTimestep;
+
+	int AddBody( CPhysicsObject *pObject )
+	{
+		for ( size_t i = 0; i < m_Bodies.size(); ++i )
+		{
+			if ( m_Bodies[i].m_pObject == pObject )
+				return static_cast<int>( i );
+		}
+		m_Bodies.emplace_back( pObject, m_nStep );
+		return static_cast<int>( m_Bodies.size() - 1 );
+	}
+
+	void AddContact( const void *pKey, CPhysicsObject *pObject0, CPhysicsObject *pObject1, b3Vec3 lever0, b3Vec3 lever1, b3Vec3 normal, float flGap, float flElasticity, float flFriction )
+	{
+		if ( std::any_of( m_Contacts.begin(), m_Contacts.end(), [pKey]( const ImpactContact_t &contact ) { return contact.m_pKey == pKey; } ) )
+			return;
+
+		ImpactContact_t contact;
+		contact.m_pKey = pKey;
+		contact.m_nBodies[0] = AddBody( pObject0 );
+		contact.m_nBodies[1] = AddBody( pObject1 );
+		contact.m_Levers[0] = lever0;
+		contact.m_Levers[1] = lever1;
+		contact.m_Normal = normal;
+		contact.m_flGap = flGap;
+		contact.m_flElasticity = flElasticity;
+		contact.m_flFriction = flFriction;
+		contact.m_flPredicted = 0.0f;
+		contact.m_flRescue = 0.0f;
+		contact.m_nImpacts = 0;
+		contact.m_bComputed = false;
+		m_Contacts.push_back( contact );
+	}
+
+	void Expand( int nBody )
+	{
+		m_Bodies[nBody].m_bExpanded = true;
+		m_Bodies[nBody].m_bTouched = true;
+		CPhysicsObject *pObject = m_Bodies[nBody].m_pObject;
+		for ( const FrictionContact_t *pFriction = pObject->GetFrictionHead(); pFriction; pFriction = pFriction->GetNext( pObject ) )
+		{
+			if ( pFriction->m_bRemoved || pFriction->m_bEnding || pFriction->m_nSequence > m_nStepSequence || std::any_of( m_Points.begin(), m_Points.end(), [pFriction]( const ImpactPoint_t &point ) { return point.m_nSequence == pFriction->m_nSequence; } ) )
+				continue;
+
+			const float flGap = std::max( ( pFriction->m_flSeparation + 2.0f * SHAPE_INFLATION ) * SOURCE_TO_IVP, 0.0f );
+			AddContact( pFriction, pFriction->m_pObjects[0], pFriction->m_pObjects[1], SourceToIVP( pFriction->m_Anchors[0] ), SourceToIVP( pFriction->m_Anchors[1] ), SourceToIVPDirection( ToBox3D( pFriction->m_Normal ) ), flGap, GetImpactElasticity( pFriction->m_Materials[0], pFriction->m_Materials[1] ), pFriction->m_flFriction );
+		}
+
+		for ( const ImpactPoint_t &point : m_Points )
+		{
+			if ( point.m_pObjects[0] == pObject || point.m_pObjects[1] == pObject )
+				AddContact( &point, point.m_pObjects[0], point.m_pObjects[1], point.m_Levers[0], point.m_Levers[1], point.m_Normal, std::max( point.m_flGap, 0.0f ), point.m_flElasticity, point.m_flFriction );
+		}
+	}
+
+	void CommitBody( ImpactBody_t &body )
+	{
+		if ( !body.m_bFixed )
+		{
+			body.m_Speed = body.m_Velocity;
+			body.m_AngularSpeed = body.m_AngularVelocity;
+		}
+		if ( body.m_nImpacts > m_nMaxImpacts )
+			body.m_bFrozen = !m_pSolver || m_pSolver->ShouldFreezeObject( body.m_pObject );
+	}
+
+	int Commit( ImpactBody_t &a, b3Vec3 leverA, ImpactBody_t &b, b3Vec3 leverB, b3Vec3 normal, float flMassA, float flMassB, float flMinSpeed, bool bHeavyCheck )
+	{
+		ImpactBody_t *bodies[2] = { &a, &b };
+		const b3Vec3 levers[2] = { leverA, leverB };
+		for ( ImpactBody_t *pBody : bodies )
+		{
+			if ( !pBody->m_bFixed )
+				++pBody->m_nImpacts;
+		}
+
+		int nReturned = 3;
+		bool bCommitted = false;
+		const int nHeavy = flMassA <= flMassB ? 1 : 0;
+		ImpactBody_t &heavy = *bodies[nHeavy], &light = *bodies[1 - nHeavy];
+		if ( bHeavyCheck && !heavy.m_bFixed )
+		{
+			const b3Vec3 heavyPoint = heavy.GetPointSpeed( levers[nHeavy] ), lightPoint = light.GetPointVelocity( levers[1 - nHeavy] );
+			const float flSeparation = b3Dot( normal, nHeavy == 0 ? b3Sub( lightPoint, heavyPoint ) : b3Sub( heavyPoint, lightPoint ) );
+			if ( flSeparation > IMPACT_HEAVY_SEPARATION * flMinSpeed )
+			{
+				CommitBody( light );
+				--heavy.m_nImpacts;
+				nReturned &= ~( 1 << nHeavy );
+				bCommitted = true;
+			}
+		}
+		if ( !bCommitted )
+		{
+			CommitBody( a );
+			CommitBody( b );
+		}
+
+		if ( a.m_bFrozen || b.m_bFrozen )
+		{
+			for ( ImpactBody_t *pBody : bodies )
+			{
+				if ( pBody->m_bFixed )
+					continue;
+
+				pBody->m_bFrozen = true;
+				pBody->m_Speed = b3Vec3_zero;
+				pBody->m_AngularSpeed = b3Vec3_zero;
+			}
+			nReturned = 3;
+		}
+		return nReturned;
+	}
+
+	void EnforceSeparation( ImpactBody_t &a, b3Vec3 leverA, ImpactBody_t &b, b3Vec3 leverB, b3Vec3 normal, float flMinSpeed, bool bSeparatingIsRest )
+	{
+		float flSeparation = b3Dot( b3Sub( b.GetPointVelocity( leverB ), a.GetPointVelocity( leverA ) ), normal );
+		if ( bSeparatingIsRest && flSeparation >= 0.0f )
+			flSeparation = 0.0f;
+		if ( flMinSpeed - flSeparation < 0.0f )
+			return;
+
+		float flResponse = 0.0f;
+		if ( !b.m_bFixed )
+			flResponse += b3Dot( b.GetResponse( leverB, normal ), normal );
+		if ( !a.m_bFixed )
+			flResponse += b3Dot( a.GetResponse( leverA, normal ), normal );
+		const float flImpulse = ( flMinSpeed - flSeparation ) / ( flResponse + IMPACT_RESPONSE_EPSILON );
+		if ( flImpulse < 0.0f )
+			return;
+
+		a.Apply( leverA, b3MulSV( -flImpulse, normal ) );
+		b.Apply( leverB, b3MulSV( flImpulse, normal ) );
+	}
+
+	int Solve( ImpactBody_t &a, b3Vec3 leverA, ImpactBody_t &b, b3Vec3 leverB, b3Vec3 normal, float flElasticity, float flFriction, bool bTilt, float flMinSpeed, int nImpacts )
+	{
+		const float flTilt = ( std::sqrt( flElasticity ) + 1.0f ) * flFriction;
+		const float flAngle = std::atan( flTilt );
+		const float flCos = bTilt ? ( 1.0f - flAngle * flAngle * 0.5f ) + flAngle * flAngle * IMPACT_COSINE_QUARTIC * flAngle * flAngle : 1.0f;
+		const float flSin = bTilt ? flCos * flTilt : 0.0f;
+		const auto getRelative = [&]() { return b3Sub( b.GetPointVelocity( leverB ), a.GetPointVelocity( leverA ) ); };
+		const auto getDirection = [&]( b3Vec3 relative ) {
+			const b3Vec3 direction = b3LengthSquared( relative ) < IMPACT_NORMALIZE_EPSILON ? relative : b3Normalize( relative );
+			const float flNormal = b3Dot( direction, normal );
+			if ( flNormal > 0.0f )
+				return b3Vec3_zero;
+			if ( -flCos >= flNormal )
+				return direction;
+
+			b3Vec3 tangent = b3MulSub( direction, flNormal, normal );
+			if ( b3LengthSquared( tangent ) >= IMPACT_NORMALIZE_EPSILON )
+				tangent = b3Normalize( tangent );
+			return b3MulAdd( b3MulSV( -flCos, normal ), flSin, tangent );
+		};
+		const auto apply = [&]( float flImpulse, b3Vec3 direction ) {
+			a.Apply( leverA, b3MulSV( flImpulse, direction ) );
+			b.Apply( leverB, b3MulSV( -flImpulse, direction ) );
+		};
+
+		float flMassA = a.GetEffectiveMass( leverA, b3Neg( normal ) );
+		float flMassB = b.GetEffectiveMass( leverB, normal );
+		if ( a.m_bFixed )
+			flMassA = flMassB * IMPACT_FIXED_MASS_RATIO;
+		if ( b.m_bFixed )
+			flMassB = flMassA * IMPACT_FIXED_MASS_RATIO;
+
+		b3Vec3 relative = getRelative();
+		const float flNormalSpeed = b3Dot( normal, relative );
+		if ( flNormalSpeed > -IMPACT_APPROACH_EPSILON )
+		{
+			EnforceSeparation( a, leverA, b, leverB, normal, flMinSpeed, true );
+			return Commit( a, leverA, b, leverB, normal, flMassA, flMassB, flMinSpeed, nImpacts <= IMPACT_REPEAT_LIMIT );
+		}
+
+		const float flStep = -IMPACT_PUSH_FRACTION / ( flMassA + flMassB ) * flMassA * ( flMassB + flMassB ) * flNormalSpeed;
+		float flApproach = -flNormalSpeed;
+		const float flTarget = std::sqrt( 1.0f - ( 1.0f - flElasticity ) / ( static_cast<float>( nImpacts ) * IMPACT_REPEAT_ELASTICITY_SCALE + 1.0f ) ) * flApproach;
+		const float flRepeat = std::sqrt( static_cast<float>( nImpacts ) ) * IMPACT_REPEAT_SEPARATION;
+		b3Vec3 direction = getDirection( relative );
+		int nIterations = 0;
+		for ( ; flApproach > 0.0f && nIterations < IMPACT_MAX_ITERATIONS; ++nIterations )
+		{
+			apply( flStep, direction );
+			relative = getRelative();
+			flApproach = -b3Dot( normal, relative );
+			direction = getDirection( relative );
+		}
+
+		const float flNeeded = flApproach + flTarget + flRepeat;
+		if ( flNeeded > 0.0f && nIterations != IMPACT_MAX_ITERATIONS )
+		{
+			const ImpactBody_t savedA = a, savedB = b;
+			apply( 1.0f, b3Neg( normal ) );
+			const float flResponse = b3Dot( normal, getRelative() ) + flApproach;
+			a = savedA;
+			b = savedB;
+			apply( std::fabs( flResponse ) <= IMPACT_APPROACH_EPSILON ? 0.0f : flNeeded / flResponse, b3Neg( normal ) );
+		}
+		EnforceSeparation( a, leverA, b, leverB, normal, flMinSpeed, false );
+		return Commit( a, leverA, b, leverB, normal, flMassA, flMassB, flMinSpeed, true );
+	}
+
+	int SolveFirst( int nBody0, int nBody1, const b3Vec3 levers[2], b3Vec3 normal, float flElasticity, float flFriction )
+	{
+		const bool bFlip = m_Bodies[nBody1].m_bFixed;
+		ImpactBody_t &a = m_Bodies[bFlip ? nBody1 : nBody0], &b = m_Bodies[bFlip ? nBody0 : nBody1];
+		const float flMinSpeed = ( 2.0f * ( a.GetRescueSpeed( m_flInverseTimestep ) + b.GetRescueSpeed( m_flInverseTimestep ) ) + IMPACT_RESCUE_GAP ) * IMPACT_RESCUE_SPEED_SCALE;
+		const bool bTilt = !a.m_pObject->IsCarCore() && !b.m_pObject->IsCarCore();
+		return Solve( a, levers[bFlip ? 1 : 0], b, levers[bFlip ? 0 : 1], bFlip ? b3Neg( normal ) : normal, flElasticity, flFriction, bTilt, flMinSpeed, 0 );
+	}
+
+	void Predict( ImpactContact_t &contact )
+	{
+		contact.m_bComputed = true;
+		if ( contact.m_flGap > IMPACT_PROPAGATION_MAX_GAP )
+		{
+			contact.m_flPredicted = FLT_MAX;
+			return;
+		}
+
+		const ImpactBody_t &body0 = m_Bodies[contact.m_nBodies[0]], &body1 = m_Bodies[contact.m_nBodies[1]];
+		const float flGapSpeed = contact.m_flGap < COLLISION_TOLERANCE ? 2.0f * m_flInverseTimestep * ( COLLISION_TOLERANCE - contact.m_flGap ) : 0.0f;
+		contact.m_flRescue = 2.0f * ( body0.GetRescueSpeed( m_flInverseTimestep ) + body1.GetRescueSpeed( m_flInverseTimestep ) ) + flGapSpeed;
+		const float flApproach = b3Dot( contact.m_Normal, b3Sub( body0.GetPointSpeed( contact.m_Levers[0] ), body1.GetPointSpeed( contact.m_Levers[1] ) ) );
+		contact.m_flPredicted = contact.m_flGap - ( contact.m_flRescue * 0.5f + flApproach ) * m_flTimestep;
+	}
+
+	void ResetPredictions( int nBody )
+	{
+		for ( ImpactContact_t &contact : m_Contacts )
+		{
+			if ( contact.m_nBodies[0] == nBody || contact.m_nBodies[1] == nBody )
+				contact.m_bComputed = false;
+		}
+	}
+
+	void Propagate()
+	{
+		for ( int nPass = 0; nPass <= IMPACT_PROPAGATION_PASSES; ++nPass )
+		{
+			int nBest = -1;
+			float flBest = COLLISION_TOLERANCE;
+			for ( int i = static_cast<int>( m_Contacts.size() ) - 1; i >= 0; --i )
+			{
+				ImpactContact_t &contact = m_Contacts[i];
+				const ImpactBody_t &body0 = m_Bodies[contact.m_nBodies[0]], &body1 = m_Bodies[contact.m_nBodies[1]];
+				if ( ( body0.m_bFixed || body0.m_bFrozen ) && ( body1.m_bFixed || body1.m_bFrozen ) )
+					continue;
+
+				if ( !contact.m_bComputed )
+					Predict( contact );
+				if ( contact.m_flPredicted < flBest )
+				{
+					nBest = i;
+					flBest = contact.m_flPredicted;
+				}
+			}
+			if ( nBest < 0 )
+				return;
+
+			ImpactContact_t &contact = m_Contacts[nBest];
+			for ( int nBody : contact.m_nBodies )
+			{
+				ImpactBody_t &body = m_Bodies[nBody];
+				if ( !body.m_bTouched && !body.m_bFixed && !body.m_bPinned && !body.m_pObject->IsAsleep() )
+					body.m_bTouched = true;
+			}
+
+			const bool bFlip = m_Bodies[contact.m_nBodies[1]].m_bFixed;
+			const int nBodyA = contact.m_nBodies[bFlip ? 1 : 0], nBodyB = contact.m_nBodies[bFlip ? 0 : 1];
+			ImpactBody_t &a = m_Bodies[nBodyA], &b = m_Bodies[nBodyB];
+			const bool bTilt = !a.m_pObject->IsCarCore() && !b.m_pObject->IsCarCore();
+			const float flMinSpeed = ( contact.m_flRescue + IMPACT_RESCUE_GAP ) * IMPACT_RESCUE_SPEED_SCALE;
+			const int nImpacts = ++contact.m_nImpacts;
+			const int nReturned = Solve( a, contact.m_Levers[bFlip ? 1 : 0], b, contact.m_Levers[bFlip ? 0 : 1], bFlip ? b3Neg( contact.m_Normal ) : contact.m_Normal, contact.m_flElasticity, contact.m_flFriction, bTilt, flMinSpeed, nImpacts );
+
+			const int returned[2] = { nBodyA, nBodyB };
+			for ( int i = 0; i < 2; ++i )
+			{
+				if ( !( nReturned & ( 1 << i ) ) || m_Bodies[returned[i]].m_bFixed || m_Bodies[returned[i]].m_bPinned )
+					continue;
+
+				if ( !m_Bodies[returned[i]].m_bTouched || m_Bodies[returned[i]].m_bExpanded )
+					ResetPredictions( returned[i] );
+				else
+					Expand( returned[i] );
+			}
+		}
+	}
+};
+
+float CPhysicsEnvironment::GetImpactNormalSpeed( const ContactEvent_t &event ) const
+{
+	const ImpactBody_t body0( event.m_pObjects[0], m_nStepCount ), body1( event.m_pObjects[1], m_nStepCount );
+	const b3Vec3 relative = b3Sub( body1.GetPointVelocity( SourceToIVP( event.m_Anchors[1] ) ), body0.GetPointVelocity( SourceToIVP( event.m_Anchors[0] ) ) );
+	return b3Dot( SourceToIVPDirection( ToBox3D( event.m_Normal ) ), relative );
+}
+
+void CPhysicsEnvironment::CreateFollowingFriction( const ContactEvent_t &event )
+{
+	auto it = m_Contacts.find( event.m_nContactKey );
+	if ( it == m_Contacts.end() || !b3Contact_IsValid( it->second.m_ContactId ) )
+		return;
+
+	Contact_t &contact = it->second;
+	if ( std::any_of( contact.m_Friction.begin(), contact.m_Friction.end(), [&]( const FrictionContact_t *pFriction ) { return pFriction->m_nFeatureId == event.m_nFeatureId && pFriction->m_nTriangle == event.m_nTriangle; } ) )
+		return;
+
+	const b3ContactData data = b3Contact_GetData( contact.m_ContactId );
+	for ( int m = 0; m < data.manifoldCount; ++m )
+	{
+		const b3Manifold &manifold = data.manifolds[m];
+		for ( int p = 0; p < manifold.pointCount; ++p )
+		{
+			const b3ManifoldPoint &point = manifold.points[p];
+			if ( point.featureId != event.m_nFeatureId || point.triangleIndex != event.m_nTriangle )
+				continue;
+
+			const b3Vec3 worldPoint = b3Add( b3ToVec3( b3Body_GetWorldCenter( contact.m_pObjects[0]->GetBody() ) ), point.anchorA );
+			CreateFrictionContact( contact, manifold, point, worldPoint, IsBall( contact.m_pObjects[0] ) || IsBall( contact.m_pObjects[1] ) );
+			return;
+		}
+	}
+}
+
+float CPhysicsEnvironment::GetImpactArrival( const ContactEvent_t &event )
+{
+	return ( event.m_flSeparation + SHAPE_INFLATION ) / event.m_flApproachSpeed;
+}
+
+void CPhysicsEnvironment::DispatchFollowingImpacts( const ContactEvent_t &primary, const ContactEvent_t *pBegin, const ContactEvent_t *pEnd )
+{
+	float flTime = GetImpactArrival( primary );
+	const float flEnd = std::max( flTime, m_flTimestep );
+	std::vector<std::pair<const ContactEvent_t *, float>> pending;
+	for ( const ContactEvent_t *pEvent = pBegin; pEvent != pEnd; ++pEvent )
+		pending.emplace_back( pEvent, pEvent->m_flSeparation + SHAPE_INFLATION - pEvent->m_flApproachSpeed * flTime );
+
+	std::vector<float> approaches;
+	while ( !pending.empty() )
+	{
+		approaches.clear();
+		size_t nNext = pending.size();
+		float flArrival = flEnd;
+		for ( size_t i = 0; i < pending.size(); ++i )
+		{
+			const float flApproach = -GetImpactNormalSpeed( *pending[i].first );
+			approaches.push_back( flApproach * IVP_TO_SOURCE );
+			if ( flApproach <= IMPACT_APPROACH_EPSILON )
+				continue;
+
+			const float flHit = flTime + std::max( pending[i].second, 0.0f ) / approaches.back();
+			if ( flHit < flArrival || ( flHit == flArrival && ( nNext == pending.size() || approaches.back() > approaches[nNext] ) ) )
+			{
+				flArrival = flHit;
+				nNext = i;
+			}
+		}
+		if ( nNext == pending.size() )
+			return;
+
+		for ( size_t i = 0; i < pending.size(); ++i )
+			pending[i].second -= approaches[i] * ( flArrival - flTime );
+		flTime = flArrival;
+
+		CreateFollowingFriction( *pending[nNext].first );
+		++m_Stats.impactCounter;
+		if ( m_pCollisionEvents )
+			ReportImpact( *pending[nNext].first, flTime );
+		pending.erase( pending.begin() + static_cast<ptrdiff_t>( nNext ) );
+	}
+}
+
+void CPhysicsEnvironment::ReportImpact( const ContactEvent_t &event, float flTime )
 {
 	CPhysicsObject *pObject0 = event.m_pObjects[0], *pObject1 = event.m_pObjects[1];
 	const unsigned short nFlags0 = pObject0->GetCallbackFlags(), nFlags1 = pObject1->GetCallbackFlags();
@@ -1724,6 +2565,39 @@ void CPhysicsEnvironment::ReportImpact( const ContactEvent_t &event )
 	m_pCollisionEvents->PreCollision( &m_CollisionEvent );
 	pObject0->SetReportPreStepVelocity( false );
 	pObject1->SetReportPreStepVelocity( false );
+
+	for ( ImpactPoint_t &point : m_ImpactPoints )
+	{
+		if ( point.m_nRun != m_nImpactRun )
+			continue;
+
+		const ImpactBody_t body0( point.m_pObjects[0], m_nStepCount ), body1( point.m_pObjects[1], m_nStepCount );
+		point.m_flGap += b3Dot( point.m_Normal, b3Sub( body1.GetPointVelocity( point.m_Levers[1] ), body0.GetPointVelocity( point.m_Levers[0] ) ) ) * ( flTime - point.m_flTime );
+		point.m_flTime = flTime;
+	}
+	const ImpactPoint_t &impact = m_ImpactPoints.emplace_back( ImpactPoint_t{ { pObject0, pObject1 }, { SourceToIVP( event.m_Anchors[0] ), SourceToIVP( event.m_Anchors[1] ) }, SourceToIVPDirection( ToBox3D( event.m_Normal ) ), GetImpactElasticity( event.m_Materials[0], event.m_Materials[1] ), event.m_flFriction, event.m_nSequence, m_nImpactRun, flTime, COLLISION_TOLERANCE } );
+	m_ImpactBodies.clear();
+	m_ImpactContacts.clear();
+	ImpactSystem_t system{ m_ImpactBodies, m_ImpactContacts, m_ImpactPoints, m_nStepContactSequence, m_pCollisionSolver, m_nStepCount, m_PerformanceSettings.maxCollisionsPerObjectPerTimestep, m_flTimestep, m_flInverseTimestep };
+	const int nBody0 = system.AddBody( pObject0 ), nBody1 = system.AddBody( pObject1 );
+	system.SolveFirst( nBody0, nBody1, impact.m_Levers, impact.m_Normal, impact.m_flElasticity, impact.m_flFriction );
+	for ( int nBody : { nBody0, nBody1 } )
+	{
+		if ( !system.m_Bodies[nBody].m_bFixed && !system.m_Bodies[nBody].m_bPinned )
+			system.Expand( nBody );
+	}
+	system.Propagate();
+
+	for ( const ImpactBody_t &body : system.m_Bodies )
+	{
+		if ( body.m_bFixed )
+			continue;
+
+		body.m_pObject->SetImpactState( m_nStepCount, body.m_nImpacts, body.m_bFrozen );
+		if ( !body.m_pObject->IsReportingImpactVelocity() )
+			m_ImpactObjects.push_back( body.m_pObject );
+		body.m_pObject->SetReportedImpactVelocity( body.m_Velocity, body.m_pObject->IVPToCore( body.m_AngularVelocity ) );
+	}
 
 	m_CollisionEvent.collisionSpeed = event.m_flApproachSpeed;
 	m_pCollisionEvents->PostCollision( &m_CollisionEvent );
@@ -1809,21 +2683,61 @@ int CPhysicsEnvironment::GetPointMaterials( const Contact_t &contact, const b3Ma
 	return nSide;
 }
 
-FrictionContact_t *CPhysicsEnvironment::CreateFrictionContact( Contact_t &contact, const b3Manifold &manifold, const b3ManifoldPoint &point, b3Vec3 worldPoint, bool bBall )
+void CPhysicsEnvironment::SetImpactAnchors( const Contact_t &contact, const b3Manifold &manifold, const b3ManifoldPoint &point, bool bSupport, ContactEvent_t &event )
+{
+	const int nOwner = GetPointVertexOwner( contact, manifold, point );
+	if ( nOwner < 0 || !contact.m_pConvexes[nOwner] || IsBall( contact.m_pObjects[0] ) || IsBall( contact.m_pObjects[1] ) )
+		return;
+
+	const CPhysicsObject *pOwner = contact.m_pObjects[nOwner];
+	const b3Quat rotation = pOwner->GetPreStepRotation();
+	const b3Vec3 localCenter = b3Body_GetLocalCenter( pOwner->GetBody() );
+	const b3Vec3 anchors[2] = { point.anchorA, point.anchorB };
+	const b3Vec3 anchor = b3InvRotateVector( rotation, anchors[nOwner] );
+	const b3Vec3 direction = b3InvRotateVector( rotation, nOwner == 0 ? manifold.normal : b3Neg( manifold.normal ) );
+	b3Vec3 best = b3Vec3_zero;
+	float flBestExtent = -FLT_MAX, flBestDistance = FLT_MAX;
+	for ( b3Vec3 vertex : contact.m_pConvexes[nOwner]->GetPoints() )
+	{
+		const b3Vec3 offset = b3Sub( vertex, localCenter );
+		const float flExtent = bSupport ? b3Dot( offset, direction ) : 0.0f;
+		const float flDistance = b3DistanceSquared( offset, anchor );
+		if ( flExtent > flBestExtent || ( flExtent == flBestExtent && flDistance < flBestDistance ) )
+		{
+			flBestExtent = flExtent;
+			flBestDistance = flDistance;
+			best = offset;
+		}
+	}
+
+	const b3Vec3 lever = b3RotateVector( rotation, best );
+	const b3Vec3 shift = b3Sub( lever, anchors[nOwner] );
+	const int nEventOwner = event.m_pObjects[0] == pOwner ? 0 : 1;
+	event.m_Anchors[nEventOwner] = lever;
+	event.m_Anchors[1 - nEventOwner] = b3Add( anchors[1 - nOwner], shift );
+}
+
+void CPhysicsEnvironment::FillFrictionPoint( Contact_t &contact, const b3Manifold &manifold, const b3ManifoldPoint &point, b3Vec3 worldPoint, bool bBall, FrictionContact_t &friction )
 {
 	const Vector normal = ToSource( manifold.normal );
-	const Vector point0 = ToSource( worldPoint );
+	friction.m_nFeatureId = point.featureId;
+	friction.m_nTriangle = point.triangleIndex;
+	friction.m_nSide = GetPointMaterials( contact, manifold, point, worldPoint, bBall, friction.m_Materials );
+	friction.m_flFriction = MixFriction( GetMaterialFriction( friction.m_Materials[0] ), 0, GetMaterialFriction( friction.m_Materials[1] ), 0 );
+	friction.m_pObjects[0] = contact.m_pObjects[friction.m_nSide];
+	friction.m_pObjects[1] = contact.m_pObjects[1 - friction.m_nSide];
+	friction.m_Point = ToSource( worldPoint );
+	friction.m_Normal = friction.m_nSide == 0 ? normal : -normal;
+	friction.m_flSeparation = point.separation;
+	friction.m_Anchors[friction.m_nSide] = point.anchorA;
+	friction.m_Anchors[1 - friction.m_nSide] = point.anchorB;
+}
+
+FrictionContact_t *CPhysicsEnvironment::CreateFrictionContact( Contact_t &contact, const b3Manifold &manifold, const b3ManifoldPoint &point, b3Vec3 worldPoint, bool bBall )
+{
 	FrictionContact_t &created = *contact.m_Friction.emplace_back( new FrictionContact_t{} );
 	created.m_nSequence = ++m_nContactSequence;
-	created.m_nFeatureId = point.featureId;
-	created.m_nTriangle = point.triangleIndex;
-	created.m_nSide = GetPointMaterials( contact, manifold, point, worldPoint, bBall, created.m_Materials );
-	created.m_flFriction = MixFriction( GetMaterialFriction( created.m_Materials[0] ), 0, GetMaterialFriction( created.m_Materials[1] ), 0 );
-	created.m_pObjects[0] = contact.m_pObjects[created.m_nSide];
-	created.m_pObjects[1] = contact.m_pObjects[1 - created.m_nSide];
-	created.m_Point = point0;
-	created.m_Normal = created.m_nSide == 0 ? normal : -normal;
-	created.m_flSeparation = point.separation;
+	FillFrictionPoint( contact, manifold, point, worldPoint, bBall, created );
 	LinkFriction( &created );
 	AddFrictionPair( GetPairKey( contact.m_pObjects[0], contact.m_pObjects[1] ) );
 
@@ -1919,6 +2833,7 @@ void CPhysicsEnvironment::UpdateFrictionContacts( Contact_t &contact )
 		}
 	}
 	std::erase_if( contact.m_Points, [this]( const ContactPoint_t &tracked ) { return tracked.m_nStep != m_nStepCount; } );
+	const std::vector<ContactImpact_t> arrivals = impacts;
 
 	std::vector<FrictionContact_t *> unbound;
 	for ( FrictionContact_t *pFriction : contact.m_Friction )
@@ -2024,6 +2939,8 @@ void CPhysicsEnvironment::UpdateFrictionContacts( Contact_t &contact )
 		friction.m_Point = ToSource( entry.m_WorldPoint );
 		friction.m_Normal = friction.m_nSide == 0 ? normal : -normal;
 		friction.m_flSeparation = point.separation;
+		friction.m_Anchors[friction.m_nSide] = point.anchorA;
+		friction.m_Anchors[1 - friction.m_nSide] = point.anchorB;
 		if ( friction.m_bRemoved )
 			continue;
 
@@ -2038,8 +2955,23 @@ void CPhysicsEnvironment::UpdateFrictionContacts( Contact_t &contact )
 	for ( const ContactImpact_t &impact : impacts )
 	{
 		const FrictionContact_t *pFriction = points[impact.m_nPoint].m_pFriction;
-		if ( !pFriction->m_bRemoved )
-			QueueContactEvent( ContactEvent_t::IMPACT, contact, *pFriction, impact.m_flSpeed );
+		if ( pFriction->m_bRemoved )
+			continue;
+
+		QueueContactEvent( ContactEvent_t::IMPACT, contact, *pFriction, impact.m_flSpeed );
+		SetImpactAnchors( contact, *points[impact.m_nPoint].m_pManifold, *points[impact.m_nPoint].m_pPoint, true, m_ContactEvents.back() );
+		for ( const ContactImpact_t &arrival : arrivals )
+		{
+			const ManifoldPoint_t &entry = points[arrival.m_nPoint];
+			if ( arrival.m_nPoint == impact.m_nPoint || entry.m_nLedge != points[impact.m_nPoint].m_nLedge )
+				continue;
+
+			FrictionContact_t following{};
+			FillFrictionPoint( contact, *entry.m_pManifold, *entry.m_pPoint, entry.m_WorldPoint, bBall, following );
+			QueueContactEvent( ContactEvent_t::IMPACT, contact, following, arrival.m_flSpeed );
+			SetImpactAnchors( contact, *entry.m_pManifold, *entry.m_pPoint, false, m_ContactEvents.back() );
+			m_ContactEvents.back().m_bFollowing = true;
+		}
 	}
 
 	if ( contact.m_bCompound )
@@ -2229,13 +3161,26 @@ void CPhysicsEnvironment::DispatchContactEvents()
 {
 	std::vector<ContactEvent_t> events;
 	events.swap( m_ContactEvents );
-	for ( const ContactEvent_t &event : events )
+	m_ImpactPoints.clear();
+	for ( size_t i = 0; i < events.size(); ++i )
 	{
+		const ContactEvent_t &event = events[i];
+		if ( event.m_bFollowing )
+		{
+			size_t nEnd = i;
+			while ( nEnd < events.size() && events[nEnd].m_bFollowing )
+				++nEnd;
+			DispatchFollowingImpacts( events[i - 1], &events[i], events.data() + nEnd );
+			i = nEnd - 1;
+			continue;
+		}
+
 		if ( event.m_nType == ContactEvent_t::IMPACT )
 		{
+			++m_nImpactRun;
 			++m_Stats.impactCounter;
 			if ( m_pCollisionEvents )
-				ReportImpact( event );
+				ReportImpact( event, GetImpactArrival( event ) );
 		}
 		else
 		{
@@ -2249,6 +3194,9 @@ void CPhysicsEnvironment::DispatchContactEvents()
 	}
 	events.clear();
 	m_ContactEvents.swap( events );
+	for ( CPhysicsObject *pObject : m_ImpactObjects )
+		pObject->ClearReportedImpactVelocity();
+	m_ImpactObjects.clear();
 }
 
 void CPhysicsEnvironment::ReportTrigger( CPhysicsObject *pTrigger, CPhysicsObject *pObject, bool bEnter )
@@ -2442,7 +3390,8 @@ void CPhysicsEnvironment::ProcessPenetration()
 		if ( !m_pCollisionSolver )
 		{
 			ResolveStaticPenetration( contact );
-			HoldStaticPenetration( contact );
+			HoldPenetration( contact );
+			ResolveObjectPenetration( pObject0, pObject1 );
 			continue;
 		}
 
@@ -2465,13 +3414,14 @@ void CPhysicsEnvironment::ProcessPenetration()
 		if ( bSolve )
 		{
 			ResolveStaticPenetration( it->second );
-			HoldStaticPenetration( it->second );
+			HoldPenetration( it->second );
+			ResolveObjectPenetration( it->second.m_pObjects[0], it->second.m_pObjects[1] );
 			continue;
 		}
 
-		if ( it->second.m_pMeshes[0] || it->second.m_pMeshes[1] )
+		if ( it->second.m_pObjects[0]->IsStatic() || it->second.m_pObjects[1]->IsStatic() )
 		{
-			HoldStaticPenetration( it->second );
+			HoldPenetration( it->second );
 			continue;
 		}
 
@@ -2514,7 +3464,7 @@ bool CPhysicsEnvironment::IsShapePairHeld( b3ShapeId shape0, b3ShapeId shape1 ) 
 
 void CPhysicsEnvironment::DetectPendingPenetrationHolds()
 {
-	std::vector<b3ShapeId> shapes, meshShapes;
+	std::vector<b3ShapeId> shapes, partnerShapes;
 	for ( CPhysicsObject *pObject : m_PendingHoldChecks )
 	{
 		if ( !pObject->IsMoveable() || !pObject->IsCollisionEnabled() )
@@ -2528,55 +3478,59 @@ void CPhysicsEnvironment::DetectPendingPenetrationHolds()
 			if ( b3Shape_IsSensor( shape ) )
 				continue;
 
-			meshShapes.clear();
+			partnerShapes.clear();
+			const b3Filter shapeFilter = b3Shape_GetFilter( shape );
 			b3QueryFilter filter = b3DefaultQueryFilter();
-			filter.maskBits = STATIC_SHAPE_BIT;
+			filter.categoryBits = shapeFilter.categoryBits;
+			filter.maskBits = shapeFilter.maskBits;
 			b3World_OverlapAABB(
 				m_World, b3Shape_GetAABB( shape ), filter,
 				[]( b3ShapeId candidate, void *pContext ) {
-					if ( b3Shape_GetType( candidate ) == b3_meshShape )
+					if ( !b3Shape_IsSensor( candidate ) && ( b3Shape_GetType( candidate ) == b3_meshShape || b3Shape_GetType( candidate ) == b3_hullShape ) )
 						static_cast<std::vector<b3ShapeId> *>( pContext )->push_back( candidate );
 					return true;
 				},
-				&meshShapes );
-			for ( b3ShapeId meshShape : meshShapes )
-				TryHoldPenetration( shape, meshShape );
+				&partnerShapes );
+			for ( b3ShapeId partnerShape : partnerShapes )
+			{
+				if ( GetShapeObject( partnerShape ) != pObject )
+					TryHoldPenetration( shape, partnerShape );
+			}
 		}
 	}
 	m_PendingHoldChecks.clear();
 }
 
-bool CPhysicsEnvironment::HasShapeFriction( const CPhysicsObject *pObject, b3ShapeId shape, b3ShapeId meshShape ) const
+bool CPhysicsEnvironment::HasShapeFriction( const CPhysicsObject *pObject, b3ShapeId shape, b3ShapeId partnerShape ) const
 {
 	for ( uint64_t nKey : pObject->GetContactKeys() )
 	{
 		const Contact_t &contact = m_Contacts.find( nKey )->second;
-		const bool bPair = ( IsSameShape( contact.m_Shapes[0], shape ) && IsSameShape( contact.m_Shapes[1], meshShape ) ) || ( IsSameShape( contact.m_Shapes[0], meshShape ) && IsSameShape( contact.m_Shapes[1], shape ) );
+		const bool bPair = ( IsSameShape( contact.m_Shapes[0], shape ) && IsSameShape( contact.m_Shapes[1], partnerShape ) ) || ( IsSameShape( contact.m_Shapes[0], partnerShape ) && IsSameShape( contact.m_Shapes[1], shape ) );
 		if ( bPair && !contact.m_Friction.empty() )
 			return true;
 	}
 	return false;
 }
 
-void CPhysicsEnvironment::TryHoldPenetration( b3ShapeId shape, b3ShapeId meshShape )
+void CPhysicsEnvironment::TryHoldPenetration( b3ShapeId shape, b3ShapeId partnerShape )
 {
-	const uint64_t nKey = GetShapePairKey( shape, meshShape );
+	const uint64_t nKey = GetShapePairKey( shape, partnerShape );
 	if ( m_HeldShapePairs.contains( nKey ) || m_ProxyResetContacts.contains( nKey ) )
 		return;
 
 	CPhysicsObject *pObject = GetShapeObject( shape );
-	CPhysicsObject *pStatic = GetShapeObject( meshShape );
-	if ( !IsContactEnabled( pObject, pStatic ) || HasShapeFriction( pObject, shape, meshShape ) )
+	CPhysicsObject *pPartner = GetShapeObject( partnerShape );
+	if ( !IsContactEnabled( pObject, pPartner ) || HasShapeFriction( pObject, shape, partnerShape ) )
 		return;
 
-	bool bCollide = true;
-	if ( pObject->FindFilterDecision( pStatic, bCollide ) && !bCollide )
+	if ( !ShouldCollide( pObject, pPartner ) || !IsShapePairReachable( shape, partnerShape, m_flTimestep ) )
 		return;
 
-	if ( !FindHeldLedges( shape, meshShape, m_HeldLedges ) )
+	if ( !FindHeldLedges( shape, partnerShape, m_HeldLedges ) )
 		return;
 
-	m_PenetrationHolds.push_back( { pObject, shape, meshShape } );
+	m_PenetrationHolds.push_back( { pObject, shape, partnerShape } );
 	m_HeldShapePairs.insert( nKey );
 	QueuePenetrationReset( pObject );
 }
@@ -2606,12 +3560,23 @@ static float GetProxyDistance( const b3ShapeProxy &proxyA, b3WorldTransform tran
 	return b3ShapeDistance( &input, &cache, nullptr, 0 ).distance;
 }
 
-bool CPhysicsEnvironment::FindHeldLedges( b3ShapeId shape, b3ShapeId meshShape, std::vector<int> &ledges )
+static float GetHullSeparation( const b3HullData *pHullA, b3WorldTransform transformA, const b3HullData *pHullB, b3WorldTransform transformB )
+{
+	b3LocalManifoldPoint points[B3_MAX_MANIFOLD_POINTS];
+	b3LocalManifold manifold = {};
+	manifold.points = points;
+	b3SATCache cache = {};
+	b3CollideHulls( &manifold, B3_MAX_MANIFOLD_POINTS, pHullA, pHullB, b3InvMulWorldTransforms( transformA, transformB ), &cache );
+	float flSeparation = FLT_MAX;
+	for ( int i = 0; i < manifold.pointCount; ++i )
+		flSeparation = std::min( flSeparation, points[i].separation );
+	return flSeparation;
+}
+
+bool CPhysicsEnvironment::FindHeldLedges( b3ShapeId shape, b3ShapeId partnerShape, std::vector<const CPhysConvex *> &ledges )
 {
 	ledges.clear();
-	const CPhysicsObject *pStatic = GetShapeObject( meshShape );
-	const CollideMesh_t &mesh = *static_cast<const CollideMesh_t *>( b3Shape_GetUserData( meshShape ) );
-	const std::vector<std::unique_ptr<CPhysConvex>> &convexes = pStatic->GetCollide()->GetConvexes();
+	const CPhysicsObject *pPartner = GetShapeObject( partnerShape );
 
 	b3Sphere sphere = {};
 	b3ShapeProxy grown = {}, exact = {};
@@ -2619,7 +3584,7 @@ bool CPhysicsEnvironment::FindHeldLedges( b3ShapeId shape, b3ShapeId meshShape, 
 	{
 		sphere = b3Shape_GetSphere( shape );
 		grown = { &sphere.center, 1, sphere.radius };
-		exact = { &sphere.center, 1, sphere.radius - SHAPE_INFLATION };
+		exact = { &sphere.center, 1, 0.0f };
 	}
 	else
 	{
@@ -2630,8 +3595,19 @@ bool CPhysicsEnvironment::FindHeldLedges( b3ShapeId shape, b3ShapeId meshShape, 
 	}
 
 	const b3WorldTransform transform = b3Body_GetTransform( GetShapeObject( shape )->GetBody() );
-	const b3WorldTransform staticTransform = b3Body_GetTransform( pStatic->GetBody() );
-	const b3Transform relative = b3InvMulWorldTransforms( staticTransform, transform );
+	const b3WorldTransform partnerTransform = b3Body_GetTransform( pPartner->GetBody() );
+	if ( b3Shape_GetType( partnerShape ) != b3_meshShape )
+	{
+		const CPhysConvex *pLedge = static_cast<const CPhysConvex *>( b3Shape_GetUserData( partnerShape ) );
+		const std::vector<b3Vec3> &points = pLedge->GetPoints();
+		if ( b3Shape_GetType( shape ) == b3_hullShape ? GetHullSeparation( b3Shape_GetHull( partnerShape ), partnerTransform, b3Shape_GetHull( shape ), transform ) < PENETRATION_SEPARATION : GetProxyDistance( exact, transform, { points.data(), static_cast<int>( points.size() ), 0.0f }, partnerTransform ) <= 0.0f )
+			ledges.push_back( pLedge );
+		return !ledges.empty();
+	}
+
+	const CollideMesh_t &mesh = *static_cast<const CollideMesh_t *>( b3Shape_GetUserData( partnerShape ) );
+	const std::vector<std::unique_ptr<CPhysConvex>> &convexes = pPartner->GetCollide()->GetConvexes();
+	const b3Transform relative = b3InvMulWorldTransforms( partnerTransform, transform );
 	b3AABB bounds = { b3TransformPoint( relative, grown.points[0] ), b3TransformPoint( relative, grown.points[0] ) };
 	for ( int i = 1; i < grown.count; ++i )
 	{
@@ -2660,7 +3636,7 @@ bool CPhysicsEnvironment::FindHeldLedges( b3ShapeId shape, b3ShapeId meshShape, 
 	{
 		const b3MeshTriangle &triangle = pTriangles[nTriangle];
 		const b3Vec3 corners[3] = { pVertices[triangle.index1], pVertices[triangle.index2], pVertices[triangle.index3] };
-		if ( GetProxyDistance( grown, transform, { corners, 3, 0.0f }, staticTransform ) >= B3_SPECULATIVE_DISTANCE )
+		if ( GetProxyDistance( grown, transform, { corners, 3, 0.0f }, partnerTransform ) >= B3_SPECULATIVE_DISTANCE )
 			continue;
 
 		const int nLedge = mesh.m_Sources[nTriangle].m_nConvex;
@@ -2668,9 +3644,9 @@ bool CPhysicsEnvironment::FindHeldLedges( b3ShapeId shape, b3ShapeId meshShape, 
 		if ( state == m_LedgeStates.end() )
 		{
 			const std::vector<b3Vec3> &points = convexes[nLedge]->GetPoints();
-			state = m_LedgeStates.insert( m_LedgeStates.end(), { nLedge, GetProxyDistance( exact, transform, { points.data(), static_cast<int>( points.size() ), 0.0f }, staticTransform ) <= 0.0f } );
+			state = m_LedgeStates.insert( m_LedgeStates.end(), { nLedge, GetProxyDistance( exact, transform, { points.data(), static_cast<int>( points.size() ), 0.0f }, partnerTransform ) <= 0.0f } );
 			if ( state->second )
-				ledges.push_back( nLedge );
+				ledges.push_back( convexes[nLedge].get() );
 		}
 
 		if ( !state->second )
@@ -2698,19 +3674,8 @@ float CPhysicsEnvironment::GetMeshFrictionGap( const Contact_t &contact, const F
 	if ( nMesh < 0 || !b3Shape_IsValid( contact.m_Shapes[0] ) || !b3Shape_IsValid( contact.m_Shapes[1] ) )
 		return FRICTION_RELEASE_SEPARATION;
 
-	const b3ShapeId shape = contact.m_Shapes[1 - nMesh];
-	b3Sphere sphere = {};
-	b3ShapeProxy proxy = {};
-	if ( b3Shape_GetType( shape ) == b3_sphereShape )
-	{
-		sphere = b3Shape_GetSphere( shape );
-		proxy = { &sphere.center, 1, sphere.radius };
-	}
-	else
-	{
-		const b3HullData *pHull = b3Shape_GetHull( shape );
-		proxy = { b3GetHullPoints( pHull ), pHull->vertexCount, 0.0f };
-	}
+	b3Sphere sphere;
+	const b3ShapeProxy proxy = MakeShapeProxy( contact.m_Shapes[1 - nMesh], sphere );
 
 	const b3MeshData *pData = contact.m_pMeshes[nMesh]->m_pData;
 	const b3MeshTriangle &triangle = b3GetMeshTriangles( pData )[friction.m_nTriangle];
@@ -2742,7 +3707,7 @@ bool CPhysicsEnvironment::UpdateDetachedContact( Contact_t &contact )
 	return !contact.m_Friction.empty();
 }
 
-void CPhysicsEnvironment::ResolveHeldLedges( CPhysicsObject *pObject, CPhysicsObject *pStatic, const std::vector<int> &ledges )
+void CPhysicsEnvironment::ResolveHeldLedges( CPhysicsObject *pObject, CPhysicsObject *pStatic, const std::vector<const CPhysConvex *> &ledges )
 {
 	if ( pObject->GetSleepState() != CPhysicsObject::AWAKE )
 		return;
@@ -2755,9 +3720,8 @@ void CPhysicsEnvironment::ResolveHeldLedges( CPhysicsObject *pObject, CPhysicsOb
 			return;
 	}
 
-	const std::vector<std::unique_ptr<CPhysConvex>> &convexes = pStatic->GetCollide()->GetConvexes();
-	for ( int nLedge : ledges )
-		ResolveLedgePenetration( *convexes[nLedge], pStatic, pObject );
+	for ( const CPhysConvex *pLedge : ledges )
+		ResolveLedgePenetration( *pLedge, pStatic, pObject );
 }
 
 void CPhysicsEnvironment::UpdatePenetrationHolds()
@@ -2765,17 +3729,20 @@ void CPhysicsEnvironment::UpdatePenetrationHolds()
 	for ( size_t i = 0; i < m_PenetrationHolds.size(); )
 	{
 		const PenetrationHold_t hold = m_PenetrationHolds[i];
-		bool bHeld = b3Shape_IsValid( hold.m_Shape ) && b3Shape_IsValid( hold.m_MeshShape ) && hold.m_pObject->IsMoveable() && hold.m_pObject->IsCollisionEnabled();
-		CPhysicsObject *pStatic = bHeld ? GetShapeObject( hold.m_MeshShape ) : nullptr;
-		bHeld = bHeld && pStatic->IsCollisionEnabled() && IsContactEnabled( hold.m_pObject, pStatic ) && FindHeldLedges( hold.m_Shape, hold.m_MeshShape, m_HeldLedges );
+		bool bHeld = b3Shape_IsValid( hold.m_Shape ) && b3Shape_IsValid( hold.m_PartnerShape ) && hold.m_pObject->IsMoveable() && hold.m_pObject->IsCollisionEnabled();
+		CPhysicsObject *pPartner = bHeld ? GetShapeObject( hold.m_PartnerShape ) : nullptr;
+		bHeld = bHeld && pPartner->IsCollisionEnabled() && IsContactEnabled( hold.m_pObject, pPartner ) && IsShapePairReachable( hold.m_Shape, hold.m_PartnerShape, m_flTimestep ) && FindHeldLedges( hold.m_Shape, hold.m_PartnerShape, m_HeldLedges );
 		if ( bHeld )
 		{
-			ResolveHeldLedges( hold.m_pObject, pStatic, m_HeldLedges );
+			if ( pPartner->IsStatic() )
+				ResolveHeldLedges( hold.m_pObject, pPartner, m_HeldLedges );
+			else
+				ResolveHeldObjects( hold.m_pObject, pPartner );
 			++i;
 			continue;
 		}
 
-		m_HeldShapePairs.erase( GetShapePairKey( hold.m_Shape, hold.m_MeshShape ) );
+		m_HeldShapePairs.erase( GetShapePairKey( hold.m_Shape, hold.m_PartnerShape ) );
 		m_PenetrationHolds.erase( m_PenetrationHolds.begin() + static_cast<ptrdiff_t>( i ) );
 		if ( b3Shape_IsValid( hold.m_Shape ) && hold.m_pObject->IsCollisionEnabled() )
 			QueuePenetrationReset( hold.m_pObject );
@@ -2819,14 +3786,72 @@ void CPhysicsEnvironment::ResolveStaticPenetration( const Contact_t &contact )
 		ResolveLedgePenetration( *contact.m_pConvexes[nStatic], pStatic, pObject );
 }
 
-void CPhysicsEnvironment::HoldStaticPenetration( const Contact_t &contact )
+void CPhysicsEnvironment::ResolveObjectPenetration( CPhysicsObject *pObject0, CPhysicsObject *pObject1 )
+{
+	if ( pObject0->IsStatic() || pObject1->IsStatic() )
+		return;
+
+	CPhysicsObject *pObjects[2] = { pObject0, pObject1 };
+	b3Vec3 centers[2];
+	float flMass = FLT_MAX;
+	for ( int i = 0; i < 2; ++i )
+	{
+		centers[i] = SourceToIVP( b3ToVec3( b3Body_GetWorldCenter( pObjects[i]->GetBody() ) ) );
+		if ( pObjects[i]->IsMoveable() )
+			flMass = std::min( flMass, pObjects[i]->GetMass() );
+	}
+	if ( flMass == FLT_MAX )
+		return;
+
+	float flLength = 0.0f;
+	b3Vec3 direction = b3GetLengthAndNormalize( &flLength, b3Sub( centers[1], centers[0] ) );
+	if ( flLength <= PENETRATION_MIN_DISTANCE )
+		direction = { 1.0f, 0.0f, 0.0f };
+
+	const float flImpulse = flMass * PENETRATION_SPEED_SCALE * GetGravityVector().Length() * m_flTimestep * SOURCE_TO_IVP;
+	for ( int i = 0; i < 2; ++i )
+	{
+		CPhysicsObject *pObject = pObjects[i];
+		if ( !pObject->IsMoveable() || pObject->GetSleepState() != CPhysicsObject::AWAKE )
+			continue;
+
+		pObject->SetPendingVelocity( b3MulAdd( pObject->GetPendingVelocity(), ( i == 0 ? -flImpulse : flImpulse ) * pObject->GetInvMass(), direction ) );
+		pObject->AddPendingAngularVelocity( { i == 0 ? -m_flTimestep : m_flTimestep, 0.0f, 0.0f } );
+	}
+}
+
+void CPhysicsEnvironment::ResolveHeldObjects( CPhysicsObject *pObject0, CPhysicsObject *pObject1 )
+{
+	if ( pObject0->GetSleepState() != CPhysicsObject::AWAKE && pObject1->GetSleepState() != CPhysicsObject::AWAKE )
+		return;
+
+	if ( pObject0->IsMoveable() && pObject1->IsMoveable() )
+	{
+		const uint64_t nPairKey = GetPairKey( pObject0, pObject1 );
+		if ( std::find( m_PenetrationPairs.begin(), m_PenetrationPairs.end(), nPairKey ) != m_PenetrationPairs.end() )
+			return;
+		m_PenetrationPairs.push_back( nPairKey );
+	}
+
+	if ( m_pCollisionSolver )
+	{
+		if ( ( pObject0->GetCallbackFlags() | pObject1->GetCallbackFlags() ) & CALLBACK_MARKED_FOR_DELETE )
+			return;
+		if ( !m_pCollisionSolver->ShouldSolvePenetration( pObject0, pObject1, pObject0->GetGameData(), pObject1->GetGameData(), m_flTimestep ) )
+			return;
+	}
+
+	ResolveObjectPenetration( pObject0, pObject1 );
+}
+
+void CPhysicsEnvironment::HoldPenetration( const Contact_t &contact )
 {
 	if ( !contact.m_Friction.empty() )
 		return;
 
 	for ( int i = 0; i < 2; ++i )
 	{
-		if ( contact.m_pMeshes[i] && contact.m_pObjects[i]->IsStatic() && contact.m_pObjects[1 - i]->IsMoveable() )
+		if ( ( contact.m_pMeshes[i] || contact.m_pConvexes[i] ) && contact.m_pObjects[1 - i]->IsMoveable() )
 			TryHoldPenetration( contact.m_Shapes[1 - i], contact.m_Shapes[i] );
 	}
 }
