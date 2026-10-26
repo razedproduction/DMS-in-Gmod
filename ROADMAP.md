@@ -9,7 +9,7 @@ Delirium (active ragdoll, NM-style) нативно в Garry's Mod в режим�
 | Компонент | Где | Что даёт | Правило |
 |---|---|---|---|
 | Delirium SDK **v0.2.2** (`91ee246`) | `../delirium-physics (CLAUDE DONT CHANGE ANYTHING HERE)/crates/delirium-sdk` | C API `delirium_physics.h` (`nm_*`), Rust-крейт `delirium_physics` (`rlib` + `cdylib`) | **только чтение**, подключается path-зависимостью |
-| VPhysics-Box3D (форк) | `../VPhysics-Box3D` | `vphysics.dll` + `IPhysicsNM` (`VBOX3D_NM_003`, `include/vphysics_nm.h`) | NM-расширение пока **не закоммичено** |
+| VPhysics-Box3D (форк) | `vphysics/` (git subtree, ADR 0015) | `vphysics.dll` + `IPhysicsNM` (`VBOX3D_NM_003`, `vphysics/include/vphysics_nm.h`) | менять только ради совпадения с Playroom (ADR 0008), upstream — `git subtree pull` ([docs/vphysics.md](docs/vphysics.md)) |
 | Прошлая попытка | `../delirium-physics (gmod addon & api)` | заметки и грабли (README) | только как справочник, код не переносим |
 
 Ключевые факты из API, на которых строится план:
@@ -66,8 +66,9 @@ DMS in Gmod/
   golden/            scenarios/*.txt (сценарии); out/ — эталоны Playroom, локально, не в git
   addon/lua/         autorun/server/dms_init.lua, dms/*.lua, autorun/client/dms_debug.lua
   maps/ (опц.)       тестовая карта: пол, лестница, уступ, стена
-  docs/              adr/, data-setup.md, api.md
-  scripts/           build.ps1, install.ps1 (копирование dll/аддона в GMod)
+  vphysics/          форк VPhysics-Box3D (git subtree, ADR 0015): vphysics.dll + IPhysicsNM
+  docs/              adr/, data-setup.md, vphysics.md, api.md
+  scripts/           build.ps1, build-vphysics.ps1, install.ps1 (копирование dll/аддона/форка в GMod)
 ```
 
 ---
@@ -80,8 +81,10 @@ DMS in Gmod/
 
 - [ ] `git init`, `.gitignore`, LICENSE (GPL-3.0), этот roadmap.
 - [ ] ADR 1–6 (выше) записаны.
-- [ ] В форке VPhysics-Box3D закоммитить NM-расширение (сейчас `physics_nm.*`, `include/`, `cmake/patches/` не
-      в git) отдельной веткой, собрать `windows-x64` (поддерживается только x86-64 ветка GMod).
+- [x] В форке VPhysics-Box3D закоммитить NM-расширение (сейчас `physics_nm.*`, `include/`, `cmake/patches/` не
+      в git) отдельной веткой, собрать `windows-x64` (поддерживается только x86-64 ветка GMod). Закоммичено в
+      razedproduction/VPhysics-Box3D (PR #1, #2), затем форк перенесён в `vphysics/` этого репозитория
+      (`git subtree`, ADR 0015), сборка — `scripts\build-vphysics.ps1`, установка — `install.ps1 -Fork`.
 - [ ] Скопировать `vphysics_nm.h` в `module/` как эталон для FFI (файл неизменяемый, версия `VBOX3D_NM_002`).
 - [ ] `scripts/build.ps1` (cargo для `x86_64-pc-windows-msvc`, переименование в `gmsv_dms_win64.dll`),
       `scripts/install.ps1` (dll → `garrysmod/lua/bin`, аддон →

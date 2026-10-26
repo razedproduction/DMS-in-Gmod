@@ -19,3 +19,4 @@
 | [0012](0012-bench-game-and-dms-ctl.md) | Стенд: игра без окна и канал `dms-ctl` в модуле (выделенный сервер несовместим с форком) | принято |
 | [0013](0013-homer-model-dms-homer.md) | Модель Homer: `dms-homer` строит ragdoll из тела NM, bind при спавне (уточняет 0004) | принято |
 | [0014](0014-fork-nm-003-inertia-ball.md) | Форк `VBOX3D_NM_003`: полный тензор инерции и шар с семантикой NM (уточняет 0013) | принято |
+| [0015](0015-fork-in-repo-subtree.md) | Форк VPhysics-Box3D — папка `vphysics/` в этом репозитории через git subtree | принято |
