@@ -1,0 +1,234 @@
+diff --git a/include/box3d/box3d.h b/include/box3d/box3d.h
+index 54d0baf..9f26e88 100644
+--- a/include/box3d/box3d.h
++++ b/include/box3d/box3d.h
+@@ -1166,6 +1166,15 @@ B3_API void b3Joint_SetTorqueThreshold( b3JointId jointId, float threshold );
+ /// Get the torque threshold for joint events (N-m)
+ B3_API float b3Joint_GetTorqueThreshold( b3JointId jointId );
+ 
++/// Set the joint armature (kg * length^2). This is rotational inertia added to the relative rotation
++/// of the two bodies on every axis, like MuJoCo's joint armature. It resists any change of the relative
++/// angular velocity within a sub-step, from applied torques as well as from contacts and other joints.
++/// Zero (the default) disables it. Works on every joint type.
++B3_API void b3Joint_SetArmature( b3JointId jointId, float armature );
++
++/// Get the joint armature (kg * length^2)
++B3_API float b3Joint_GetArmature( b3JointId jointId );
++
+ /**
+  * @defgroup parallel_joint Parallel Joint
+  * @brief Functions for the parallel joint.
+diff --git a/src/joint.c b/src/joint.c
+index 068a29d..1b65120 100644
+--- a/src/joint.c
++++ b/src/joint.c
+@@ -443,6 +443,28 @@ float b3Joint_GetTorqueThreshold( b3JointId jointId )
+ 	return base->torqueThreshold;
+ }
+ 
++void b3Joint_SetArmature( b3JointId jointId, float armature )
++{
++	B3_ASSERT( b3IsValidFloat( armature ) && armature >= 0.0f );
++
++	b3World* world = b3GetWorld( jointId.world0 );
++	b3Joint* joint = b3GetJointFullId( world, jointId );
++	b3JointSim* base = b3GetJointSim( world, joint );
++	if ( armature <= 0.0f )
++	{
++		base->armatureImpulse = b3Vec3_zero;
++	}
++	base->armature = b3MaxFloat( armature, 0.0f );
++}
++
++float b3Joint_GetArmature( b3JointId jointId )
++{
++	b3World* world = b3GetWorld( jointId.world0 );
++	b3Joint* joint = b3GetJointFullId( world, jointId );
++	b3JointSim* base = b3GetJointSim( world, joint );
++	return base->armature;
++}
++
+ b3JointId b3CreateDistanceJoint( b3WorldId worldId, const b3DistanceJointDef* def )
+ {
+ 	B3_CHECK_JOINT_DEF( def );
+@@ -1479,6 +1501,121 @@ void b3Joint_SetSpringRotationTarget( b3JointId jointId, b3Quat relativeBodyRota
+ }
+ #endif
+ 
++// Joint armature
++// The armature adds kinetic energy 0.5 * a * |wB - wA|^2 to the joint. Within a sub-step it acts as a soft
++// constraint holding the relative angular velocity at its value from the start of the sub-step:
++// Cdot = wB - wA
++// J = [0 -I 0 I]
++// P = -a * (Cdot - Cdot0)  =>  (K + I / a) * P = -(Cdot - Cdot0), K = invIA + invIB
++// Cdot0 is taken when the step starts and after each relax pass, so applied torques (integrated before the
++// solve) are resisted along with the other constraints.
++static void b3PrepareJointArmature( b3JointSim* base, b3StepContext* context )
++{
++	if ( base->armature <= 0.0f )
++	{
++		base->armatureImpulse = b3Vec3_zero;
++		return;
++	}
++
++	b3World* world = context->world;
++
++	b3Body* bodyA = b3Array_Get( world->bodies, base->bodyIdA );
++	b3Body* bodyB = b3Array_Get( world->bodies, base->bodyIdB );
++
++	b3SolverSet* setA = b3Array_Get( world->solverSets, bodyA->setIndex );
++	b3SolverSet* setB = b3Array_Get( world->solverSets, bodyB->setIndex );
++
++	b3BodySim* bodySimA = b3Array_Get( setA->bodySims, bodyA->localIndex );
++	b3BodySim* bodySimB = b3Array_Get( setB->bodySims, bodyB->localIndex );
++
++	// the filter joint does not set these
++	base->invIA = bodySimA->invInertiaWorld;
++	base->invIB = bodySimB->invInertiaWorld;
++
++	base->armatureIndexA = bodyA->setIndex == b3_awakeSet ? bodyA->localIndex : B3_NULL_INDEX;
++	base->armatureIndexB = bodyB->setIndex == b3_awakeSet ? bodyB->localIndex : B3_NULL_INDEX;
++
++	float compliance = 1.0f / base->armature;
++	b3Matrix3 k = b3AddMM( base->invIA, base->invIB );
++	k.cx.x += compliance;
++	k.cy.y += compliance;
++	k.cz.z += compliance;
++	base->armatureMass = b3InvertMatrix( k );
++
++	b3Vec3 wA = base->armatureIndexA == B3_NULL_INDEX ? b3Vec3_zero : context->states[base->armatureIndexA].angularVelocity;
++	b3Vec3 wB = base->armatureIndexB == B3_NULL_INDEX ? b3Vec3_zero : context->states[base->armatureIndexB].angularVelocity;
++	base->armatureVelocity = b3Sub( wB, wA );
++
++	if ( context->enableWarmStarting == false )
++	{
++		base->armatureImpulse = b3Vec3_zero;
++	}
++}
++
++static void b3WarmStartJointArmature( b3JointSim* base, b3StepContext* context )
++{
++	if ( base->armature <= 0.0f )
++	{
++		return;
++	}
++
++	b3BodyState dummyState = b3_identityBodyState;
++	b3BodyState* stateA = base->armatureIndexA == B3_NULL_INDEX ? &dummyState : context->states + base->armatureIndexA;
++	b3BodyState* stateB = base->armatureIndexB == B3_NULL_INDEX ? &dummyState : context->states + base->armatureIndexB;
++
++	if ( stateA->flags & b3_dynamicFlag )
++	{
++		stateA->angularVelocity = b3Sub( stateA->angularVelocity, b3MulMV( base->invIA, base->armatureImpulse ) );
++	}
++
++	if ( stateB->flags & b3_dynamicFlag )
++	{
++		stateB->angularVelocity = b3Add( stateB->angularVelocity, b3MulMV( base->invIB, base->armatureImpulse ) );
++	}
++}
++
++static void b3SolveJointArmature( b3JointSim* base, b3StepContext* context )
++{
++	if ( base->armature <= 0.0f )
++	{
++		return;
++	}
++
++	b3BodyState dummyState = b3_identityBodyState;
++	b3BodyState* stateA = base->armatureIndexA == B3_NULL_INDEX ? &dummyState : context->states + base->armatureIndexA;
++	b3BodyState* stateB = base->armatureIndexB == B3_NULL_INDEX ? &dummyState : context->states + base->armatureIndexB;
++
++	b3Vec3 wA = stateA->angularVelocity;
++	b3Vec3 wB = stateB->angularVelocity;
++
++	b3Vec3 cdot = b3Sub( b3Sub( wB, wA ), base->armatureVelocity );
++	cdot = b3MulAdd( cdot, 1.0f / base->armature, base->armatureImpulse );
++	b3Vec3 impulse = b3Neg( b3MulMV( base->armatureMass, cdot ) );
++	base->armatureImpulse = b3Add( base->armatureImpulse, impulse );
++
++	if ( stateA->flags & b3_dynamicFlag )
++	{
++		stateA->angularVelocity = b3Sub( wA, b3MulMV( base->invIA, impulse ) );
++	}
++
++	if ( stateB->flags & b3_dynamicFlag )
++	{
++		stateB->angularVelocity = b3Add( wB, b3MulMV( base->invIB, impulse ) );
++	}
++}
++
++static void b3StoreJointArmatureVelocity( b3JointSim* base, b3StepContext* context )
++{
++	if ( base->armature <= 0.0f )
++	{
++		return;
++	}
++
++	b3Vec3 wA = base->armatureIndexA == B3_NULL_INDEX ? b3Vec3_zero : context->states[base->armatureIndexA].angularVelocity;
++	b3Vec3 wB = base->armatureIndexB == B3_NULL_INDEX ? b3Vec3_zero : context->states[base->armatureIndexB].angularVelocity;
++	base->armatureVelocity = b3Sub( wB, wA );
++}
++
+ void b3PrepareJoint( b3JointSim* joint, b3StepContext* context )
+ {
+ 	// Clamp joint hertz based on the time step to reduce jitter.
+@@ -1525,6 +1662,8 @@ void b3PrepareJoint( b3JointSim* joint, b3StepContext* context )
+ 		default:
+ 			B3_ASSERT( false );
+ 	}
++
++	b3PrepareJointArmature( joint, context );
+ }
+ 
+ void b3WarmStartJoint( b3JointSim* joint, b3StepContext* context )
+@@ -1569,12 +1708,17 @@ void b3WarmStartJoint( b3JointSim* joint, b3StepContext* context )
+ 		default:
+ 			B3_ASSERT( false );
+ 	}
++
++	b3WarmStartJointArmature( joint, context );
+ }
+ 
+ void b3SolveJoint( b3JointSim* joint, b3StepContext* context, bool useBias )
+ {
+ 	B3_UNUSED( useBias );
+ 
++	// armature first so the limits have the last word
++	b3SolveJointArmature( joint, context );
++
+ 	switch ( joint->type )
+ 	{
+ 		case b3_parallelJoint:
+@@ -1615,6 +1759,12 @@ void b3SolveJoint( b3JointSim* joint, b3StepContext* context, bool useBias )
+ 		default:
+ 			B3_ASSERT( false );
+ 	}
++
++	if ( useBias == false )
++	{
++		// the relax pass ends the sub-step, its velocity is where the next sub-step starts
++		b3StoreJointArmatureVelocity( joint, context );
++	}
+ }
+ 
+ void b3PrepareJoints_Overflow( b3StepContext* context )
+diff --git a/src/joint.h b/src/joint.h
+index 9a8c347..655a4a3 100644
+--- a/src/joint.h
++++ b/src/joint.h
+@@ -330,6 +330,14 @@ typedef struct b3JointSim
+ 	float forceThreshold;
+ 	float torqueThreshold;
+ 
++	// Armature: inertia added to the relative rotation of the two bodies (MuJoCo style joint armature)
++	float armature;
++	int armatureIndexA;
++	int armatureIndexB;
++	b3Vec3 armatureImpulse;
++	b3Vec3 armatureVelocity;
++	b3Matrix3 armatureMass;
++
+ 	bool fixedRotation;
+ 
+ 	union
