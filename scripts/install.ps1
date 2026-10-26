@@ -4,12 +4,15 @@
 #
 #   .\scripts\install.ps1                          GMod from Steam's default library
 #   .\scripts\install.ps1 -GarrysMod "D:\...\GarrysMod"
+#   .\scripts\install.ps1 -Fork [-Vphysics <dll>]  also the VPhysics-Box3D fork -> bin\win64\vphysics.dll, from
+#                                                  vphysics\build (scripts\build-vphysics.ps1) or -Vphysics; Steam's
+#                                                  own is kept once as vphysics.dll.original
 #   .\scripts\install.ps1 -Server "E:\Games\GModServer\server" [-Fork [-Vphysics <dll>]]
 #                                                  the bench's dedicated server (ROADMAP M2.5). It keeps its own
 #                                                  vphysics.dll: the fork doesn't run there yet (the server's x86-64
 #                                                  build has a newer IAppSystem and vphysics interfaces, docs\bench.md).
 #                                                  -Fork puts the fork in bin\win64 anyway (the server's own kept as
-#                                                  vphysics.dll.original), from the game's bin\win64 or -Vphysics
+#                                                  vphysics.dll.original)
 
 param(
 	[string]$GarrysMod,
@@ -50,29 +53,24 @@ if (Test-Path $addon) { Remove-Item $addon -Recurse -Force -Confirm:$false }
 Copy-Item (Join-Path $root 'addon') $addon -Recurse
 Write-Host "-> $addon"
 
+$win64 = Join-Path $target 'bin\win64'
+$original = Join-Path $win64 'vphysics.dll.original'
+
 if ($Server -and -not $Fork) {
-	$win64 = Join-Path $Server 'bin\win64'
-	$original = Join-Path $win64 'vphysics.dll.original'
 	if (Test-Path $original) {
 		Copy-Item $original (Join-Path $win64 'vphysics.dll') -Force
 		Write-Host "-> $win64\vphysics.dll (the server's own, back from vphysics.dll.original)"
 	}
 }
 
-if ($Server -and $Fork) {
-	# The fork as the game has it: its bin\win64 keeps Steam's original beside it as vphysics.dll.original.
+if ($Fork) {
 	if (-not $Vphysics) {
-		$steam = (Get-ItemProperty 'HKCU:\Software\Valve\Steam' -ErrorAction SilentlyContinue).SteamPath
-		$game = if ($GarrysMod) { $GarrysMod } elseif ($steam) { Join-Path $steam 'steamapps\common\GarrysMod' }
-		$Vphysics = Join-Path $game 'bin\win64\vphysics.dll'
-		if (-not (Test-Path (Join-Path $game 'bin\win64\vphysics.dll.original'))) {
-			throw "$Vphysics doesn't look like VPhysics-Box3D (no vphysics.dll.original beside it): pass -Vphysics <the fork's vphysics.dll>"
-		}
+		$Vphysics = Join-Path $root 'vphysics\build\windows-x64\src\Release\vphysics.dll'
+		if (-not (Test-Path $Vphysics)) { throw "$Vphysics not built yet, run scripts\build-vphysics.ps1" }
 	}
 	if (-not (Test-Path $Vphysics)) { throw "$Vphysics not found" }
-	$win64 = Join-Path $Server 'bin\win64'
-	$original = Join-Path $win64 'vphysics.dll.original'
+	# Only the first install keeps what is there: later ones would back up the fork itself.
 	if (-not (Test-Path $original)) { Copy-Item (Join-Path $win64 'vphysics.dll') $original }
 	Copy-Item $Vphysics (Join-Path $win64 'vphysics.dll') -Force
-	Write-Host "-> $win64\vphysics.dll (VPhysics-Box3D from $Vphysics; the server's own: vphysics.dll.original)"
+	Write-Host "-> $win64\vphysics.dll (VPhysics-Box3D from $Vphysics; the original: vphysics.dll.original)"
 }
