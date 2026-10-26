@@ -25,8 +25,14 @@ cargo build --release -p dms-homer
 ## В игре
 
 - `dms_homer` (суперадмин) — Homer стоит в позе Playroom перед игроком, лицом к нему; суставы сразу получают пивоты,
-  кадры и лимиты NM и тензоры инерции NM (`DMS.BindHomer`). NM им пока не управляет (FOLLOW — M4): он падает как обычный ragdoll.
-- Lua: `DMS_SpawnHomer(pos, yaw)`, `DMS_HomerParts(ent)`, `DMS_HomerReport(ent)`; натив `DMS.HomerBody([pos, yaw])`.
+  кадры и лимиты NM и тензоры инерции NM (`DMS.BindHomer`), и NM сразу ведёт его в FOLLOW под `bodyBalance` (M4,
+  ADR 0017): Homer стоит.
+- `dms_follow_send <сообщение>` — строка сообщения NM всем Homer под NM (`bodyRelax start=true`,
+  `applyImpulse start=true partIndex=9 impulse=0,30,0`, `bodyBalance start=true`); `dms_status` — агенты, их флаги,
+  компенсация гравитации и стоимость NM; `dms_gravity_mode nm|hybrid|off` — компенсация гравитации (по умолчанию `nm`).
+- Lua: `DMS_SpawnHomer(pos, yaw)`, `DMS_HomerParts(ent)`, `DMS_HomerReport(ent)`, `DMS_Follow(ent)`, `DMS_Unfollow(ent)`,
+  `DMS_Send(ent, line)`; нативы `DMS.HomerBody([pos, yaw])`, `DMS.Follow`, `DMS.FollowSend`, `DMS.FollowState`, `DMS.FollowEvents`;
+  хуки `DMS_Feedback`, `DMS_Fallen`, `DMS_Detached`.
 - Заспавненная из меню модель не связана с NM: пивоты на месте (начала костей — в суставах NM), но лимиты, кадры
   суставов и тензоры инерции NM ставит только `DMS.BindHomer` — спавнить через `dms_homer`.
 
@@ -54,3 +60,13 @@ cargo build --release -p dms-homer
 3. Падение: Homer оседает и лежит, не дрожит, не разлетается, колени и локти гнутся только в свою сторону.
 4. Лица и скелета пока нет (M6).
 5. Физганом потаскать за руку/голову — суставы держатся.
+
+## Визуальная проверка FOLLOW (M4)
+
+1. `dms_homer` перед собой: Homer стоит под `bodyBalance` и не падает минуту и дольше, без заметной дрожи; стопы
+   стоят на полу, не проваливаются и не скользят.
+2. Физганом слегка толкнуть его в грудь: качается, может переступить, устоял — как от тычка в Playroom.
+3. `dms_follow_send bodyRelax start=true`: обмякает и оседает на пол (не взрывается, не трясётся лёжа).
+4. Поднять физганом на 3–4 м и отпустить: в полёте раскидывает руки (High Fall), падает и лежит.
+5. `dms_status`: агенты, `balancing`/`fallen`, компенсация 1.00 (`nm`), стоимость NM ~1 мс на Homer.
+6. 4–5 Homer рядом (`dms_homer` несколько раз): все стоят, игра не тормозит.
