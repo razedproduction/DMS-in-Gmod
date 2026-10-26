@@ -252,6 +252,8 @@ pub struct Scenario {
     pub headless_steps: Option<u64>,
     /// `<t> <command>`, sorted by time (stable).
     pub commands: Vec<(f32, String)>,
+    /// `#! tol <check> ...`: what Homer on Box3D has to keep of the Playroom's record (`golden behaviour`).
+    pub tol: Vec<String>,
 }
 
 impl Scenario {
@@ -284,7 +286,12 @@ impl Scenario {
         if headless_steps.is_none() && !commands.iter().any(|c| c.1 == "!quit") {
             return Err("a window scenario ends with `<t> !quit`".into());
         }
-        Ok(Scenario { name: name.to_string(), mode: words.join(" "), headless_steps, commands })
+        let tol = text
+            .lines()
+            .filter_map(|l| l.trim().strip_prefix("#!")?.trim().strip_prefix("tol ")?.split('#').next())
+            .flat_map(|l| l.split_whitespace().map(String::from).collect::<Vec<_>>())
+            .collect();
+        Ok(Scenario { name: name.to_string(), mode: words.join(" "), headless_steps, commands, tol })
     }
 
     /// The module's `run` request: the mode line (and `lead` for the LEAD bench), then the commands (none for

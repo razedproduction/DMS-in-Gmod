@@ -163,8 +163,6 @@ pub struct Script {
     rec: String,
     unsupported: Vec<String>,
     getup: usize,
-    /// This step's feedback lines, written after its record line as the Playroom writes them.
-    fb: Vec<String>,
     pub done: bool,
 }
 
@@ -184,7 +182,6 @@ impl Script {
             rec: format!("{REC_HEADER}\n"),
             unsupported: vec![],
             getup: 0,
-            fb: vec![],
             done: false,
         }
     }
@@ -221,6 +218,8 @@ pub struct Follower {
     /// Box3D's bodies were told to sleep with NM's doll.
     pub bodies_asleep: bool,
     was_fallen: bool,
+    /// The body's velocity a step ago, which the Playroom's room layer acts on (in_air).
+    prev_com_v: Option<Vec3>,
     pub script: Option<Script>,
     /// Physics time since the last NM step (s), the last Source step's length, and how NM's own physics would have
     /// moved the body over that step: each part's velocity and spin before it and after (`doll.motion` once
@@ -291,6 +290,7 @@ impl Follower {
             gravity_off: 0,
             bodies_asleep: false,
             was_fallen: false,
+            prev_com_v: None,
             script: None,
             since: 0.0,
             timestep: 0.0,
@@ -396,11 +396,17 @@ impl Follower {
         for line in std::mem::take(&mut self.queued) {
             self.send(&line);
         }
-        // The Playroom's `tick`: the outbox first, `in_air` on even steps, then the step.
+        // The Playroom's `tick`: the outbox first, `in_air` on even steps, then the step. Its tick sees the body a
+        // physics step before its behaviours do (it steps physics first, its new agents' first step without any), so
+        // `in_air` takes the last step's velocity.
+        let com_v = self.agent.doll.com().1;
         self.extras_frame();
         if self.steps % 2 == 0 {
-            self.in_air();
+            self.in_air(self.prev_com_v.unwrap_or(com_v));
         }
+        self.prev_com_v = Some(com_v);
+        // The record's line of the step about to run: by the same token, the state the step starts from.
+        let line = self.script.as_ref().filter(|s| !s.done).map(|_| self.rec_line(self.steps + 1));
         // NM's balancer steadies the body with impulses (`nmdbm::stabilise` while `bodyBalance` runs: the feet one
         // way, the pelvis the other), which its step hands to its own physics (`doll.impulse`), not to `doll.out`:
         // in FOLLOW they'd be lost. The same function on the same state (the step's, before it runs) gives them;
@@ -418,10 +424,14 @@ impl Follower {
             }
         }
         self.predicted = (0..PARTS).map(|k| self.agent.doll.motion(k)).collect();
+        if let (Some(line), Some(s)) = (line, self.script.as_mut()) {
+            s.rec.push_str(&line);
+            s.rec.push('\n');
+        }
         for f in &self.agent.feedback {
             let line = format!("ours  FB {} slot {}", f.name, f.slot);
-            if let Some(s) = self.script.as_mut() {
-                s.fb.push(line);
+            if let Some(s) = self.script.as_mut().filter(|s| !s.done) {
+                let _ = writeln!(s.rec, "# {:.2} {line}", self.steps as f32 / 60.0);
             }
             events.push(Event { id: self.id, kind: "feedback", text: format!("{} {}", f.name, f.slot), value: f.value });
         }
@@ -597,8 +607,8 @@ impl Follower {
 
     /// The Playroom's `in_air` with its defaults (no additional reactions, no tasks, alive): falling faster than
     /// 6 m/s with no extra running sends `stopAllBehaviours` and the game's `NMHighFall` task.
-    fn in_air(&mut self) {
-        if !self.agent.extras.on.is_empty() || self.agent.high_falling() || self.agent.doll.com().1.z > -6.0 {
+    fn in_air(&mut self, com_v: Vec3) {
+        if !self.agent.extras.on.is_empty() || self.agent.high_falling() || com_v.z > -6.0 {
             return;
         }
         self.send("stopAllBehaviours");
@@ -606,18 +616,8 @@ impl Follower {
         self.say("ours  in the air: the game's NMHighFall");
     }
 
-    /// The scenario's part of a step: the last step's record line and feedback, the end, this step's commands.
+    /// The scenario's part of a step, before it: its end, this step's commands.
     fn script_step(&mut self) {
-        if self.steps > 0 {
-            let line = self.rec_line();
-            if let Some(s) = self.script.as_mut() {
-                s.rec.push_str(&line);
-                s.rec.push('\n');
-                for l in std::mem::take(&mut s.fb) {
-                    let _ = writeln!(s.rec, "# {:.2} {l}", self.steps as f32 / 60.0);
-                }
-            }
-        }
         let Some(s) = self.script.as_mut() else { return };
         if self.steps >= s.end {
             s.done = true;
@@ -690,7 +690,7 @@ impl Follower {
     /// `- - - - - - - | t com |v| | p<k> x y z n<held> g<gap> [points] | ...` for the two lowest parts, as the
     /// Playroom's `tick` writes it: the state is Box3D's (just read), the held contacts NM's (`held_world`, from its
     /// last step on that state).
-    fn rec_line(&self) -> String {
+    fn rec_line(&self, step: u64) -> String {
         let d = &self.agent.doll;
         let (com, v) = d.com();
         let mut low: Vec<(usize, Vec3)> = d.frames().map(|f| f.translation).enumerate().collect();
@@ -713,7 +713,7 @@ impl Follower {
             .collect();
         format!(
             "- - - - - - - | {:.3} {:.3} {:.3} {:.3} {:.3} | {}",
-            self.steps as f32 / 60.0,
+            step as f32 / 60.0,
             com.x,
             com.y,
             com.z,

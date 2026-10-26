@@ -3,6 +3,7 @@
 # в позе, шаги не идут). Фактический шаг каждой команды — в строках "#" файла .rec.
 # Встаёт Playroom анимацией (не NM) после 2 с лежания: get-up дважды = режим off.
 #! window
+#! tol down=0.3:0.15 end_z=0.03 marks   # Homer in FOLLOW on Box3D against the Playroom (golden/README.md)
 3 !button get-up
 3 !button get-up
 3 !button relax
