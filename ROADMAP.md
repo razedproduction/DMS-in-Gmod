@@ -8,7 +8,7 @@ Delirium (active ragdoll, NM-style) нативно в Garry's Mod в режим�
 
 | Компонент | Где | Что даёт | Правило |
 |---|---|---|---|
-| Delirium SDK | `../delirium-physics (CLAUDE DONT CHANGE ANYTHING HERE)/crates/delirium-sdk` | C API `delirium_physics.h` (`nm_*`), Rust-крейт `delirium_physics` (`rlib` + `cdylib`) | **только чтение**, подключается path-зависимостью |
+| Delirium SDK **v0.2.2** (`91ee246`) | `../delirium-physics (CLAUDE DONT CHANGE ANYTHING HERE)/crates/delirium-sdk` | C API `delirium_physics.h` (`nm_*`), Rust-крейт `delirium_physics` (`rlib` + `cdylib`) | **только чтение**, подключается path-зависимостью |
 | VPhysics-Box3D (форк) | `vphysics/` (git subtree, ADR 0015) | `vphysics.dll` + `IPhysicsNM` (`VBOX3D_NM_003`, `vphysics/include/vphysics_nm.h`) | менять только ради совпадения с Playroom (ADR 0008), upstream — `git subtree pull` ([docs/vphysics.md](docs/vphysics.md)) |
 | Прошлая попытка | `../delirium-physics (gmod addon & api)` | заметки и грабли (README) | только как справочник, код не переносим |
 
@@ -231,6 +231,27 @@ DMS in Gmod/
 с Playroom (1e-5), у заспавненного Homer все 21 часть совпадают с Playroom (позиция ≤ 1 мм, поворот ≤ 0.5°, масса
 точно, инерция ≤ 1 %); брошенный без NM он ведёт себя как обычный ragdoll, суставы гнутся в пределах NM, ничего не
 взрывается; лимиты видны через `IPhysicsConstraint::GetConstraintTransform`.
+
+### Обновление SDK: Delirium v0.1.9+7 → v0.2.2 (2026-10-26)
+
+- [x] SDK на `v0.2.2` (`91ee246`); C API (`delirium-sdk`) не менялся, правок API не понадобилось. `bevy_math` /
+      `bevy_transform` 0.18 → 0.20 (`glam` 0.30 → 0.33, версии — как в `Cargo.lock` SDK). Сборка — без AVX2: у модуля
+      те же рантайм-ветки с проверкой CPU (`ymm`/BMI в memchr и std), что и до обновления, FMA-инструкций нет.
+- [x] Тело Homer не изменилось: сужающиеся капсулы (`Shape::Tapered`, `8c47480`) есть только в GJK, частям Homer они не
+      назначаются; build отличается от прежнего в последнем бите float (≤ 1e-7, новый `glam`). Модель `dms-homer`
+      пересобрана (формы и `.phy` те же, вершины оболочек сдвинуты на тысячные доли мм).
+- [x] `tools/dms-game` сверен с Playroom: `getup::{key, plat, homer, Clips::stand_up}` и порядок `load` те же (в
+      `Clips::load` добавились только клипы плавания). Изменился пол комнаты Playroom: `world::floor_tris(pool, 50)` —
+      плитки 1 м, как прежний `add_floor`, но с ямой бассейна (x −3…3, y 5…25 м); `dms_game::floor` повторяет его
+      (мир `dms_selftest` и стенда, `golden lead`).
+- [x] Эталоны Playroom сняты заново (`golden/out/`): поведение изменилось (стойка расходится с прежней с ~0.87 с,
+      `catchFall` теперь шлёт `stopAllBehaviours` в 0.67 с вместо `pedalLegs`/`bodyRollUp` и т.д. — «tester fixes»).
+      Окно Playroom с v0.2.1 читает `%APPDATA%\delirium\settings.txt` (там и переключатели поведения) и на обычной
+      графике идёт < 10 FPS (теряет шаги), поэтому `golden run` запускает окно с `--safe`: умолчания Playroom и
+      минимальная графика, 60 шагов/с.
+- [x] `golden`: dump байт в байт, links и lead бит в бит, `body` проходит целиком; `behaviour --source` — `stand`
+      (60 с), `stand-1s`, `relax`, `relax-1s` совпадают до 3 знаков на всех шагах. Как и раньше, не совпадают `shot`
+      (M6), `push` (камера Playroom; COM теперь в пределах 1.4 мм) и `catchfall` (outbox, M4).
 
 ### M4. FOLLOW-цикл на эталоне — 5–8 дней (главная веха)
 

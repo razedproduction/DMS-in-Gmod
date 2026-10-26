@@ -100,9 +100,9 @@ fn read(dir: &str) -> Result<Data, String> {
     })
 }
 
-/// The Playroom's floor (`add_floor(0, 0, 0, 50, CONCRETE)`) as an NM world.
+/// The Playroom room's floor (`world::floor_tris(pool, 50)`, CONCRETE) as an NM world.
 pub fn floor_world(d: &Data) -> Result<nm::World, String> {
-    let (p, t) = dms_game::floor(0.0, 0.0, 0.0, 50.0);
+    let (p, t) = dms_game::floor(true, 50.0);
     let mut w = nm::World::new();
     w.add_mesh(&p, &t, &vec![d.floor_material; t.len()])?;
     Ok(w)
