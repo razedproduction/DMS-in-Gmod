@@ -18,7 +18,7 @@ dms.Detach(rag)                    -- an ordinary ragdoll
 ## Versions
 
 `DMS.Version` (the module), `DMS_ADDON_VERSION` (the Lua addon), `DMS.DeliriumVersion` (the Delirium built into the
-module), `DMS.InterfaceVersion()` (the fork's `IPhysicsNM`, `VBOX3D_NM_004` needed), `DMS.HomerModelVersion` (the body
+module), `DMS.InterfaceVersion()` (the fork's `IPhysicsNM`, `VBOX3D_NM_004` needed, `VBOX3D_NM_005` for GMod's ragdolls), `DMS.HomerModelVersion` (the body
 `homer.mdl` has to be made for; `DMS_HomerModelVersion()` reads the model's mark). The module and the addon of
 different releases don't start; `DMS_Problems()` lists what keeps Homer from working (the fork, the model, the GTA IV
 folder), `dms_info` prints it all.

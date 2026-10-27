@@ -1,7 +1,7 @@
 # The VPhysics-Box3D fork in `vphysics/`
 
 `vphysics/` is a fork of [Asphaltian/VPhysics-Box3D](https://github.com/Asphaltian/VPhysics-Box3D) (a replacement of
-GMod's `vphysics.dll` on Box3D) with the NM extension `IPhysicsNM` (`include/vphysics_nm.h`, now `VBOX3D_NM_004`). It
+GMod's `vphysics.dll` on Box3D) with the NM extension `IPhysicsNM` (`include/vphysics_nm.h`, now `VBOX3D_NM_005`). It
 lives in this repository as a **git subtree** with its full history (ADR 0015): changes to the module and the physics
 go in one PR, upstream comes with `git subtree pull`. The former separate repository `razedproduction/VPhysics-Box3D`
 isn't updated any more.
@@ -119,3 +119,11 @@ A merge can change behaviour without conflicts too. After `9d5e14c`, Homer's piv
 bodies move apart). Fixed with the `m_bNMDriven` flag of `CPhysicsObject` (set by the `IPhysicsNM` methods that drive a
 body), such bodies skip the gate (commit `4543837`); the interface didn't change. That's why `golden body` is a required
 part of checking every merge.
+
+## Native bodies for GMod's ragdolls in M9 (ADR 0026, `VBOX3D_NM_005`)
+
+`CreateBody` makes a moving convex hull (NM's part, hulled as `dms-homer` hulls it) standing in for an owner object (its
+game data, material, callback flags, game flags with `FVPHYSICS_NO_SELF_COLLISIONS`); `CreateJoint` joins two such bodies
+with a ragdoll constraint as the game's ragdolls have it, wide open until the bind gives it NM's pivot, frames and limits;
+`DestroyJoint` and `DestroyBody` take them away (the body's hull with it). Not from the step callback. The older
+interface strings give the same object.

@@ -19,7 +19,7 @@ DLL_EXPORT void *CreateInterface( const char *pName, int *pReturnCode )
 		pInterface = static_cast<IPhysicsCollision *>( &g_PhysicsCollision );
 	else if ( !std::strcmp( pName, VPHYSICS_SURFACEPROPS_INTERFACE_VERSION ) )
 		pInterface = static_cast<IPhysicsSurfaceProps *>( &g_PhysicsSurfaceProps );
-	else if ( !std::strcmp( pName, VPHYSICS_NM_INTERFACE_VERSION ) || !std::strcmp( pName, VPHYSICS_NM_INTERFACE_VERSION_003 ) || !std::strcmp( pName, VPHYSICS_NM_INTERFACE_VERSION_002 ) || !std::strcmp( pName, VPHYSICS_NM_INTERFACE_VERSION_001 ) )
+	else if ( !std::strcmp( pName, VPHYSICS_NM_INTERFACE_VERSION ) || !std::strcmp( pName, VPHYSICS_NM_INTERFACE_VERSION_004 ) || !std::strcmp( pName, VPHYSICS_NM_INTERFACE_VERSION_003 ) || !std::strcmp( pName, VPHYSICS_NM_INTERFACE_VERSION_002 ) || !std::strcmp( pName, VPHYSICS_NM_INTERFACE_VERSION_001 ) )
 		pInterface = static_cast<IPhysicsNM *>( &g_PhysicsNM );
 
 	if ( pReturnCode )

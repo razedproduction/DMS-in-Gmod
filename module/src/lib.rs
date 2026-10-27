@@ -13,6 +13,7 @@ mod lua;
 mod natives;
 mod nm;
 mod nm_natives;
+mod ragdolls;
 mod react;
 mod selftest;
 mod step;
@@ -47,7 +48,8 @@ unsafe fn nm_version_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> 
 /// Looks for `IPhysicsNM` and says in the console what came of it (docs/adr/0005).
 fn acquire_message() -> String {
     match vphysics_nm::acquire() {
-        Ok(Version::V004) => format!("[DMS] IPhysicsNM {} found", Version::V004.name()),
+        Ok(Version::V005) => format!("[DMS] IPhysicsNM {} found", Version::V005.name()),
+        Ok(Version::V004) => format!("[DMS] IPhysicsNM {} found (no native bodies for GMod's ragdolls, ROADMAP M9)", Version::V004.name()),
         Ok(Version::V003) => format!(
             "[DMS] WARNING: only IPhysicsNM {} found, NM's contact materials (SetBodyMaterial, SetSurfaceMaterial) are \
              unavailable and Homer can't be bound: update VPhysics-Box3D",
@@ -87,7 +89,7 @@ unsafe fn open(l: *mut LuaState) -> c_int {
     let Ok(api) = lua::api() else { return 0 };
     let nm_message = acquire_message();
     unsafe {
-        let natives = natives::NATIVES.iter().chain(nm_natives::NATIVES).chain(bind::NATIVES).chain(agents::NATIVES).chain(dev::NATIVES).chain(world::NATIVES).chain(react::NATIVES);
+        let natives = natives::NATIVES.iter().chain(nm_natives::NATIVES).chain(bind::NATIVES).chain(agents::NATIVES).chain(dev::NATIVES).chain(world::NATIVES).chain(react::NATIVES).chain(ragdolls::NATIVES);
         (api.createtable)(l, 0, 4 + natives.clone().count() as c_int);
         let version = CString::new(MODULE_VERSION).unwrap_or_default();
         (api.pushstring)(l, version.as_ptr());
@@ -125,6 +127,7 @@ pub unsafe extern "C" fn gmod13_close(l: *mut LuaState) -> c_int {
     // a map with agents (NM's data, the map read, its worlds).
     let _ = std::panic::catch_unwind(|| {
         data::unload();
+        ragdolls::unload();
         world::unload();
         tuning::unload();
         *delirium::ragdoll::SURFACES.write().unwrap_or_else(|e| e.into_inner()) = Vec::new();

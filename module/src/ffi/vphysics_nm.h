@@ -32,7 +32,11 @@ class IPhysicsConstraint;
 class IPhysicsEnvironment;
 class IPhysicsObject;
 
-#define VPHYSICS_NM_INTERFACE_VERSION "VBOX3D_NM_004"
+#define VPHYSICS_NM_INTERFACE_VERSION "VBOX3D_NM_005"
+
+// The same interface without CreateBody, CreateJoint, DestroyJoint and DestroyBody, for controllers built against the
+// fourth version
+#define VPHYSICS_NM_INTERFACE_VERSION_004 "VBOX3D_NM_004"
 
 // The same interface without SetBodyMaterial and SetSurfaceMaterial, for controllers built against the third version
 #define VPHYSICS_NM_INTERFACE_VERSION_003 "VBOX3D_NM_003"
@@ -164,4 +168,28 @@ public:
 	// for the contacts of SetBodyMaterial's bodies with it. A negative friction takes it back. For every environment,
 	// until changed. False for an index out of range or a non-finite value.
 	virtual bool SetSurfaceMaterial( int nSurfaceProp, float flFriction, float flElasticity ) = 0;
+
+	// VBOX3D_NM_005 from here on.
+
+	// Creates a moving body for a controller's own model where the game has none (an NM body fitted to a game model):
+	// the convex hull of pPoints (nPoints points, x y z, m, in the body's frame, its centre of mass on the origin),
+	// flMass kg (its inertia the hull's until SetBodyInertia), its frame at pPosition (m, world) turned by pRotation
+	// (quaternion x, y, z, w), in pEnvironment. pOwner, if not null, is the game object it stands in for: the body takes
+	// its game data, material and callback flags and its game flags or'ed with nGameFlags, so the game hears of its
+	// contacts as the owner's entity's and filters its collisions as the owner's. Null for bad arguments or a hull that
+	// can't be made. Not from the step callback. Remove it with DestroyBody, its joints first.
+	virtual IPhysicsObject *CreateBody( IPhysicsEnvironment *pEnvironment, IPhysicsObject *pOwner, const float *pPoints, int nPoints, float flMass, const float *pPosition, const float *pRotation, unsigned short nGameFlags ) = 0;
+
+	// Joins two bodies with a ragdoll constraint as the game's ragdolls have them (the child the reference, the parent
+	// attached), pivoting at the child's frame origin as they are posed now; a hinge (bHinge) is built as VPhysics
+	// builds a ragdoll's hinge (one free axis), the rest as a ball. Its limits are wide until SetJointLimits (a hinge)
+	// or SetJointBallLimits (a ball) give it the controller's; SetJointAnchor moves its pivot. Null for a null object or
+	// one object twice. Not from the step callback. Remove it with DestroyJoint.
+	virtual IPhysicsConstraint *CreateJoint( IPhysicsObject *pParent, IPhysicsObject *pChild, bool bHinge ) = 0;
+
+	// Removes a constraint CreateJoint made. Null is ignored.
+	virtual void DestroyJoint( IPhysicsConstraint *pConstraint ) = 0;
+
+	// Removes a body CreateBody made, with the hull made for it. Null is ignored.
+	virtual void DestroyBody( IPhysicsObject *pObject ) = 0;
 };

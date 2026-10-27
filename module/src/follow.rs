@@ -210,9 +210,23 @@ impl Script {
     }
 }
 
+/// The body an agent drives: Homer's, or one fitted to a model (ROADMAP M9, `ragdolls.rs`).
+pub struct BodyDef {
+    pub build: delirium::ragdoll::Build,
+    pub body: dms_game::body::Body,
+}
+
+impl BodyDef {
+    /// Homer's, as the data holds it.
+    pub fn homer(d: &Data) -> Arc<BodyDef> {
+        Arc::new(BodyDef { build: d.homer.clone(), body: d.body.clone() })
+    }
+}
+
 pub struct Follower {
     pub id: u32,
     data: Arc<Data>,
+    pub def: Arc<BodyDef>,
     world: Arc<Collision>,
     /// Part `k`'s body, and its joint to its parent (null for the root).
     objects: Vec<*mut IPhysicsObject>,
@@ -306,6 +320,7 @@ impl Follower {
         nm: &Nm,
         id: u32,
         data: Arc<Data>,
+        def: Arc<BodyDef>,
         (world, crop): (Arc<Collision>, Option<[i32; 2]>),
         objects: Vec<*mut IPhysicsObject>,
         joints: Vec<*mut IPhysicsConstraint>,
@@ -329,8 +344,8 @@ impl Follower {
             })
             .collect::<Result<Vec<_>, String>>()?;
         // As the Playroom makes its agents (`Agent::new(build, Ragdoll::new(build, frames, 0), facing, 0.3)`).
-        let doll = Ragdoll::new(&data.homer, &frames, Vec3::ZERO);
-        let agent = Agent::new(&data.homer, doll, Quat::from_rotation_z(yaw), SEED);
+        let doll = Ragdoll::new(&def.build, &frames, Vec3::ZERO);
+        let agent = Agent::new(&def.build, doll, Quat::from_rotation_z(yaw), SEED);
         // The Playroom's `face`: his standing forward (from his thighs) in the head capsule's frame.
         let cap0 = frames[HEAD].rotation * delirium::nmdbm::rage_link(dms_game::HOMER_NM, HEAD);
         let axis = if (cap0 * Vec3::Y).z < 0.0 { -Vec3::Y } else { Vec3::Y };
@@ -387,6 +402,7 @@ impl Follower {
             cost: 0.0,
             crop,
             data,
+            def,
         })
     }
 
@@ -418,17 +434,13 @@ impl Follower {
         self.frozen = false;
     }
 
-    pub fn data(&self) -> &Data {
-        &self.data
-    }
-
     /// The Playroom's `face` frame on the head (its part's frame): the head capsule's centre (m), the face's forward
     /// and up, the head's radius. Forward is the standing pose's, taken in the capsule's frame (`rage_link`), as the
     /// Playroom takes it from its room's start.
     pub fn face(&self) -> (Vec3, Vec3, Vec3, f32) {
         let link = delirium::nmdbm::rage_link(dms_game::HOMER_NM, HEAD);
         let (h, c) = (self.agent.doll.frames().nth(HEAD).unwrap_or_default(), self.agent.doll.capsules().nth(HEAD).unwrap_or_default());
-        let r = self.data.homer.parts.get(HEAD).map_or(0.1, |p| p.radius);
+        let r = self.def.build.parts.get(HEAD).map_or(0.1, |p| p.radius);
         (h.rotation.inverse() * (c.translation - h.translation), link * self.face.0, link * self.face.1, r)
     }
 
@@ -485,7 +497,7 @@ impl Follower {
         }
         unsafe { self.read(nm)? };
         // A joint the ragdoll lost (`RemoveInternalConstraint`) mustn't be set again: NM comes off.
-        for (k, p) in self.data.body.parts.iter().enumerate() {
+        for (k, p) in self.def.body.parts.iter().enumerate() {
             if let Some(q) = p.parent
                 // SAFETY: both are live objects of the ragdoll.
                 && unsafe { nm.find_constraint(self.objects[q], self.objects[k]) } != self.joints[k]
@@ -657,7 +669,7 @@ impl Follower {
                 .iter()
                 .map(|s| Transform::from_translation(Vec3::from_array(s.position) - self.origin).with_rotation(Quat::from_array(s.rotation).normalize()))
                 .collect();
-            self.agent = Agent::new(&self.data.homer, Ragdoll::new(&self.data.homer, &frames, Vec3::ZERO), Quat::from_rotation_z(self.yaw), SEED);
+            self.agent = Agent::new(&self.def.build, Ragdoll::new(&self.def.build, &frames, Vec3::ZERO), Quat::from_rotation_z(self.yaw), SEED);
             self.msgs = msg::State::default();
             (self.predicted, self.before) = (vec![], vec![]);
             self.queued.extend(lines);
@@ -723,10 +735,10 @@ impl Follower {
         // they're linear in its gain squared, which the step itself sets (`Character::stabilise`).
         let unit = self.agent.character().map(|ch| {
             let frames: Vec<Transform> = self.agent.doll.frames().collect();
-            let body = delirium::nmdbm::Body { ch, build: &self.data.homer, doll: &self.agent.doll, frames: &frames };
+            let body = delirium::nmdbm::Body { ch, build: &self.def.build, doll: &self.agent.doll, frames: &frames };
             delirium::nmdbm::stabilise(&body, 1.0, dt)
         });
-        self.agent.step_follow(&self.data.homer, &self.world, dt, &self.obstacles, &[]);
+        self.agent.step_follow(&self.def.build, &self.world, dt, &self.obstacles, &[]);
         self.steps += 1;
         if let (Some(unit), Some((gain, _))) = (unit, self.agent.character().and_then(|ch| ch.stabilise)) {
             for (k, j) in unit.into_iter().enumerate().filter(|(_, j)| *j != Vec3::ZERO) {
@@ -814,7 +826,7 @@ impl Follower {
     fn limit_use(&self) -> Vec<(f32, f32)> {
         let frames: Vec<Transform> = self.agent.doll.frames().collect();
         let mut out = vec![(0.0, 0.0); PARTS];
-        for j in &self.data.body.joints {
+        for j in &self.def.body.joints {
             let p = frames[j.parent].rotation * j.frame_parent;
             let c = frames[j.part].rotation * j.frame_child;
             let r = (p.inverse() * c).normalize();
@@ -843,7 +855,7 @@ impl Follower {
     fn pivot_gap(&self) -> Vec<f32> {
         let frames: Vec<Transform> = self.agent.doll.frames().collect();
         let mut out = vec![0.0; PARTS];
-        for j in &self.data.body.joints {
+        for j in &self.def.body.joints {
             let (p, c) = (&frames[j.parent], &frames[j.part]);
             out[j.part] = (p.translation + p.rotation * j.anchor_parent).distance(c.translation + c.rotation * j.anchor_child);
         }
@@ -916,7 +928,7 @@ impl Follower {
         let short: String = line.chars().take(110).collect();
         // A one-shot message's state is reset once it's sent: the impulse's params come from the line itself.
         let kick = (name == "applyImpulse").then(|| impulse_params(&ps));
-        match msg::send(&mut self.agent, &self.data.homer, &self.world, &mut self.msgs, name, &ps) {
+        match msg::send(&mut self.agent, &self.def.build, &self.world, &mut self.msgs, name, &ps) {
             Ok(unused) => {
                 let kept = if unused > 0 { format!("  ({unused} kept, not used by the port)") } else { String::new() };
                 self.say(&format!("ours  MSG {short}{kept}"));

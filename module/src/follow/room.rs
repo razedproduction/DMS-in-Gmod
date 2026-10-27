@@ -375,7 +375,7 @@ impl Follower {
     /// A reaction from the game, in the order the Playroom's would run (before the step, as its clicks do).
     pub(super) fn room_react(&mut self, r: React) {
         let r = r.moved(self.origin);
-        let nearest = |s: &Follower, at: Vec3| s.agent.doll.nearest(&s.data.homer, at);
+        let nearest = |s: &Follower, at: Vec3| s.agent.doll.nearest(&s.def.build, at);
         match r {
             React::Shot { part, aim, weapon, fatal, more } => {
                 let part = part.or_else(|| aim.map(|a| nearest(self, a.0))).unwrap_or(CHEST).min(PARTS - 1);
@@ -632,7 +632,7 @@ impl Follower {
         let tp = self.tuned_tp.clone();
         if burning && self.room.on_fire.is_none() && self.room.set.fire_react {
             let mut f = nm::OnFire::new("*");
-            f.start(&mut self.agent, &data.homer, &self.world, tp.as_deref().unwrap_or(&data.tp), &mut self.room.rand);
+            f.start(&mut self.agent, &self.def.build, &self.world, tp.as_deref().unwrap_or(&data.tp), &mut self.room.rand);
             self.room.on_fire = Some(f);
             self.say("room  Homer catches fire");
         }
@@ -642,7 +642,7 @@ impl Follower {
             if failed {
                 f.balance_failed();
             }
-            if f.update(&mut self.agent, &data.homer, &self.world, &mut self.room.rand, dt, burning, health, health <= 0.0).is_some() {
+            if f.update(&mut self.agent, &self.def.build, &self.world, &mut self.room.rand, dt, burning, health, health <= 0.0).is_some() {
                 self.room.on_fire = None;
             }
         }
@@ -701,7 +701,7 @@ impl Follower {
         let ours = self.ours();
         let now = self.now_s();
         self.room.health = if self.room.set.god { START_HEALTH } else { (self.room.health - dmg).max(1.0) };
-        let k = self.agent.doll.nearest(&self.data.homer, at);
+        let k = self.agent.doll.nearest(&self.def.build, at);
         self.mark(k, at);
         let task = if self.room.rand.float_in_range(0.0, 1.0) > 0.7 { "balance" } else { "flinch" };
         let mut o = vec![format!("applyImpulse start=true partIndex={k} hitPoint={} impulse={}", v3(at), v3(j))];
@@ -789,7 +789,7 @@ impl Follower {
         use delirium::bump::{self, Kind, Thing};
         let a = &self.agent;
         let other = Thing { id: k, kind: Kind::Vehicle { player_driver: player } };
-        let imp = bump::Impact { impulse: sum.length(), dt: 1.0 / 60.0, component: a.doll.nearest(&self.data.homer, at) as i32, other: Some(other) };
+        let imp = bump::Impact { impulse: sum.length(), dt: 1.0 / 60.0, component: a.doll.nearest(&self.def.build, at) as i32, other: Some(other) };
         let health = self.room.health;
         let ped = bump::Ped {
             id: -2,
@@ -812,7 +812,7 @@ impl Follower {
         let Some((amount, _)) = bump::damage(&ped, &imp, &mut self.room.rand).filter(|d| d.0 >= 1.0) else { return };
         let left = if self.room.set.god { START_HEALTH } else { (health - amount).max(1.0) };
         self.room.health = left;
-        let part = self.agent.doll.nearest(&self.data.homer, at);
+        let part = self.agent.doll.nearest(&self.def.build, at);
         self.injure(part, (amount / 100.0).clamp(0.1, 0.5));
         let around = bump::Around {
             touching: vec![other],
@@ -893,7 +893,7 @@ impl Follower {
         self.send("stopAllBehaviours");
         let data = self.data.clone();
         let tp = self.tuned_tp.clone();
-        nm::task_high_fall(&mut self.agent, &data.homer, &self.world, tp.as_deref().unwrap_or(&data.tp), "*", false);
+        nm::task_high_fall(&mut self.agent, &self.def.build, &self.world, tp.as_deref().unwrap_or(&data.tp), "*", false);
         if let Some(e) = exit("highfall").filter(|_| self.room.set.tasks) {
             (self.room.exit, self.room.nm_t, self.room.failed) = (e, Some(0.0), false);
         }
@@ -1181,7 +1181,7 @@ impl Follower {
                 3 => self.say("ours  no getup.net here (the learned get-up isn't ported)"),
                 1 => {
                     self.room.musc = Some(clips.start(now));
-                    nm::task_pose(&mut self.agent, &data.homer, &self.world, &mut self.room.rand, MUSC_STIFF.0, MUSC_STIFF.1);
+                    nm::task_pose(&mut self.agent, &self.def.build, &self.world, &mut self.room.rand, MUSC_STIFF.0, MUSC_STIFF.1);
                     self.say("ours  getting up with his muscles (the clip's poses as NMPose's; he can fail)");
                 }
                 _ => {
