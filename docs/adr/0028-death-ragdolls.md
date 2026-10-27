@@ -32,11 +32,14 @@ that:
    `COLLISION_GROUP_WEAPON` (the world and things, not players). The client's death camera follows it as HL2MP's (GMod's)
    follows its own: over the ragdoll's root (+14 units), 96 units back along the view, stopped by walls. One a player,
    removed at their next death or when they leave.
-3. **The killing hit is the room's** (0016): its last hit (≤ 0.5 s old) goes to the corpse's agent as the room's
-   reactions translate the game's damage (reactions.lua): a bullet is `shot … fatal=1` (the room's `fire`: the weapon's
-   impulse into the hit part, health 0), a blast, a blow, fire or a taser their reaction followed by `health value=0`,
-   anything else (a fall, a crush, `kill`) `health value=0`. At health 0 the room does its death (`STOP all`, `relax`):
-   the Playroom's `!shoot <part> fatal` (golden `death`).
+3. **The killing hit is the room's, on a fatally injured body** (0016): the corpse's room gets `health value=49`, then
+   its last hit (≤ 0.5 s old) as the room's reactions translate the game's damage (reactions.lua: `shot`, `blast`,
+   `melee`, `burn`, `taser`), its damage taken off that health by the room's own model (`ped::damage`). Under 50 the
+   room's ShotTask plays its dying reaction (`shot` reaching for the wound, `shotRelax` 0.5 s, no `stayUpright`), and the
+   room's get-up needs 50: it stays down; later hits react the same way till its health is 0, the room's death
+   (`STOP all`, `relax`). No hit known (a fall, a crush, `kill`): `health value=0` at once. Not the Playroom's
+   `!shoot <part> fatal` (golden `death`): that is health 0 at once, which cancels the shot's reaction on the next step,
+   so a corpse only went limp (the user's choice, 2026-10-28: fatally injured).
 4. **The motion handed over.** Before NM takes a ragdoll's pose, each moving object's velocity is made its own
    (`SetVelocityInstantaneous(GetVelocity())`), so `GetBodyState` sees what the game gave it this tick. Not a fork change:
    the fork's pending velocity is VPhysics' semantics.

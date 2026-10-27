@@ -588,8 +588,9 @@ going over M7's budget at the limit.
 **Done (ADR 0028):** a ValveBiped NPC's lethal damage makes its ragdoll on the server without the game's push, and a tick
 later NM is on it (undo and cleanup take it in the NPC's place); a dead player's client ragdoll gives way in the same
 tick to a server ragdoll of their model posed from their bones, the death camera on it as GMod's. The killing hit is the
-room's: a bullet `shot … fatal=1`, the rest their reaction and health 0, then the room's death (`STOP all`, `relax`), as
-the golden `death`. The motion is handed over (the fork's pending velocity made the body's own first: with the game's
+room's on a fatally injured body (health 49, then the hit's reaction): the ShotTask's dying reaction, no getting up, later
+hits reacting till health 0, the room's death (`STOP all`, `relax`). (`fatal=1`, the golden `death`, left a corpse only
+limp: the user chose fatally injured.) The motion is handed over (the fork's pending velocity made the body's own first: with the game's
 push left on NM's body took 44.6 m/s). `dms_autoattach_max` 4 (within `dms_max_agents`) and `dms_autoattach_time` 30 s;
 NM off is the swap. A model's hulls are made ahead as NPCs and players spawn (a death ragdoll in 1.1 ms, not 914 ms).
 On the bench: 8 NPCs shot 0.3 s apart, limit 4: the tick 14.8 ms mean, 21 ms worst, NM 3.2 ms a step for the 4 (M7's

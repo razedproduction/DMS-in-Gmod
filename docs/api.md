@@ -87,9 +87,10 @@ reaction or a message. The limit is `dms_max_agents` (8): Homers beyond it stay 
 ## Death ragdolls (M11, ADR 0028)
 
 An NPC or a player with a ValveBiped model that dies leaves a server ragdoll with NM on it, in the pose and motion it
-died in; the killing hit goes to it as the Playroom's room takes one: a bullet is `shot … fatal=1` (the hit's impulse,
-health 0), a blast, a blow, fire or a taser their own reaction then `health value=0`, anything else `health value=0`; at
-health 0 the room's death (`STOP all`, `relax`). NPCs' ragdolls are made on the server for it (`SetShouldServerRagdoll`)
+died in; the killing hit goes to it as the Playroom's room takes one on a fatally injured body: `health value=49`, then
+the hit's reaction (`shot`, `blast`, `melee`, `burn`, `taser`): the ShotTask's dying reaction (reaching for the wound,
+`shotRelax`), no getting up, later hits reacting till its health is 0 (the room's death: `STOP all`, `relax`); a death
+without a known hit (a fall, a crush, `kill`) is `health value=0` at once. NPCs' ragdolls are made on the server for it (`SetShouldServerRagdoll`)
 without the game's push of the killing hit; a player's client death ragdoll is replaced by a server ragdoll of their
 model (skin, bodygroups, colour, player colour), the death camera on it as GMod's (over it, 96 units back, the mouse
 turns it), one a player (removed at their next death or when they leave). Undo and cleanup take an NPC's corpse in its

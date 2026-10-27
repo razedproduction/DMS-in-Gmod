@@ -1,7 +1,7 @@
 -- Death ragdolls (ROADMAP M11, docs/adr/0028): an NPC or a player with a ValveBiped model that dies leaves a server
 -- ragdoll with NM on it at once (ragdolls.lua), in the pose and moving as it died, and the killing hit goes to it as the
--- Playroom's room takes one (follow/room.rs): a bullet is its `fire` with `fatal` (the hit's impulse, health 0), the
--- rest their own reaction and health 0; at health 0 the room's death, `STOP all` and `relax`.
+-- Playroom's room takes one (follow/room.rs) on a fatally injured body (health 49): its ShotTask's dying reaction
+-- (`shot`, `shotRelax`), no getting up, later hits reacting till its health is 0 (the room's death: `STOP all`, `relax`).
 --
 -- NPCs: their ragdoll is made on the server for it (SetShouldServerRagdoll, as ai_serverragdolls 1 makes them all),
 -- without the game's push of the killing hit (the room's impulse is it). Players: GMod's death ragdoll is the client's
@@ -66,25 +66,27 @@ local function hitOf(ent, dmg)
 	return h
 end
 
--- The room's lines for the killing hit `h` on the ragdoll (none known: just its death).
+-- The room's lines for the killing hit `h` on the ragdoll: the room's fatally injured (health under 50, its ShotTask's
+-- dying reaction, no getting up), then the hit as the room takes it, its damage on that health (at 0 the room's death).
+-- No hit known (a fall, a crush, `kill`): just its death.
+local FATALLY_INJURED = 49
 local function deathLines(rag, h)
 	if not h or CurTime() - h.time > HIT_AGE then return { "health value=0" } end
+	local hit
 	if h.kind == "shot" then
 		local part = DMS_RagdollPartAt(rag, h.pos, h.dir)
-		return { string.format("shot at=%s dir=%s weapon=%s%s fatal=1", at(h.pos), dir(h.dir), h.weapon, part and (" part=" .. part) or "") }
-	end
-	local first
-	if h.kind == "blast" then
-		first = "blast at=" .. at(h.centre)
+		hit = string.format("shot at=%s dir=%s weapon=%s%s", at(h.pos), dir(h.dir), h.weapon, part and (" part=" .. part) or "")
+	elseif h.kind == "blast" then
+		hit = "blast at=" .. at(h.centre)
 	elseif h.kind == "burn" then
-		first = "burn"
+		hit = "burn"
 	elseif h.kind == "melee" then
-		first = string.format("melee damage=%.2f at=%s impulse=%s head=%s", h.damage, at(h.pos), at(h.force), at(h.from))
+		hit = string.format("melee damage=%.2f at=%s impulse=%s head=%s", h.damage, at(h.pos), at(h.force), at(h.from))
 	elseif h.kind == "taser" then
-		first = "taser at=" .. at(h.pos)
+		hit = "taser at=" .. at(h.pos)
 	end
-	if first then return { first, "health value=0" } end
-	return { "health value=0" }
+	if not hit then return { "health value=0" } end
+	return { "health value=" .. FATALLY_INJURED, hit }
 end
 
 -- The death ragdolls NM is on, oldest first: {ent, owner (a player), since}.
