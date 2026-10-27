@@ -23,7 +23,7 @@ local MODES = {
 	{ "attach", "NM on / off", "NM on the Homer (balancing)", "NM off the Homer", "The Playroom's balance button" },
 	{ "react", "Reactions", "The reaction where you hit", "Kill him", "Health back (200)" },
 	{ "behaviour", "NM behaviour", "Start the behaviour on the Homer", "Stop all of his behaviours", "The Playroom's balance button" },
-	{ "target", "Target", "Aim him at a point (hold: he follows it)", "Pick a Homer (else the nearest)", "Stop it" },
+	{ "target", "Target", "Aim him at a thing, a player or an NPC (he keeps on it as it moves) or a point (hold: he follows your aim)", "Pick a Homer (else the nearest)", "Stop it" },
 	{ "inspect", "Inspector", "Pick a Homer: his state, the overlay only on him", "Unpick (the overlay on all)", "Debug overlay on / off" },
 	{ "kick", "Kick", "Hold to charge, let go to kick the part you aim at", "-", "-" },
 	{ "throw", "Throw Homer", "Throw a new Homer from in front of you", "A new Homer standing where you aim", "-" },
@@ -87,12 +87,13 @@ if SERVER then
 		return best
 	end
 
-	-- The target's lines (delirium-room's: look, pointArm, the lean away from a hit, flinch, linegrab).
-	local function aim(ply, ent, kind, p)
+	-- The target's lines (delirium-room's: look, pointArm, the lean away from a hit, flinch, linegrab). `vel` (units/s)
+	-- is a moving target's, as the Playroom's headLook at a thrown thing has it; `again` an update of the same target.
+	local function aim(ent, kind, p, vel, again)
 		local c = dms.Get(ent)
 		if not c then return end
 		if kind == "look" then
-			c:Send("headLook", { start = true, pos = p, alwaysLook = true })
+			c:Send("headLook", { start = true, pos = p, vel = (vel or vector_origin) * M, alwaysLook = true })
 		elseif kind == "point" then
 			c:Send("pointArm", { start = true, target = p })
 		elseif kind == "lean" then
@@ -100,15 +101,47 @@ if SERVER then
 			d.z = 0
 			c:Send("leanInDirection", { start = true, leanAmount = 0.4, dir = d:GetNormalized() })
 		elseif kind == "flinch" then
-			c:Send("upperBodyFlinch", { start = true, pos = p, newHit = true })
+			c:Send("upperBodyFlinch", { start = true, pos = p, newHit = not again })
 		elseif kind == "grab" then
-			local right = ply:EyeAngles():Right() * (0.3 / M)
+			-- A line across the way from him to it, 0.6 m long.
+			local to = p - ent:WorldSpaceCenter()
+			to.z = 0
+			local right = to:Angle():Right() * (0.3 / M)
 			c:Send("grab", { start = true, linegrab = true, useLeft = true, useRight = true, dontLetGo = true,
 				pos1 = p + right, pos2 = p - right })
 		end
 	end
 
 	local STOP = { look = "headLook", point = "pointArm", lean = "leanInDirection", flinch = "upperBodyFlinch", grab = "grab" }
+
+	-- Targets that move: a Homer kept on a thing (the point hit on it, it moves with it) or on a player's or an NPC's
+	-- eyes. Sent again 10 times a second while it moves, and only then.
+	local tracks = {} -- Homer -> {ent, lpos, kind, last}
+	local function track(h, ent, kind, hit)
+		tracks[h] = ent and { ent = ent, lpos = ent:WorldToLocal(hit), kind = kind } or nil
+		h:SetNW2Entity("DMS_Target", ent or NULL)
+	end
+	local function trackedAt(t)
+		if t.ent:IsPlayer() or t.ent:IsNPC() then return t.ent:EyePos() end
+		return t.ent:LocalToWorld(t.lpos)
+	end
+	local nextTrack = 0
+	hook.Add("Think", "DMS_ToolTrack", function()
+		if not next(tracks) or CurTime() < nextTrack then return end
+		nextTrack = CurTime() + 0.1
+		for h, t in pairs(tracks) do
+			if not IsValid(h) or not h.DMS_Agent or not IsValid(t.ent) then
+				tracks[h] = nil
+				if IsValid(h) then h:SetNW2Entity("DMS_Target", NULL) end
+			else
+				local p = trackedAt(t)
+				if not t.last or p:DistToSqr(t.last) > 1 then
+					aim(h, t.kind, p, t.ent:GetVelocity(), t.last ~= nil)
+					t.last = p
+				end
+			end
+		end
+	end)
 
 	local function inspectText(ent)
 		local c = dms.Get(ent)
@@ -195,10 +228,17 @@ if SERVER then
 			if not h then DMS_Say(ply, "[DMS] no Homer with NM") return false end
 			local kind = self:GetClientInfo("target")
 			if button == 3 then
+				track(h, nil)
 				dms.Get(h):Send(STOP[kind] or "headLook", { start = false })
 				return true
 			end
-			aim(ply, h, kind, hit)
+			-- A thing, a player or an NPC: he keeps on it as it moves; the world: the point (held: it follows the aim).
+			if IsValid(ent) and not ent:IsWorld() and ent ~= h then
+				track(h, ent, kind, hit)
+				return true
+			end
+			track(h, nil)
+			aim(h, kind, hit)
 			self.following = h
 			self.nextFollow = CurTime() + 0.1
 		elseif mode == "inspect" then
@@ -294,7 +334,7 @@ if SERVER then
 				self.following = nil
 			elseif CurTime() >= self.nextFollow then
 				self.nextFollow = CurTime() + 0.1
-				aim(ply, self.following, self:GetClientInfo("target"), ply:GetEyeTrace().HitPos)
+				aim(self.following, self:GetClientInfo("target"), ply:GetEyeTrace().HitPos, nil, true)
 			end
 		end
 		-- Kick: let go, the part aimed at gets the blow (the Playroom's melee), as strong as it was held.
@@ -356,6 +396,17 @@ if CLIENT then
 			local p = ent:WorldSpaceCenter():ToScreen()
 			surface.SetDrawColor(255, 196, 70)
 			surface.DrawOutlinedRect(p.x - 14, p.y - 14, 28, 28)
+		end
+		-- The things Homers are kept on.
+		if mode == "target" then
+			surface.SetDrawColor(255, 196, 70, 160)
+			for _, h in ipairs(ents.FindByClass("prop_ragdoll")) do
+				local t = h:GetNW2Bool("DMS_Homer") and h:GetNW2Entity("DMS_Target")
+				if IsValid(t) then
+					local a, b = h:WorldSpaceCenter():ToScreen(), t:WorldSpaceCenter():ToScreen()
+					if a.visible and b.visible then surface.DrawLine(a.x, a.y, b.x, b.y) end
+				end
+			end
 		end
 		if mode == "inspect" and IsValid(ent) and inspect ~= "" then
 			local y = ScrH() * 0.3 + 30

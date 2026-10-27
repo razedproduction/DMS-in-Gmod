@@ -19,7 +19,7 @@ NM к конкретному Homer, посмотреть его состояни
 | NM on / off | `dms.Attach` | `dms.Detach` | кнопка Playroom «balance» |
 | Reactions | реакция Playroom **в точке попадания** (оружие, урон и импульс удара — из панели) | `kill` | `health value=200` |
 | NM behaviour | `<поведение> start=true` (с профилем тюнинга, если он включён) | кнопка «STOP all» | «balance» |
-| Target | точка в мире для выбранного Homer (держишь — он следит) | выбрать Homer (без выбора — ближайший) | `<сообщение> start=false` |
+| Target | проп, игрок или NPC — Homer **следит за ним**, пока тот двигается; точка мира — держишь, и он следит за прицелом | выбрать Homer (без выбора — ближайший) | `<сообщение> start=false`, слежка снята |
 | Inspector | выбрать Homer: состояние и последние события NM на экране, отладочный оверлей только на нём | снять выбор | оверлей вкл/выкл |
 | Kick | держишь — набирается сила, отпустил — удар Playroom (`melee`) в часть под прицелом | — | — |
 | Throw Homer | новый Homer перед игроком, брошен по прицелу, затем реакция `dropped` | новый Homer стоя в точке прицела | — |
@@ -28,8 +28,13 @@ NM к конкретному Homer, посмотреть его состояни
 
 - Строки — как у Playroom (`delirium-room`): `headLook start=true pos= alwaysLook=true`, `pointArm start=true target=`,
   `leanInDirection start=true leanAmount=0.4 dir=`, `upperBodyFlinch start=true pos= newHit=true`,
-  `grab start=true linegrab=true useLeft=true useRight=true dontLetGo=true pos1= pos2=` (линия 0.6 м поперёк взгляда).
-  Точки переводятся в кадр NM через `Controller:Send`.
+  `grab start=true linegrab=true useLeft=true useRight=true dontLetGo=true pos1= pos2=` (линия 0.6 м поперёк пути от
+  Homer к точке). Точки переводятся в кадр NM через `Controller:Send`.
+- Слежка за целью: точка попадания на пропе (в его локальных координатах, едет вместе с ним) или глаза игрока/NPC.
+  Сервер раз в 0.1 с проверяет цели и шлёт строку заново **только если точка сдвинулась** (> 1 unit); `headLook`
+  получает и скорость цели (`vel`, как у Playroom для брошенного), повторный `upperBodyFlinch` — без `newHit`. Слежка
+  живёт и без инструмента в руках; снимается по R, новой цели, удалению цели или снятию NM. В HUD режима — линия от
+  Homer к цели.
 - Реакции в точке — общая функция `DMS_ReactAt` (`reactions.lua`), её же теперь использует `dms_react`; спавн Homer
   для игрока (undo, cleanup, NM, `bodyBalance`) — `DMS_SpawnHomerFor` (`homer.lua`), её же — `dms_homer`.
 - Инспектор шлёт текст состояния владельцу 5 раз в секунду, только пока инструмент в руках и режим «Inspector»;
