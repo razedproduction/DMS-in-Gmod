@@ -7,14 +7,16 @@ use std::process::Command;
 use dms_homer::{phy, smd};
 
 const USAGE: &str = "\
-usage: dms-homer [--game <GTA IV dir>] [--gmod <GarrysMod dir>] [--work <dir>]
+usage: dms-homer [--game <GTA IV dir>] [--gmod <GarrysMod dir>] [--work <dir>] [--joints <file> --model <dms/proxy/x.mdl>]
   makes garrysmod\\models\\dms\\homer.mdl (+ .phy, .vvd, .vtx) from the game's Homer (m_y_pmanhat_01): NM's body,
   drawn as the Playroom draws it, with studiomdl from Garry's Mod's bin\\win64, and checks the compiled .phy against NM's body.
   --game  GTA IV's folder (default: DMS_GAME_DIR, else garrysmod\\data\\dms\\game_dir.txt, else the repository's
           golden\\game_dir.txt)
   --gmod  Garry's Mod's folder (default: DMS_GMOD_DIR, else Steam's library from the registry)
   --work  where the SMDs, the .qc and studiomdl's log go (default: the repository's target\\dms-homer, else
-          %TEMP%\\dms-homer; never committed)";
+          %TEMP%\\dms-homer; never committed)
+  --joints  (ROADMAP M9, a spike) a model's 21 NM joints (DMS.FitJoints: `x y z` in metres a line): Homer's body
+          fitted to them (`Build::fit`) is compiled as the proxy ragdoll --model instead of Homer";
 
 fn main() {
     if let Err(e) = run() {
@@ -46,6 +48,8 @@ fn run() -> Result<(), String> {
         .or_else(|| read_dir(gmod.join("garrysmod").join("data").join("dms").join("game_dir.txt")))
         .or_else(|| repo.as_ref().and_then(|r| read_dir(r.join("golden").join("game_dir.txt"))))
         .ok_or("no game folder: pass --game <your GTA IV folder>")?;
+    let joints = take("--joints");
+    let model = take("--model").map(|p| p.to_string_lossy().replace('\\', "/"));
     let work = take("--work").or_else(|| repo.as_ref().map(|r| r.join("target").join("dms-homer")))
         .unwrap_or_else(|| std::env::temp_dir().join("dms-homer"));
     if !args.is_empty() {
@@ -58,7 +62,18 @@ fn run() -> Result<(), String> {
     }
 
     println!("dms-homer: Homer's body from {}", game.display());
-    let body = homer_body(&game)?;
+    let (build, frames) = homer_build(&game)?;
+    let mut body = dms_game::body::Body::new(&build, &frames);
+    let model = match (&joints, model) {
+        (Some(j), Some(m)) => {
+            body = fitted_body(&build, &frames, j)?;
+            println!("dms-homer: fitted to {} as {m}", j.display());
+            m
+        }
+        (None, None) => dms_homer::MODEL.to_string(),
+        _ => return Err("--joints and --model go together".into()),
+    };
+    let proxy = joints.is_some();
     std::fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;
     let bones = dms_homer::bones(&body);
     let parts = dms_homer::part_frames(&body);
@@ -72,7 +87,7 @@ fn run() -> Result<(), String> {
         std::fs::write(materials.join(format!("{}.vmt", m.name)), dms_homer::visual::vmt(m)).map_err(|e| e.to_string())?;
     }
     write("homer_ref.smd", &smd::write(&bones, &dms_homer::visual::triangles(&body, &parts)))?;
-    write("homer.qc", &dms_homer::qc(&body, "homer_ref.smd", "homer_phys.smd"))?;
+    write("homer.qc", &dms_homer::qc_named(&body, &model, "homer_ref.smd", "homer_phys.smd"))?;
 
     println!("dms-homer: studiomdl ({})", studiomdl.display());
     let log = work.join("studiomdl.log");
@@ -82,7 +97,7 @@ fn run() -> Result<(), String> {
         .output().map_err(|e| format!("studiomdl: {e}"))?;
     let text = String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
     std::fs::write(&log, &text).map_err(|e| e.to_string())?;
-    let mdl = garrysmod.join("models").join(dms_homer::MODEL.replace('/', "\\"));
+    let mdl = garrysmod.join("models").join(model.replace('/', "\\"));
     if !out.status.success() || text.contains("ERROR") {
         let tail: Vec<&str> = text.lines().filter(|l| l.contains("ERROR") || l.contains("WARNING")).take(10).collect();
         return Err(format!("studiomdl failed ({}): see {}\n{}", out.status, log.display(), tail.join("\n")));
@@ -95,6 +110,10 @@ fn run() -> Result<(), String> {
     let text = dms_homer::phy_text(&body, &phy::blocks(&compiled.text))?;
     std::fs::write(&phy_path, phy::write(&compiled, &text)).map_err(|e| format!("{}: {e}", phy_path.display()))?;
     println!("dms-homer: {} (+ .phy with NM's masses, constraints and self-collision pairs)", mdl.display());
+    if proxy {
+        report(&dms_homer::check_phy(&body, &phy::read(&std::fs::read(&phy_path).map_err(|e| e.to_string())?)?)?);
+        return Ok(());
+    }
     // The mark the addon checks at start (dms_init.lua): which body this model is.
     let mark = mdl.with_file_name("homer_version.txt");
     let text = format!("model {}\ndms-homer {}\n", dms_game::MODEL_VERSION, env!("CARGO_PKG_VERSION"));
@@ -105,8 +124,8 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
-/// Homer's body from the game, as `tools/dms-game` reads it (the Playroom's way).
-fn homer_body(game: &Path) -> Result<dms_game::body::Body, String> {
+/// Homer's build and standing frames from the game, as `tools/dms-game` reads them (the Playroom's way).
+fn homer_build(game: &Path) -> Result<(delirium::ragdoll::Build, Vec<delirium::prelude::Transform>), String> {
     let g = dms_game::Game::open(game)?;
     if let Some(m) = g.materials() {
         dms_game::set_surfaces(&m);
@@ -116,8 +135,24 @@ fn homer_body(game: &Path) -> Result<dms_game::body::Body, String> {
     if unsafe { delirium_physics::nm_init_memory(fred.as_ptr(), fred.len() as i32) } < 0 {
         return Err("nm_init_memory: fred.xrt didn't load".into());
     }
-    let (b, frames) = g.homer()?;
-    Ok(dms_game::body::Body::new(&b, &frames))
+    g.homer()
+}
+
+/// Homer's body fitted to a model's 21 joints (`Build::fit` on his standing frames, as the module fits it).
+fn fitted_body(build: &delirium::ragdoll::Build, frames: &[delirium::prelude::Transform], path: &Path) -> Result<dms_game::body::Body, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let joints: Vec<delirium::prelude::Vec3> = text
+        .lines()
+        .filter_map(|l| {
+            let v: Vec<f32> = l.split_whitespace().filter_map(|w| w.parse().ok()).collect();
+            (v.len() == 3).then(|| delirium::prelude::Vec3::new(v[0], v[1], v[2]))
+        })
+        .collect();
+    if joints.len() != build.parts.len() {
+        return Err(format!("{}: {} joints, {} wanted", path.display(), joints.len(), build.parts.len()));
+    }
+    let (b, f) = build.fit(frames, &joints);
+    Ok(dms_game::body::Body::new(&b, &f))
 }
 
 fn report(checks: &[dms_homer::PhyCheck]) {

@@ -10,7 +10,7 @@ use delirium::ragdoll::Obstacle;
 
 use crate::data;
 use crate::ffi::vphysics_nm::{self, IPhysicsConstraint, IPhysicsObject, Version};
-use crate::follow::{Follower, GravityMode, PARTS};
+use crate::follow::{BodyDef, Follower, GravityMode, PARTS};
 use crate::lua::{self, Api, LuaState, TTABLE, native};
 use crate::step;
 use crate::world;
@@ -121,12 +121,24 @@ pub unsafe fn parts(api: &Api, l: *mut LuaState, arg: c_int) -> Result<Vec<*mut 
 /// # Safety
 /// The objects are live until the agent is unfollowed.
 pub unsafe fn start(objects: Vec<*mut IPhysicsObject>, yaw: f32, floor: Vec3, room: bool) -> Result<u32, String> {
+    let d = data::get().ok_or_else(|| format!("NM's data isn't loaded (DMS.LoadData): {}", data::how_to()))?;
+    unsafe { start_body(objects, BodyDef::homer(&d), yaw, floor, room) }
+}
+
+/// [`start`] on any NM body (`def`): Homer's or one fitted to a model (ROADMAP M9).
+///
+/// # Safety
+/// As [`start`].
+pub unsafe fn start_body(objects: Vec<*mut IPhysicsObject>, def: Arc<BodyDef>, yaw: f32, floor: Vec3, room: bool) -> Result<u32, String> {
     let nm = vphysics_nm::get().ok_or("IPhysicsNM isn't available (vphysics.dll isn't VPhysics-Box3D)")?;
     if nm.version < Version::V004 {
         return Err(format!("{} is too old for Homer: update VPhysics-Box3D", nm.version.name()));
     }
     let d = data::get().ok_or_else(|| format!("NM's data isn't loaded (DMS.LoadData): {}", data::how_to()))?;
-    let joints = d
+    if objects.len() != def.body.parts.len() {
+        return Err(format!("{} parts expected, {} given", def.body.parts.len(), objects.len()));
+    }
+    let joints = def
         .body
         .parts
         .iter()
@@ -136,7 +148,7 @@ pub unsafe fn start(objects: Vec<*mut IPhysicsObject>, yaw: f32, floor: Vec3, ro
             Some(q) => {
                 // SAFETY: both are PhysObj of the ragdoll, alive for this call.
                 let c = unsafe { nm.find_constraint(objects[q], objects[k]) };
-                if c.is_null() { Err(format!("{}: no constraint to {} (not models/dms/homer.mdl?)", p.name, d.body.parts[q].name)) } else { Ok(c) }
+                if c.is_null() { Err(format!("{}: no constraint to {} (not models/dms/homer.mdl?)", p.name, def.body.parts[q].name)) } else { Ok(c) }
             }
         })
         .collect::<Result<Vec<_>, String>>()?;
@@ -147,7 +159,7 @@ pub unsafe fn start(objects: Vec<*mut IPhysicsObject>, yaw: f32, floor: Vec3, ro
     let pelvis = unsafe { nm.body_state(objects[0]) }.map_or(origin, |s| Vec3::from_array(s.position));
     let (world, crop) = world_at(&d, origin, room, pelvis);
     // SAFETY: the caller's promise.
-    unsafe { step::follow(|nm, id| Follower::new(nm, id, d.clone(), (world, crop), objects, joints, origin, yaw, room)) }
+    unsafe { step::follow(|nm, id| Follower::new(nm, id, d.clone(), def, (world, crop), objects, joints, origin, yaw, room)) }
 }
 
 /// NM's world for a frame at `origin` and a body at `at` (the game's frame): the map's round him and its crop's

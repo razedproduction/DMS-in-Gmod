@@ -225,7 +225,7 @@ pub const OVERLAY_PART: usize = 25;
 unsafe fn follow_overlay_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
     let id = unsafe { api.check_number(l, 1)? } as u32;
     let n = step::with(id, |f| {
-        let (d, o, build) = (&f.agent.doll, f.origin(), &f.data().homer);
+        let (d, o, build) = (&f.agent.doll, f.origin(), &f.def.build);
         let u = |p: Vec3| ((p + o) / METRES_PER_UNIT).to_array();
         let frames: Vec<Transform> = d.frames().collect();
         let mut n: Vec<f32> = Vec::with_capacity(follow::PARTS * OVERLAY_PART + 4);

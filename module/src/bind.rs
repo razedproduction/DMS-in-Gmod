@@ -47,10 +47,22 @@ unsafe fn bind_homer_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> 
         return Err(format!("{} has no SetBodyMaterial (or SetBodyInertia / SetJointBallLimits): update VPhysics-Box3D", nm.version.name()));
     }
     let d = data::get().ok_or_else(|| format!("NM's data isn't loaded (DMS.LoadData): {}", data::how_to()))?;
-    let body = &d.body;
-    let objects = unsafe { parts(api, l, 1, body.parts.len())? };
+    let objects = unsafe { parts(api, l, 1, d.body.parts.len())? };
+    unsafe { bind_body(api, l, &d.body, &objects) }
+}
+
+/// Binds `objects` (a ragdoll's bodies in NM's part order, standing as spawned) to `body`: Homer's, or one fitted to
+/// a model (ROADMAP M9). Pushes the joints' table as `DMS.BindHomer` does.
+///
+/// # Safety
+/// `l` is a live Lua state, called from its own thread; the objects are live.
+pub unsafe fn bind_body(api: &Api, l: *mut LuaState, body: &dms_game::body::Body, objects: &[*mut IPhysicsObject]) -> Result<c_int, String> {
+    let nm = vphysics_nm::get().ok_or("IPhysicsNM isn't available (vphysics.dll isn't VPhysics-Box3D)")?;
+    if nm.version < Version::V004 {
+        return Err(format!("{} has no SetBodyMaterial (or SetBodyInertia / SetJointBallLimits): update VPhysics-Box3D", nm.version.name()));
+    }
     let poses = objects.iter().map(|&o| pose(&nm, o)).collect::<Result<Vec<_>, _>>()?;
-    for (p, &o) in body.parts.iter().zip(&objects) {
+    for (p, &o) in body.parts.iter().zip(objects) {
         // Symmetric: its columns are its rows.
         let tensor = p.inertia.to_cols_array();
         // SAFETY: a PhysObj of the ragdoll, alive for this call; 9 floats.

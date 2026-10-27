@@ -59,9 +59,14 @@ pub fn hull_triangles(parts: &[(Vec3, Quat)], hulls: &[(Vec<Vec3>, Vec<[usize; 3
 /// `.qc` for studiomdl: the reference mesh, the ragdoll's one sequence and its collision joints. `$origin`'s
 /// -90 undoes studiomdl's default turn of the root, so model space stays NM's.
 pub fn qc(body: &Body, reference: &str, physics: &str) -> String {
+    qc_named(body, MODEL, reference, physics)
+}
+
+/// [`qc`] for another model path (a fitted body's proxy, ROADMAP M9).
+pub fn qc_named(body: &Body, model: &str, reference: &str, physics: &str) -> String {
     let mass: f32 = body.parts.iter().map(|p| p.mass).sum();
     let mut s = format!(
-        "$modelname \"{MODEL}\"\n$origin 0 0 0 -90\n$cdmaterials \"{MATERIALS}/\"\n$surfaceprop \"{SURFACE}\"\n\
+        "$modelname \"{model}\"\n$origin 0 0 0 -90\n$cdmaterials \"{MATERIALS}/\"\n$surfaceprop \"{SURFACE}\"\n\
          $body homer \"{reference}\"\n$sequence ragdoll \"{reference}\" activity ACT_DIERAGDOLL 1 fps 30\n\
          {}$collisionjoints \"{physics}\" {{\n\t$mass {mass}\n\t$inertia 1\n\t$damping 0\n\t$rotdamping 0\n\t$rootbone \"{}\"\n",
         visual::texture_group(),
