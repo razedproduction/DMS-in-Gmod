@@ -50,3 +50,6 @@ objects); and the bones without a physics object were left 10–17 cm off. On th
 - A detached ragdoll is a new entity; hooks get `DMS_Detached` on the old one, `dms.Detach` returns the new one.
 - The leaves (feet, hands, head) turn with their parent in the stance: male_07's head is a little tilted back.
 - The duplicator and saves of a ragdoll with NM on it copy a frozen ragdoll without its constraints (M11).
+- `golden fit` on male_07 (the bench, 2026-10-28): `stand` and `catchfall` within the tolerances; `push` (COM mean
+  0.061 m against 0.05) and `shot` (0.378 m against 0.25) off: the fitted body steps away further than its LEAD after a
+  push or a hit (Homer 0.020 and 0.148 m), never falls, ends as high. Open: where Box3D parts from NM's physics on it.

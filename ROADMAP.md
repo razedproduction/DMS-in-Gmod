@@ -550,8 +550,10 @@ constraints, within 7 mm), the 6 bones without objects finished on the client. P
       part's velocity, so a falling ragdoll keeps falling; `dms_detach` gives the model its own physics back the same
       way.
 - [x] The model's look kept: posing (S4), skin, bodygroups, colour, material.
-- [x] Golden: the fitted build of male_07 against GMod (`stand`, `push`, `shot`, `catchfall`), the tolerances as for
-      Homer — its reference its own LEAD on the crate (`golden fit`), the Playroom can't load a fitted build (M9).
+- [ ] Golden: the fitted build of male_07 against GMod (`stand`, `push`, `shot`, `catchfall`), the tolerances as for
+      Homer — its reference its own LEAD on the crate (`golden fit`, there), the Playroom can't load a fitted build (M9).
+      `stand` and `catchfall` within them; `push` (COM mean 0.061 m, tolerance 0.05) and `shot` (0.378 m, 0.25) off:
+      it steps away further than its LEAD (Homer: 0.020, 0.148), never falls, ends as high.
 - [ ] The body check (`golden body`) on the fitted body (moved to M11).
 - [x] The DMS window: "NM on the ragdoll under the crosshair" works on any model, the model's fit shown (height, mass,
       warnings).
