@@ -6,6 +6,13 @@ DMS_HOMER_MODEL = "models/dms/homer.mdl"
 
 local say = DMS_Say
 
+-- The model's mark from dms-homer (models/dms/homer_version.txt: `model <n>`): which body it was made for, to compare
+-- with DMS.HomerModelVersion. Nil for a model made before the mark.
+function DMS_HomerModelVersion()
+	local text = file.Read("models/dms/homer_version.txt", "GAME")
+	return text and tonumber(text:match("model%s+(%d+)"))
+end
+
 -- The ragdoll's PhysObj in NM's part order (its bones are named as NM's parts), or nil and why.
 function DMS_HomerParts(ent)
 	local byName = {}
@@ -29,7 +36,7 @@ function DMS_SpawnHomer(pos, yaw)
 		return nil, DMS_HOMER_MODEL .. " isn't there: make it with tools\\dms-homer from your GTA IV (docs/homer.md)"
 	end
 	if not DMS.DataInfo() then
-		local ok, err = pcall(DMS.LoadData, GetConVar("dms_game_dir"):GetString())
+		local ok, err = pcall(DMS.LoadData, DMS_GameDir())
 		if not ok then return nil, "NM's data isn't loaded: " .. tostring(err) end
 	end
 	-- NM's world and friction (world.lua) before NM's materials go on his parts.
@@ -54,7 +61,7 @@ function DMS_BindRagdoll(ent, floor, yaw)
 	local parts, why = DMS_HomerParts(ent)
 	if not parts then return false, why end
 	if not DMS.DataInfo() then
-		local ok, err = pcall(DMS.LoadData, GetConVar("dms_game_dir"):GetString())
+		local ok, err = pcall(DMS.LoadData, DMS_GameDir())
 		if not ok then return false, "NM's data isn't loaded: " .. tostring(err) end
 	end
 	DMS_MapWorld()

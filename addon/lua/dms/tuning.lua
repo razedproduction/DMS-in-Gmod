@@ -69,7 +69,7 @@ hook.Add("DMS_Attached", "DMS_Tuning", DMS_TuningApply)
 -- the menu's.
 local SWITCHES = {
 	"tasks", "look", "avoid", "getup", "extra_reactions", "extra_pick", "fire_reaction", "dive_shot", "dodge_gap",
-	"weak", "god", "pedcol", "autoattach", "max_agents", "threads", "lod_distance", "lod_still",
+	"weak", "god", "pedcol", "autoattach", "max_agents", "threads", "lod_distance", "lod_still", "react_log",
 }
 local isSwitch = {}
 for _, s in ipairs(SWITCHES) do isSwitch[s] = true end
@@ -84,12 +84,28 @@ local function switches()
 	return out
 end
 
+-- What the Debug tab shows: the versions that have to match, NM's data and what keeps Homer from working.
+local function about()
+	local d = DMS.DataInfo()
+	return {
+		module = DMS.Version,
+		addon = DMS_ADDON_VERSION,
+		delirium = DMS.DeliriumVersion,
+		interface = DMS.InterfaceVersion() or "none",
+		model = DMS.HomerModelVersion,
+		modelMade = DMS_HomerModelVersion() or "unmarked",
+		gameDir = DMS_GameDir(),
+		data = d and string.format("%s (%s), Homer %d parts", d.dir, d.platform, d.parts) or "not loaded",
+		problems = DMS_Problems(),
+	}
+end
+
 -- What the menu needs: NM's behaviours and their params, the Playroom's reaction table, the profiles.
 local function catalogue()
 	-- The menu may open before any Homer: NM's data from the game as a spawn loads it (taskparams, weapons need it).
 	local why
 	if not DMS.DataInfo() then
-		local ok, err = pcall(DMS.LoadData, GetConVar("dms_game_dir"):GetString())
+		local ok, err = pcall(DMS.LoadData, DMS_GameDir())
 		if not ok then why = "NM's data isn't loaded: " .. tostring(err) end
 	end
 	-- Only the names: a behaviour's params come when the menu picks it (all of them at once overflow the channel).
@@ -102,6 +118,7 @@ local function catalogue()
 		profile = profileName:GetString(),
 		on = tuningOn:GetBool(),
 		switches = switches(),
+		about = about(),
 		error = why,
 	}
 end

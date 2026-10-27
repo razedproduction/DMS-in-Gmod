@@ -346,6 +346,16 @@ concommand.Add("dms_attach", function(ply)
 	say(ply, c and ("[DMS] NM on " .. tostring(ent)) or ("[DMS] dms_attach: " .. tostring(why)))
 end)
 
+-- dms_detach: NM off the Homer looked at (an ordinary ragdoll).
+concommand.Add("dms_detach", function(ply)
+	if not admin(ply) then return end
+	local ent = aimed(ply)
+	if not ent then return say(ply, "[DMS] dms_detach: look at a Homer ragdoll (" .. DMS_HOMER_MODEL .. ")") end
+	if not ent.DMS_Agent then return say(ply, "[DMS] dms_detach: NM isn't on " .. tostring(ent)) end
+	dms.Detach(ent)
+	say(ply, "[DMS] NM off " .. tostring(ent))
+end)
+
 -- dms_detach_all: NM off every Homer.
 concommand.Add("dms_detach_all", function(ply)
 	if not admin(ply) then return end
