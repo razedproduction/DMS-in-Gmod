@@ -1,0 +1,10 @@
+# Задачи игры (M6, 	asks включён): выстрел в грудь, ShotTask; когда задача NM кончается (скорость < 0.2 м/с после
+# 1 с, или 10 с), Homer уходит в анимацию: встаёт клипом, если лежит, иначе стоит (idle).
+#! window
+#! tol marks said=room__shot_(pistol):0.05 said=ours__game_task:0.50
+3 !button get-up
+3 !button get-up
+3 !set tasks 1
+3 !button balance
+5 !shoot 9
+14 !quit

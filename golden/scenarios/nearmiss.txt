@@ -1,0 +1,11 @@
+# Промах рядом (M6): стоит, через 2 с пуля проходит в 0.5 м от головы (!miss 0.5, его 
+ear_miss): bodyBalance,
+# upperBodyFlinch и headLook на пулю; через 1 с — ещё одна (dive_shot выключен: снова вздрагивает).
+#! window
+#! tol com_max=0.10 com_mean=0.05 fall marks said=room__shot:_near_miss:0.05   # реакция слоя комнаты
+3 !button get-up
+3 !button get-up
+3 !button balance
+5 !miss 0.5
+6 !miss 0.5
+10 !quit

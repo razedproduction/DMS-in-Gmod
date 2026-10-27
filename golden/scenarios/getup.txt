@@ -1,0 +1,7 @@
+# Вставание (M6): режим по умолчанию — animation (клип игры get_up_fast). Стоит, через 2 с bodyRelax: оседает,
+# лежит 2 с неподвижно -> клип вставания (тела держит клип), в конце новый агент на последней позе и bodyBalance.
+#! window
+#! tol said=ours__getting_up:2.0 said=ours__up:_balancing:2.0   # тело Box3D замирает после bodyRelax раньше (relax, ADR 0017-0019): клип тот же, 1.50 с   # rise Playroom'а
+3 !button balance
+5 !button relax
+16 !quit

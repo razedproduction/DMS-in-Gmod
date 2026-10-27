@@ -80,9 +80,13 @@ Playroom в начале комнаты (на 3 м выше для `!button fall
 Playroom. Запись — формат Playroom `--rec`, в порядке его тика; `n`/`g` у частей — держащие контакты NM (`held_world`)
 на состоянии Box3D. По окончании NM с Homer снимается (до следующего прогона он обычный ragdoll).
 
-Умеет: сообщения NM, `!button` (`balance windmill pedal writhe rollup catchfall highfall stairs relax stayup foetal
-"STOP all"`, `fall` только в начале, `get-up` — только журнал), `!poke`, `!quit`. Не умеет (пишет `# dms: not run on
-the bench: …`): выстрел (ShotTask, M6), кнопки со взглядом тела, `!shoot`, `!grab`, `!blast` и прочие `!…`.
+Умеет: сообщения NM, все `!button` поведений Playroom (`Sim::lines`: `balance drunk windmill pedal writhe rollup
+catchfall highfall stairs flinch brace look point lean relax stayup foetal grab overwall "STOP all"`, `shot`, `shot
+back`; `fall` только в начале; `get-up` переключает режим вставания), выстрел headless на шаге 60 (ShotTask), команды
+реакций Playroom (M6, ADR 0020) `!shoot <часть> [fatal]`, `!weapon <i>`, `!blast x,y,z`, `!miss <x>`, `!set <ключ>
+<значение>`, `!hfall [up]`, `!nododge`, а также `!poke`, `!quit`. Слой реакций (выстрел, взрыв, смерть, вставание
+клипом или мышцами, задачи игры, `in_air`) — тот же код, что у Homer в игре; агент сценария всегда на умолчаниях
+Playroom и без тюнинга. Не умеет (пишет `# dms: not run on the bench: …`): `!grab`, Hero, машины Playroom и прочие `!…`.
 
 `golden behaviour --source [имена]` сверяет записи с Playroom **по допускам сценария** — строка `#! tol` в файле
 сценария (`golden/README.md`): разрыв COM, конечная высота, падение, время оседания, шаги команд, реакции слоя

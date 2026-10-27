@@ -32,6 +32,7 @@ function DMS_Follow(ent)
 	DMS_Agents[id] = ent
 	-- Off before the ragdoll's bodies go.
 	ent:CallOnRemove("DMS_Unfollow", function(e) DMS_Unfollow(e) end)
+	hook.Run("DMS_Attached", ent, id)
 	return id
 end
 
@@ -42,6 +43,9 @@ function DMS_Unfollow(ent)
 	DMS.Unfollow(id)
 	DMS_Agents[id] = nil
 	ent.DMS_Agent = nil
+	-- Held on a get-up clip: an ordinary ragdoll moves again.
+	if ent.DMS_Rising then DMS_Unfreeze(ent) end
+	hook.Run("DMS_Detached", ent, "detached")
 end
 
 -- A message line to Homer's agent (`bodyBalance start=true`, as the Playroom's console takes it).
@@ -56,7 +60,10 @@ local function partsOf(id)
 	return ent, DMS_HomerParts(ent)
 end
 
-local handlers = {
+-- By event kind; reactions.lua adds the room's (freeze, unfreeze, died, say).
+DMS_FollowHandlers = DMS_FollowHandlers or {}
+local handlers = DMS_FollowHandlers
+for k, h in pairs({
 	-- NM's doll fell asleep: so do the bodies (no drives come while it sleeps); a hit wakes both.
 	sleep = function(ent, parts) for _, p in ipairs(parts) do p:Sleep() end end,
 	feedback = function(ent, _, e)
@@ -70,7 +77,7 @@ local handlers = {
 		ent.DMS_Agent = nil
 		hook.Run("DMS_Detached", ent, e.text)
 	end,
-}
+}) do handlers[k] = h end
 
 local nextMask = 0
 hook.Add("Think", "DMS_Follow", function()
@@ -109,6 +116,10 @@ concommand.Add("dms_status", function(ply)
 	if not admin(ply) then return end
 	local lines = { string.format("[DMS] %d agent(s), gravity %s (Source %.2f m/s^2, NM 9.8), NM %.3f ms a physics step",
 		#DMS.FollowList(), mode(), -physenv.GetGravity().z * METRES_PER_UNIT, DMS.FollowCost()) }
+	-- docs/adr/0009: with tuning on, Homer isn't the Playroom's.
+	local tuning = GetConVar("dms_tuning")
+	lines[#lines + 1] = (tuning and tuning:GetBool()) and ("  tuning ON, profile " .. GetConVar("dms_tuning_profile"):GetString())
+		or "  tuning off (the Playroom's)"
 	for _, id in ipairs(DMS.FollowList()) do
 		local s = DMS.FollowState(id)
 		local ent = DMS_Agents[id]

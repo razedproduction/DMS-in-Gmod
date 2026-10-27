@@ -1,10 +1,12 @@
 //! NM's inputs from the user's copy of GTA IV, read the way the Playroom (`delirium-room`) reads them
 //! (docs/adr/0008, 0009): the same files, the same `delirium-data` calls, in the same order.
 //!
-//! Mirrors `delirium-room`'s `archive_read`, `load` and `getup::{key, plat, homer, Clips::stand_up}`. Only
-//! what Homer's agent needs is read; anything else of the Playroom's (get-up clips, weapons, the room) isn't.
+//! Mirrors `delirium-room`'s `archive_read`, `load` and `getup::{key, plat, homer, Clips::stand_up}`, and the get-up
+//! clips, weapons and agility its reactions use (`getup.rs`, ROADMAP M6). Only what Homer's agent needs is read;
+//! anything else of the Playroom's (the room, the fights' clips) isn't.
 
 pub mod body;
+pub mod getup;
 pub mod stage;
 
 use std::io::{Read, Seek, SeekFrom};
@@ -111,6 +113,28 @@ impl Game {
     /// `data/materials/materials.dat`, the surfaces' table.
     pub fn materials(&self) -> Option<String> {
         self.archive("common.rpf", "data/materials/materials.dat").ok().map(|d| String::from_utf8_lossy(&d).into_owned())
+    }
+
+    /// `data/weaponinfo.xml`'s weapons, as the Playroom's `load` reads them (none without the file).
+    pub fn weapons(&self) -> Vec<delirium_data::weapons::Weapon> {
+        self.archive("common.rpf", "data/weaponinfo.xml")
+            .ok()
+            .map(|d| delirium_data::weapons::read(&String::from_utf8_lossy(&d)))
+            .unwrap_or_default()
+    }
+
+    /// Homer's agility, `data/pedpersonality.dat`'s column 7 for his model (the Playroom's `load`; 3 without it).
+    pub fn agility(&self) -> u8 {
+        self.archive("common.rpf", "data/pedpersonality.dat")
+            .ok()
+            .map(|d| String::from_utf8_lossy(&d).into_owned())
+            .and_then(|t| {
+                t.lines()
+                    .map(|l| l.split(',').map(str::trim).collect::<Vec<_>>())
+                    .find(|c| c.len() > 7 && c[0].eq_ignore_ascii_case(HOMER_MODEL))
+                    .and_then(|c| c[7].parse::<u8>().ok())
+            })
+            .unwrap_or(3)
     }
 
     /// Homer's build and its standing frames, as the Playroom makes them with `--game`: `getup::homer` (which

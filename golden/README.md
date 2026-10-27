@@ -103,6 +103,12 @@ Playroom запускается с рабочим каталогом `golden/out
 | `lowwall` | window, stage=lowwall | стойка, толчок 90 Н·с на стену 0.9 м: стена останавливает |
 | `rooftop` | window, stage=rooftop | стойка на крыше 4 м, толчок к краю: armHang, highFall |
 | `stairs` | window, stage=bigstairs | стойка наверху лестницы 6 м, толчок к ступеням |
+| `blast` | window | стойка, через 2 с `!blast` в 1.5 м за спиной: полёт 11 м, задача взрыва (M6) |
+| `nearmiss` | window | стойка, две пули в 0.5 м от головы (`!miss`): вздрагивает и смотрит |
+| `shotgun` | window | `!weapon 5`, выстрел дробовиком в грудь (`!shoot 9`): ShotTask с набором дробовика |
+| `death` | window | смертельный выстрел в голову: `STOP all`, `relax`, обмякает |
+| `getup` | window | `relax`, лежит 2 с, встаёт клипом игры (`get_up_fast`), снова `bodyBalance` |
+| `tasks` | window | `!set tasks 1`, выстрел: задача кончается, Homer уходит в анимацию (стоит) |
 
 ## Формат `--rec`
 
