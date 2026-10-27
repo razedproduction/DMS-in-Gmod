@@ -12,9 +12,9 @@ use delirium::prelude::*;
 use delirium::ragdoll::{Build, Ragdoll};
 
 use crate::data;
-use crate::ffi::vphysics_nm::{self, IPhysicsObject};
+use crate::ffi::vphysics_nm::{self, IPhysicsConstraint, IPhysicsObject, Version};
 use crate::follow::BodyDef;
-use crate::lua::{self, Api, LuaState, TTABLE, native};
+use crate::lua::{self, Api, LuaState, TNUMBER, TTABLE, native};
 
 pub const NATIVES: &[(&CStr, lua::CFunction)] = &[
     (c"ModelSkeleton", model_skeleton),
@@ -26,6 +26,10 @@ pub const NATIVES: &[(&CStr, lua::CFunction)] = &[
     (c"BindFitted", bind_fitted),
     (c"FollowFitted", follow_fitted),
     (c"PoseModel", pose_model),
+    (c"NativeBody", native_body),
+    (c"NativeBind", native_bind),
+    (c"NativeFollow", native_follow),
+    (c"NativeRemove", native_remove),
 ];
 
 /// Metres per Source unit.
@@ -222,6 +226,8 @@ fn fitted(key: &str) -> Result<Arc<Fitted>, String> {
 /// Drops the fitted bodies (the module's unload, docs/adr/0021).
 pub fn unload() {
     *FITS.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    // The map's environment took the native bodies with it.
+    *NATIVE.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
 /// Homer's build fitted to a ValveBiped skeleton (`Build::fit` on Homer's standing frames), NM's spine joints spread
@@ -455,11 +461,16 @@ pub fn angles(q: Quat) -> [f32; 3] {
 }
 
 native!(pose_model => pose_model_impl);
-/// `DMS.PoseModel(key, parts)`: where the model's mapped bones are with the fitted body's 21 PhysObj as they are
-/// now (S4): `{[bone name] = {pos = Vector-like (units), ang = {p, y, r}}}`.
+/// `DMS.PoseModel(key, parts)`: where the model's mapped bones are with the fitted body's parts as they are now
+/// (S4), `parts` its 21 PhysObj or a native body's handle: `{[bone name] = {pos (units), ang = {x = pitch, y = yaw,
+/// z = roll}}}`.
 unsafe fn pose_model_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
     let f = fitted(&unsafe { api.check_string(l, 1)? })?;
-    let parts = unsafe { objects(api, l, 2, f.def.body.parts.len())? };
+    let parts = if unsafe { (api.type_)(l, 2) } == TNUMBER {
+        native(unsafe { api.check_number(l, 2)? } as u32)?.objects
+    } else {
+        unsafe { objects(api, l, 2, f.def.body.parts.len())? }
+    };
     let nm = vphysics_nm::get().ok_or("IPhysicsNM isn't available")?;
     let poses = parts
         .iter()
@@ -480,4 +491,121 @@ unsafe fn pose_model_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> 
         }
     }
     Ok(1)
+}
+
+/// The game flag that keeps an entity's objects off each other (Source's `FVPHYSICS_NO_SELF_COLLISIONS`): the native
+/// bodies take their owner's entity, so they touch neither each other nor the model's own objects.
+const NO_SELF_COLLISIONS: u16 = 0x8000;
+
+/// A fitted body made by the fork (S3 (a), `VBOX3D_NM_005`): its 21 bodies in part order and their joints (null for
+/// the root).
+#[derive(Clone)]
+pub struct NativeBody {
+    pub objects: Vec<*mut IPhysicsObject>,
+    pub joints: Vec<*mut IPhysicsConstraint>,
+}
+
+// SAFETY: only used on the game's main thread, where the physics and Lua both run.
+unsafe impl Send for NativeBody {}
+
+static NATIVE: Mutex<Option<(u32, HashMap<u32, NativeBody>)>> = Mutex::new(None);
+
+fn native(handle: u32) -> Result<NativeBody, String> {
+    NATIVE.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|(_, m)| m.get(&handle).cloned()).ok_or_else(|| format!("no native body #{handle}"))
+}
+
+native!(native_body => native_body_impl);
+/// `DMS.NativeBody(key, owner, pos, yaw)`: the fitted body made by the fork in `owner`'s environment (a PhysObj of
+/// the model's ragdoll, whose entity the bodies stand in for), standing as `nm_agent_create` puts it at `pos` (m, its
+/// feet's level) facing `yaw` (rad): NM's capsules and boxes as `dms-homer` hulls them, NM's masses, a ragdoll
+/// constraint per joint. Its handle and how long it took (ms).
+unsafe fn native_body_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
+    let f = fitted(&unsafe { api.check_string(l, 1)? })?;
+    let owner = unsafe { api.check_physobj(l, 2)? };
+    let at = Vec3::from_array(unsafe { api.check_vec3(l, 3)? });
+    let yaw = unsafe { api.check_number(l, 4)? } as f32;
+    let nm = vphysics_nm::get().ok_or("IPhysicsNM isn't available")?;
+    if nm.version < Version::V005 {
+        return Err(format!("{} has no CreateBody: update VPhysics-Box3D", nm.version.name()));
+    }
+    let started = std::time::Instant::now();
+    // SAFETY: a PhysObj Lua handed over.
+    let env = unsafe { nm.object_environment(owner) };
+    let body = &f.def.body;
+    let mut made = NativeBody { objects: vec![], joints: vec![std::ptr::null_mut(); body.parts.len()] };
+    let undo = |nm: &vphysics_nm::Nm, made: &NativeBody| {
+        for &j in &made.joints {
+            // SAFETY: made below, not destroyed yet.
+            unsafe { nm.destroy_joint(j) };
+        }
+        for &o in &made.objects {
+            unsafe { nm.destroy_body(o) };
+        }
+    };
+    for (p, (pos, rot)) in body.parts.iter().zip(body.placed(at, yaw)) {
+        let points: Vec<[f32; 3]> = dms_homer::hull::points(&p.shape).iter().map(|v| v.to_array()).collect();
+        // SAFETY: `env` is the owner's live environment; outside the step callback (Lua).
+        let o = unsafe { nm.create_body(env, owner, &points, p.mass, &pos.to_array(), &rot.to_array(), NO_SELF_COLLISIONS) }.unwrap_or(std::ptr::null_mut());
+        if o.is_null() {
+            undo(&nm, &made);
+            return Err(format!("{}: CreateBody failed", p.name));
+        }
+        made.objects.push(o);
+    }
+    for j in &body.joints {
+        // SAFETY: two bodies just made.
+        let c = unsafe { nm.create_joint(made.objects[j.parent], made.objects[j.part], j.hinge) }.unwrap_or(std::ptr::null_mut());
+        if c.is_null() {
+            undo(&nm, &made);
+            return Err(format!("{}: CreateJoint failed", body.parts[j.part].name));
+        }
+        made.joints[j.part] = c;
+    }
+    let ms = started.elapsed().as_secs_f64() * 1000.0;
+    let mut slot = NATIVE.lock().unwrap_or_else(|e| e.into_inner());
+    let (next, map) = slot.get_or_insert_with(|| (0, HashMap::new()));
+    *next += 1;
+    map.insert(*next, made);
+    unsafe {
+        (api.pushnumber)(l, f64::from(*next));
+        (api.pushnumber)(l, ms);
+    }
+    Ok(2)
+}
+
+native!(native_bind => native_bind_impl);
+/// `DMS.NativeBind(key, handle)`: `DMS.BindFitted` on a native body.
+unsafe fn native_bind_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
+    let f = fitted(&unsafe { api.check_string(l, 1)? })?;
+    let n = native(unsafe { api.check_number(l, 2)? } as u32)?;
+    unsafe { crate::bind::bind_body(api, l, &f.def.body, &n.objects) }
+}
+
+native!(native_follow => native_follow_impl);
+/// `DMS.NativeFollow(key, handle, yaw, floor)`: `DMS.FollowFitted` on a native body; the agent's id.
+unsafe fn native_follow_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
+    let f = fitted(&unsafe { api.check_string(l, 1)? })?;
+    let n = native(unsafe { api.check_number(l, 2)? } as u32)?;
+    let yaw = unsafe { api.check_number(l, 3)? } as f32;
+    let floor = Vec3::from_array(unsafe { api.check_vec3(l, 4)? });
+    let id = unsafe { crate::agents::start_body(n.objects, f.def.clone(), yaw, floor, false)? };
+    unsafe { (api.pushnumber)(l, f64::from(id)) };
+    Ok(1)
+}
+
+native!(native_remove => native_remove_impl);
+/// `DMS.NativeRemove(handle)`: the native body's joints and bodies gone (its agent taken off first, `DMS.Unfollow`).
+unsafe fn native_remove_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
+    let handle = unsafe { api.check_number(l, 1)? } as u32;
+    let n = NATIVE.lock().unwrap_or_else(|e| e.into_inner()).as_mut().and_then(|(_, m)| m.remove(&handle));
+    if let (Some(n), Some(nm)) = (n, vphysics_nm::get()) {
+        for &j in &n.joints {
+            // SAFETY: made by `native_body`, not destroyed yet.
+            unsafe { nm.destroy_joint(j) };
+        }
+        for &o in &n.objects {
+            unsafe { nm.destroy_body(o) };
+        }
+    }
+    Ok(0)
 }

@@ -42,6 +42,8 @@ local function spawnLook(model, pos, yaw)
 	look:SetAngles(Angle(0, yaw, 0))
 	look:Spawn()
 	look:Activate()
+	-- Its own joints would fight the NM body's proportions: Source's separation fix pulls the objects back.
+	look:RemoveInternalConstraint(-1)
 	for i = 0, look:GetPhysicsObjectCount() - 1 do
 		local p = look:GetPhysicsObjectNum(i)
 		p:EnableMotion(false)
@@ -89,6 +91,31 @@ function DMS_SpikeSpawnProxy(model, pos, yaw, showProxy)
 	local look = spawnLook(model, pos, yaw)
 	track(ent, model, look, parts)
 	return ent, look
+end
+
+-- (a): the model's own ragdoll at pos facing yaw (degrees), the fitted body made by the fork in its environment
+-- standing in for it (VBOX3D_NM_005), bound, NM on it; the model posed from it. The model's entity, or nil and why.
+function DMS_SpikeSpawnNative(model, pos, yaw)
+	local f, why = DMS_SpikeFit(model)
+	if not f then return nil, why end
+	DMS_MapWorld()
+	local look = spawnLook(model, pos, yaw)
+	local ok, handle, ms = pcall(DMS.NativeBody, model, look:GetPhysicsObjectNum(0), pos * METRES_PER_UNIT, math.rad(yaw))
+	if not ok then look:Remove() return nil, "native body: " .. tostring(handle) end
+	local ok2, e = pcall(DMS.NativeBind, model, handle)
+	if not ok2 then DMS.NativeRemove(handle) look:Remove() return nil, "bind: " .. tostring(e) end
+	local ok3, id = pcall(DMS.NativeFollow, model, handle, math.rad(yaw), pos * METRES_PER_UNIT)
+	if not ok3 then DMS.NativeRemove(handle) look:Remove() return nil, "follow: " .. tostring(id) end
+	look.DMS_Native, look.DMS_NativeAgent, look.DMS_NativeMs = handle, id, ms
+	DMS_SpikeBodies[look] = { model = model, look = look }
+	look:CallOnRemove("DMS_SpikeNative", function(l)
+		DMS_SpikeBodies[l] = nil
+		if DMS then
+			DMS.Unfollow(l.DMS_NativeAgent)
+			DMS.NativeRemove(l.DMS_Native)
+		end
+	end)
+	return look
 end
 
 -- S4 on the server: the model's physics objects where their bones are on the NM body's parts, every tick.
@@ -152,4 +179,15 @@ concommand.Add("dms_spike_proxy", function(ply, _, args)
 	if not ent then return say(ply, "[DMS] " .. tostring(look)) end
 	DMS_Send(ent, "bodyBalance start=true")
 	say(ply, string.format("[DMS] %s on its proxy, NM agent #%d, bodyBalance", model, ent.DMS_Agent))
+end)
+
+-- dms_spike_native <model>: (a) in front of the player, under bodyBalance.
+concommand.Add("dms_spike_native", function(ply, _, args)
+	if not admin(ply) then return end
+	local model = args[1] or "models/humans/group01/male_07.mdl"
+	local pos, yaw = inFront(ply)
+	local look, why = DMS_SpikeSpawnNative(model, pos, yaw)
+	if not look then return say(ply, "[DMS] " .. tostring(why)) end
+	DMS.FollowSend(look.DMS_NativeAgent, "bodyBalance start=true")
+	say(ply, string.format("[DMS] %s on native bodies (%.1f ms), NM agent #%d, bodyBalance", model, look.DMS_NativeMs, look.DMS_NativeAgent))
 end)

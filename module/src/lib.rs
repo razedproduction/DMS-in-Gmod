@@ -48,7 +48,8 @@ unsafe fn nm_version_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> 
 /// Looks for `IPhysicsNM` and says in the console what came of it (docs/adr/0005).
 fn acquire_message() -> String {
     match vphysics_nm::acquire() {
-        Ok(Version::V004) => format!("[DMS] IPhysicsNM {} found", Version::V004.name()),
+        Ok(Version::V005) => format!("[DMS] IPhysicsNM {} found", Version::V005.name()),
+        Ok(Version::V004) => format!("[DMS] IPhysicsNM {} found (no native bodies for GMod's ragdolls, ROADMAP M9)", Version::V004.name()),
         Ok(Version::V003) => format!(
             "[DMS] WARNING: only IPhysicsNM {} found, NM's contact materials (SetBodyMaterial, SetSurfaceMaterial) are \
              unavailable and Homer can't be bound: update VPhysics-Box3D",

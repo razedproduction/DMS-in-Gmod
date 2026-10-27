@@ -14,3 +14,5 @@ delirium = { path = "../../delirium-physics (CLAUDE DONT CHANGE ANYTHING HERE)/c
 delirium-data = { path = "../../delirium-physics (CLAUDE DONT CHANGE ANYTHING HERE)/crates/delirium-data" }
 delirium-sdk = { path = "../../delirium-physics (CLAUDE DONT CHANGE ANYTHING HERE)/crates/delirium-sdk" }
 dms-game = { path = "../tools/dms-game" }
+# Only its hulls (NM's capsules and boxes as VPhysics-Box3D grows them), for the native bodies (ROADMAP M9).
+dms-homer = { path = "../tools/dms-homer" }

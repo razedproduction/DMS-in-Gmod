@@ -22,6 +22,10 @@ public:
 	bool GetBodyInertia( const IPhysicsObject *pObject, float *pTensor ) override;
 	bool SetBodyMaterial( IPhysicsObject *pObject, float flFriction, float flElasticity ) override;
 	bool SetSurfaceMaterial( int nSurfaceProp, float flFriction, float flElasticity ) override;
+	IPhysicsObject *CreateBody( IPhysicsEnvironment *pEnvironment, IPhysicsObject *pOwner, const float *pPoints, int nPoints, float flMass, const float *pPosition, const float *pRotation, unsigned short nGameFlags ) override;
+	IPhysicsConstraint *CreateJoint( IPhysicsObject *pParent, IPhysicsObject *pChild, bool bHinge ) override;
+	void DestroyJoint( IPhysicsConstraint *pConstraint ) override;
+	void DestroyBody( IPhysicsObject *pObject ) override;
 };
 
 extern CPhysicsNM g_PhysicsNM;

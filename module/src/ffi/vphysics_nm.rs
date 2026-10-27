@@ -1,4 +1,4 @@
-//! VPhysics-Box3D's `IPhysicsNM` (`VBOX3D_NM_004`), as `include/vphysics_nm.h` of the fork declares it (a copy
+//! VPhysics-Box3D's `IPhysicsNM` (`VBOX3D_NM_005`), as `include/vphysics_nm.h` of the fork declares it (a copy
 //! is beside this file).
 //!
 //! Win64 only: a C++ virtual call is a plain C call with `this` first, so the vtable is a struct of
@@ -26,7 +26,8 @@ pub struct IPhysicsEnvironment {
     _private: [u8; 0],
 }
 
-pub const INTERFACE_VERSION: &str = "VBOX3D_NM_004";
+pub const INTERFACE_VERSION: &str = "VBOX3D_NM_005";
+pub const INTERFACE_VERSION_004: &str = "VBOX3D_NM_004";
 pub const INTERFACE_VERSION_003: &str = "VBOX3D_NM_003";
 pub const INTERFACE_VERSION_002: &str = "VBOX3D_NM_002";
 pub const INTERFACE_VERSION_001: &str = "VBOX3D_NM_001";
@@ -105,6 +106,22 @@ pub struct IPhysicsNMVtbl {
     /// From `VBOX3D_NM_004` on: an `_003` vtable ends before them.
     pub set_body_material: unsafe extern "C" fn(this: *mut IPhysicsNM, object: *mut IPhysicsObject, friction: f32, elasticity: f32) -> bool,
     pub set_surface_material: unsafe extern "C" fn(this: *mut IPhysicsNM, surface_prop: c_int, friction: f32, elasticity: f32) -> bool,
+    /// From `VBOX3D_NM_005` on: an `_004` vtable ends before them.
+    pub create_body: unsafe extern "C" fn(
+        this: *mut IPhysicsNM,
+        env: *mut IPhysicsEnvironment,
+        owner: *mut IPhysicsObject,
+        points: *const f32,
+        count: c_int,
+        mass: f32,
+        position: *const f32,
+        rotation: *const f32,
+        game_flags: u16,
+    ) -> *mut IPhysicsObject,
+    pub create_joint:
+        unsafe extern "C" fn(this: *mut IPhysicsNM, parent: *mut IPhysicsObject, child: *mut IPhysicsObject, hinge: bool) -> *mut IPhysicsConstraint,
+    pub destroy_joint: unsafe extern "C" fn(this: *mut IPhysicsNM, constraint: *mut IPhysicsConstraint),
+    pub destroy_body: unsafe extern "C" fn(this: *mut IPhysicsNM, object: *mut IPhysicsObject),
 }
 
 /// Which version of the interface the loaded vphysics gave.
@@ -114,6 +131,7 @@ pub enum Version {
     V002 = 2,
     V003 = 3,
     V004 = 4,
+    V005 = 5,
 }
 
 impl Version {
@@ -122,7 +140,8 @@ impl Version {
             Version::V001 => INTERFACE_VERSION_001,
             Version::V002 => INTERFACE_VERSION_002,
             Version::V003 => INTERFACE_VERSION_003,
-            Version::V004 => INTERFACE_VERSION,
+            Version::V004 => INTERFACE_VERSION_004,
+            Version::V005 => INTERFACE_VERSION,
         }
     }
 }
@@ -143,7 +162,7 @@ static VERSION: AtomicU8 = AtomicU8::new(0);
 pub fn acquire() -> Result<Version, AcquireError> {
     release();
     let create = sys::create_interface().ok_or(AcquireError::NoVphysics)?;
-    for (version, name) in [(Version::V004, c"VBOX3D_NM_004"), (Version::V003, c"VBOX3D_NM_003"), (Version::V002, c"VBOX3D_NM_002"), (Version::V001, c"VBOX3D_NM_001")] {
+    for (version, name) in [(Version::V005, c"VBOX3D_NM_005"), (Version::V004, c"VBOX3D_NM_004"), (Version::V003, c"VBOX3D_NM_003"), (Version::V002, c"VBOX3D_NM_002"), (Version::V001, c"VBOX3D_NM_001")] {
         // SAFETY: vphysics' exported factory, given a null terminated name and no return code.
         let p = unsafe { create(name.as_ptr(), ptr::null_mut()) }.cast::<IPhysicsNM>();
         if !p.is_null() {
@@ -169,6 +188,7 @@ pub fn get() -> Option<Nm> {
         2 => Version::V002,
         3 => Version::V003,
         4 => Version::V004,
+        5 => Version::V005,
         _ => return None,
     };
     (!p.is_null()).then_some(Nm { this: p, version })
@@ -327,6 +347,63 @@ impl Nm {
         }
         // SAFETY: plain values on the live interface.
         Some(unsafe { (self.vtbl().set_surface_material)(self.this, surface_prop, friction, elasticity) })
+    }
+
+    /// `CreateBody`: a moving convex hull of `points` (m, the body's frame) of `mass` kg at `position` (m) turned by
+    /// `rotation`, standing in for `owner` (its game data, material and flags). `None` before `VBOX3D_NM_005`, null
+    /// if it fails.
+    ///
+    /// # Safety
+    /// `env` is a live environment and `owner` null or a live object of it; not from the step callback.
+    pub unsafe fn create_body(
+        &self,
+        env: *mut IPhysicsEnvironment,
+        owner: *mut IPhysicsObject,
+        points: &[[f32; 3]],
+        mass: f32,
+        position: &[f32; 3],
+        rotation: &[f32; 4],
+        game_flags: u16,
+    ) -> Option<*mut IPhysicsObject> {
+        if self.version < Version::V005 {
+            return None;
+        }
+        let count = points.len() as c_int;
+        Some(unsafe {
+            (self.vtbl().create_body)(self.this, env, owner, points.as_ptr().cast(), count, mass, position.as_ptr(), rotation.as_ptr(), game_flags)
+        })
+    }
+
+    /// `CreateJoint`: a ragdoll constraint from `parent` to `child` as they are posed now (a hinge or a ball), wide
+    /// open till its limits are set. `None` before `VBOX3D_NM_005`.
+    ///
+    /// # Safety
+    /// Both are live objects of one environment; not from the step callback.
+    pub unsafe fn create_joint(&self, parent: *mut IPhysicsObject, child: *mut IPhysicsObject, hinge: bool) -> Option<*mut IPhysicsConstraint> {
+        if self.version < Version::V005 {
+            return None;
+        }
+        Some(unsafe { (self.vtbl().create_joint)(self.this, parent, child, hinge) })
+    }
+
+    /// `DestroyJoint` (a no-op before `VBOX3D_NM_005`).
+    ///
+    /// # Safety
+    /// `constraint` is null or one `create_joint` made, not destroyed yet.
+    pub unsafe fn destroy_joint(&self, constraint: *mut IPhysicsConstraint) {
+        if self.version >= Version::V005 {
+            unsafe { (self.vtbl().destroy_joint)(self.this, constraint) }
+        }
+    }
+
+    /// `DestroyBody` (a no-op before `VBOX3D_NM_005`).
+    ///
+    /// # Safety
+    /// `object` is null or one `create_body` made, its joints destroyed.
+    pub unsafe fn destroy_body(&self, object: *mut IPhysicsObject) {
+        if self.version >= Version::V005 {
+            unsafe { (self.vtbl().destroy_body)(self.this, object) }
+        }
     }
 }
 

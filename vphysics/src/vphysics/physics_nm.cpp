@@ -1,6 +1,7 @@
 #include "physics_nm.h"
 
 #include "conversion.h"
+#include "physics_collision.h"
 #include "physics_constraint.h"
 #include "physics_environment.h"
 #include "physics_object.h"
@@ -10,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <unordered_map>
 #include <vector>
 
 static constexpr float SOURCE_TO_IVP_SQUARED = SOURCE_TO_IVP * SOURCE_TO_IVP;
@@ -270,4 +272,149 @@ bool CPhysicsNM::GetBodyInertia( const IPhysicsObject *pObject, float *pTensor )
 		}
 	}
 	return true;
+}
+// The hulls CreateBody made, by body: an object only points at its collide, which has to outlive it
+static std::unordered_map<const IPhysicsObject *, CPhysCollide *> s_NMBodies;
+
+// A rotation (quaternion x, y, z, w) and a point (Source units) as a matrix3x4_t
+static void QuatMatrix( const b3Quat &q, const Vector &origin, matrix3x4_t &m )
+{
+	const b3Vec3 columns[3] = { b3RotateVector( q, { 1.0f, 0.0f, 0.0f } ), b3RotateVector( q, { 0.0f, 1.0f, 0.0f } ), b3RotateVector( q, { 0.0f, 0.0f, 1.0f } ) };
+	for ( int r = 0; r < 3; ++r )
+	{
+		m[r][0] = r == 0 ? columns[0].x : r == 1 ? columns[0].y : columns[0].z;
+		m[r][1] = r == 0 ? columns[1].x : r == 1 ? columns[1].y : columns[1].z;
+		m[r][2] = r == 0 ? columns[2].x : r == 1 ? columns[2].y : columns[2].z;
+	}
+	m[0][3] = origin.x;
+	m[1][3] = origin.y;
+	m[2][3] = origin.z;
+}
+
+// a^-1 * b for rigid transforms
+static void RelativeMatrix( const matrix3x4_t &a, const matrix3x4_t &b, matrix3x4_t &out )
+{
+	for ( int r = 0; r < 3; ++r )
+	{
+		for ( int c = 0; c < 3; ++c )
+			out[r][c] = a[0][r] * b[0][c] + a[1][r] * b[1][c] + a[2][r] * b[2][c];
+		const float d[3] = { b[0][3] - a[0][3], b[1][3] - a[1][3], b[2][3] - a[2][3] };
+		out[r][3] = a[0][r] * d[0] + a[1][r] * d[1] + a[2][r] * d[2];
+	}
+}
+
+IPhysicsObject *CPhysicsNM::CreateBody( IPhysicsEnvironment *pEnvironment, IPhysicsObject *pOwner, const float *pPoints, int nPoints, float flMass, const float *pPosition, const float *pRotation, unsigned short nGameFlags )
+{
+	if ( !pEnvironment || !pPoints || nPoints < 4 || !pPosition || !pRotation || !( flMass > 0.0f ) || !std::isfinite( flMass ) )
+		return nullptr;
+
+	b3Vec3 position;
+	b3Quat rotation;
+	if ( !LoadVector( pPosition, IVP_TO_SOURCE, position ) || !LoadQuat( pRotation, rotation ) )
+		return nullptr;
+
+	std::vector<Vector> points( nPoints );
+	std::vector<Vector *> pointers( nPoints );
+	for ( int i = 0; i < nPoints; ++i )
+	{
+		b3Vec3 p;
+		if ( !LoadVector( pPoints + 3 * i, IVP_TO_SOURCE, p ) )
+			return nullptr;
+		points[i] = ToSource( p );
+		pointers[i] = &points[i];
+	}
+
+	CPhysConvex *pConvex = g_PhysicsCollision.ConvexFromVerts( pointers.data(), nPoints );
+	if ( !pConvex )
+		return nullptr;
+
+	CPhysCollide *pCollide = g_PhysicsCollision.ConvertConvexToCollide( &pConvex, 1 );
+	if ( !pCollide )
+		return nullptr;
+
+	matrix3x4_t frame;
+	QuatMatrix( rotation, ToSource( position ), frame );
+
+	objectparams_t params = {};
+	params.mass = flMass;
+	params.inertia = 1.0f;
+	params.rotInertiaLimit = 0.05f;
+	params.pName = "dms_nm_body";
+	params.pGameData = pOwner ? pOwner->GetGameData() : nullptr;
+	params.dragCoefficient = 1.0f;
+	params.enableCollisions = true;
+
+	IPhysicsObject *pObject = pEnvironment->CreatePolyObject( pCollide, pOwner ? pOwner->GetMaterialIndex() : -1, ToSource( position ), MatrixAngles( frame ), &params );
+	if ( !pObject )
+	{
+		g_PhysicsCollision.DestroyCollide( pCollide );
+		return nullptr;
+	}
+
+	if ( pOwner )
+	{
+		pObject->SetCallbackFlags( pOwner->GetCallbackFlags() );
+		pObject->SetGameFlags( pOwner->GetGameFlags() | nGameFlags );
+	}
+	else
+	{
+		pObject->SetGameFlags( nGameFlags );
+	}
+	// the angles' round trip loses a little: the frame as given
+	pObject->SetPositionMatrix( frame, true );
+	s_NMBodies[pObject] = pCollide;
+	static_cast<CPhysicsObject *>( pObject )->SetNMDriven();
+	pObject->Wake();
+	return pObject;
+}
+
+IPhysicsConstraint *CPhysicsNM::CreateJoint( IPhysicsObject *pParent, IPhysicsObject *pChild, bool bHinge )
+{
+	if ( !pParent || !pChild || pParent == pChild )
+		return nullptr;
+
+	matrix3x4_t parent, child;
+	pParent->GetPositionMatrix( &parent );
+	pChild->GetPositionMatrix( &child );
+
+	// Defaults() but for SetIdentityMatrix, which is mathlib's (not linked)
+	constraint_ragdollparams_t ragdoll = {};
+	ragdoll.constraint.Defaults();
+	ragdoll.isActive = true;
+	ragdoll.parentIndex = ragdoll.childIndex = -1;
+	ragdoll.constraintToReference[0][0] = ragdoll.constraintToReference[1][1] = ragdoll.constraintToReference[2][2] = 1.0f;
+	// the constraint's frame is the child's (the reference's) as it is now
+	RelativeMatrix( parent, child, ragdoll.constraintToAttached );
+	for ( int i = 0; i < 3; ++i )
+		ragdoll.axes[i].SetAxisFriction( bHinge && i != 2 ? 0.0f : -170.0f, bHinge && i != 2 ? 0.0f : 170.0f, 0.0f );
+
+	CPhysicsEnvironment *pEnvironment = static_cast<CPhysicsObject *>( pChild )->GetEnvironment();
+	IPhysicsConstraint *pConstraint = pEnvironment->CreateRagdollConstraint( pChild, pParent, nullptr, ragdoll );
+	return MarkConstraintBodies( pConstraint, pConstraint != nullptr ) ? pConstraint : nullptr;
+}
+
+void CPhysicsNM::DestroyJoint( IPhysicsConstraint *pConstraint )
+{
+	if ( !pConstraint )
+		return;
+
+	CPhysicsConstraint *pPhysicsConstraint = static_cast<CPhysicsConstraint *>( pConstraint );
+	CPhysicsObject *pObject = pPhysicsConstraint->GetReference() ? pPhysicsConstraint->GetReference() : pPhysicsConstraint->GetAttached();
+	if ( pObject )
+		pObject->GetEnvironment()->DestroyConstraint( pConstraint );
+}
+
+void CPhysicsNM::DestroyBody( IPhysicsObject *pObject )
+{
+	if ( !pObject )
+		return;
+
+	auto it = s_NMBodies.find( pObject );
+	CPhysCollide *pCollide = it != s_NMBodies.end() ? it->second : nullptr;
+	if ( it != s_NMBodies.end() )
+		s_NMBodies.erase( it );
+
+	static_cast<CPhysicsObject *>( pObject )->GetEnvironment()->DestroyObject( pObject );
+	if ( pCollide )
+		g_PhysicsCollision.DestroyCollide( pCollide );
 }
