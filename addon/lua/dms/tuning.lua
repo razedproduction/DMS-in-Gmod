@@ -72,13 +72,9 @@ local function catalogue()
 		local ok, err = pcall(DMS.LoadData, GetConVar("dms_game_dir"):GetString())
 		if not ok then why = "NM's data isn't loaded: " .. tostring(err) end
 	end
-	local msgs = {}
-	for _, name in ipairs(DMS.Messages() or {}) do
-		local ok, ps = pcall(DMS.MessageParams, name)
-		msgs[#msgs + 1] = { name = name, params = ok and ps or {} }
-	end
+	-- Only the names: a behaviour's params come when the menu picks it (all of them at once overflow the channel).
 	return {
-		messages = msgs,
+		messages = DMS.Messages() or {},
 		reactions = DMS.Reactions(),
 		weapons = DMS.Weapons(),
 		taskparams = not why and DMS.TaskParams() or {},
@@ -89,13 +85,29 @@ local function catalogue()
 	}
 end
 
+-- Replies go in pieces, one a tick, so a big one (the taskparams) can't overflow the client's reliable channel.
+local CHUNK = 16000
+local outbox, nextReply = {}, 0
 local function reply(ply, kind, t)
 	local s = util.Compress(util.TableToJSON({ kind = kind, data = t }))
-	net.Start("dms_tuning")
-	net.WriteUInt(#s, 32)
-	net.WriteData(s, #s)
-	net.Send(ply)
+	nextReply = nextReply % 65535 + 1
+	local n = math.max(math.ceil(#s / CHUNK), 1)
+	for i = 1, n do
+		outbox[#outbox + 1] = { ply = ply, id = nextReply, i = i, n = n, data = s:sub((i - 1) * CHUNK + 1, i * CHUNK) }
+	end
 end
+
+hook.Add("Think", "DMS_Tuning", function()
+	local m = table.remove(outbox, 1)
+	if not m or not IsValid(m.ply) then return end
+	net.Start("dms_tuning")
+	net.WriteUInt(m.id, 16)
+	net.WriteUInt(m.i, 16)
+	net.WriteUInt(m.n, 16)
+	net.WriteUInt(#m.data, 32)
+	net.WriteData(m.data, #m.data)
+	net.Send(m.ply)
+end)
 
 -- The menu's requests: {kind, ...}. Superadmins only.
 net.Receive("dms_tuning", function(_, ply)
@@ -106,6 +118,9 @@ net.Receive("dms_tuning", function(_, ply)
 	local k = req.kind
 	if k == "catalogue" then
 		return reply(ply, "catalogue", catalogue())
+	elseif k == "params" then
+		local ok, ps = pcall(DMS.MessageParams, tostring(req.name))
+		return reply(ply, "params", { name = req.name, params = ok and ps or {} })
 	elseif k == "profile" then
 		local name = clean(req.name) or PLAYROOM
 		return reply(ply, "profile", { name = name, profile = DMS_TuningLoad(name) or { messages = {}, taskparams = {} } })

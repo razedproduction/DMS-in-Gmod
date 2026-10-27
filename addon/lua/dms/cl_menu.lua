@@ -4,6 +4,7 @@
 -- appear without changes here; params the port takes but doesn't use are marked.
 
 local catalogue
+local paramsOf = {} -- message -> its params, as the server sent them
 local editing = { name = "Playroom", profile = { messages = {}, taskparams = {} } }
 local panels = {}
 
@@ -71,9 +72,15 @@ end
 -- One behaviour's params: a slider, a checkbox or a text box each, its doc as the tooltip.
 local function fillParams(list, msg)
 	list:Clear()
-	local entry
-	for _, m in ipairs(catalogue.messages) do if m.name == msg then entry = m end end
-	if not entry then return end
+	-- A behaviour's params come from the server the first time it's picked.
+	local entry = paramsOf[msg] and { params = paramsOf[msg] }
+	if not entry then
+		local l = list:Add("DLabel")
+		l:Dock(TOP)
+		l:SetDark(true)
+		l:SetText(msg .. ": loading...")
+		return request({ kind = "params", name = msg })
+	end
 	local head = list:Add("DLabel")
 	head:Dock(TOP)
 	head:SetText(msg .. ": " .. #entry.params .. " params (* the port takes it but doesn't use it)")
@@ -278,18 +285,29 @@ end
 local function refresh()
 	if not catalogue or not IsValid(panels.behaviours) then return end
 	panels.behaviours:Clear()
-	for _, m in ipairs(catalogue.messages) do panels.behaviours:AddLine(m.name) end
+	for _, name in ipairs(catalogue.messages) do panels.behaviours:AddLine(name) end
 	panels.profile:Clear()
 	for _, n in ipairs(catalogue.profiles) do panels.profile:AddChoice(n, nil, n == catalogue.profile) end
 	fillTaskParams(panels.tp)
 	if panels.msg then fillParams(panels.params, panels.msg) end
 end
 
+-- Replies come in pieces (tuning.lua): put together by their id.
+local pieces = {}
 net.Receive("dms_tuning", function()
-	local n = net.ReadUInt(32)
-	local r = util.JSONToTable(util.Decompress(net.ReadData(n)) or "")
+	local id, i, n = net.ReadUInt(16), net.ReadUInt(16), net.ReadUInt(16)
+	local len = net.ReadUInt(32)
+	local p = pieces[id] or {}
+	pieces[id] = p
+	p[i] = net.ReadData(len)
+	if #p < n then return end
+	pieces[id] = nil
+	local r = util.JSONToTable(util.Decompress(table.concat(p)) or "")
 	if not r then return end
-	if r.kind == "catalogue" then
+	if r.kind == "params" then
+		paramsOf[r.data.name] = r.data.params or {}
+		if panels.msg == r.data.name and IsValid(panels.params) then fillParams(panels.params, panels.msg) end
+	elseif r.kind == "catalogue" then
 		catalogue = r.data
 		if catalogue.error then notification.AddLegacy("DMS: " .. catalogue.error, NOTIFY_ERROR, 6) end
 		if editing.name ~= catalogue.profile then request({ kind = "profile", name = catalogue.profile }) end
