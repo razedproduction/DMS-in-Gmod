@@ -13,8 +13,10 @@ mod lua;
 mod natives;
 mod nm;
 mod nm_natives;
+mod react;
 mod selftest;
 mod step;
+mod tuning;
 mod world;
 
 use std::ffi::{CString, c_int};
@@ -77,7 +79,7 @@ pub unsafe extern "C" fn gmod13_open(l: *mut LuaState) -> c_int {
     let Ok(api) = lua::api() else { return 0 };
     let nm_message = acquire_message();
     unsafe {
-        let natives = natives::NATIVES.iter().chain(nm_natives::NATIVES).chain(bind::NATIVES).chain(agents::NATIVES).chain(dev::NATIVES).chain(world::NATIVES);
+        let natives = natives::NATIVES.iter().chain(nm_natives::NATIVES).chain(bind::NATIVES).chain(agents::NATIVES).chain(dev::NATIVES).chain(world::NATIVES).chain(react::NATIVES);
         (api.createtable)(l, 0, 2 + natives.clone().count() as c_int);
         let version = CString::new(MODULE_VERSION).unwrap_or_default();
         (api.pushstring)(l, version.as_ptr());

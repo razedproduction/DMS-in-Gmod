@@ -1,0 +1,10 @@
+# Взрыв (M6): стоит (bodyBalance), через 2 с — взрыв Playroom (!blast, его explode) в 1.5 м за спиной (он летит от бассейна комнаты Playroom, которого на стенде нет):
+# applyImpulse на каждую часть в 5 м, урон 250·(1 − d/5), задача взрыва (explosion) 6 с.
+# Встаёт Playroom анимацией (не NM) после 2 с лежания: get-up дважды = режим off.
+#! window
+#! tol steps=200 com_max=0.30 fall end_z=0.05 said=room__blast:0.05   # полёт 11 м; кувырок после приземления (9 м/с) хаотичен, как приземление rooftop (ADR 0019)
+3 !button get-up
+3 !button get-up
+3 !button balance
+5 !blast 0,1.5,0.3
+11 !quit

@@ -1,0 +1,10 @@
+# Выстрел из дробовика в грудь (M6): !weapon 5 (shotgun, его набор taskparams и урон из weaponinfo.xml), через 2 с
+# !shoot 9 (его ire: ShotTask). Встаёт анимацией: get-up дважды = off.
+#! window
+#! tol fall marks said=room__shot_(shotgun):0.05 com_mean=0.35   # ShotTask Playroom'а
+3 !button get-up
+3 !button get-up
+3 !weapon 5
+3 !button balance
+5 !shoot 9
+11 !quit

@@ -27,6 +27,10 @@ use delirium::ragdoll::{GRAVITY, Obstacle, Ragdoll};
 
 use crate::data::Data;
 use crate::ffi::vphysics_nm::{IPhysicsConstraint, IPhysicsObject, Nm};
+use crate::tuning;
+
+mod room;
+pub use room::{BUTTONS, EXTRA, GETUP_MODES, React, Settings, WEAPONS, apply_switch, set_settings, settings, weapon};
 
 pub const PARTS: usize = 21;
 /// NM's own step.
@@ -42,8 +46,6 @@ const EYE: Vec3 = Vec3::new(0.0, -4.0, 1.5);
 const POKE: f32 = 8.0;
 /// The Playroom's headless shot (`headless`).
 const HEADLESS_SHOT_STEP: u64 = 60;
-/// The Playroom's `get-up` button cycles these (`GETUP_MODES`), from the first.
-const GETUP_MODES: [&str; 4] = ["animation", "muscles", "off", "learned"];
 pub const REC_HEADER: &str = "# game: frame t pelvis xyz |v| touches | ours: t com xyz |v|   (# lines: the log)";
 /// Past these a part has blown up (m/s, rad/s): NM's physics caps a part at 80 m/s (`ragdoll::MAX_SPEED`), and no
 /// motion of a body turns a part at 300 rad/s.
@@ -164,7 +166,6 @@ pub struct Script {
     pub stage: Option<String>,
     rec: String,
     unsupported: Vec<String>,
-    getup: usize,
     pub done: bool,
 }
 
@@ -184,7 +185,6 @@ impl Script {
             stage: None,
             rec: format!("{REC_HEADER}\n"),
             unsupported: vec![],
-            getup: 0,
             done: false,
         }
     }
@@ -246,6 +246,22 @@ pub struct Follower {
     /// How far each joint's pivot on its parent is from the one on the part, on Box3D's state (m, by part): NM's
     /// joints don't stretch (ROADMAP M5).
     pivot_gap: Vec<f32>,
+    /// The Playroom room's reactions on him (`room.rs`, ROADMAP M6).
+    pub room: room::Room,
+    /// The tuning profile's taskparams (docs/adr/0009), none for the game's.
+    tuned_tp: Option<Arc<delirium_data::taskparams::TaskParams>>,
+    /// Getting up by animation: Lua holds the bodies on the clip (`freeze`, then `frozen` till Lua lets them go
+    /// again on `unfreeze` and says so, `DMS.FollowRiseDone`); then a new agent on them with `respawn`'s lines.
+    freeze: bool,
+    unfreeze: bool,
+    pub frozen: bool,
+    respawn: Option<Vec<String>>,
+    /// The room's lines since the last step, for Lua (`say` events).
+    said: Vec<String>,
+    /// The face's forward and up in the head capsule's frame (the Playroom's `ahead` and `axis`).
+    face: (Vec3, Vec3),
+    /// The facing he was given (rad, NM's frame): the Playroom's room facing, for its new agents.
+    yaw: f32,
 }
 
 // SAFETY: the pointers are only used on the game's main thread, where the physics and Lua both run.
@@ -284,6 +300,12 @@ impl Follower {
         // As the Playroom makes its agents (`Agent::new(build, Ragdoll::new(build, frames, 0), facing, 0.3)`).
         let doll = Ragdoll::new(&data.homer, &frames, Vec3::ZERO);
         let agent = Agent::new(&data.homer, doll, Quat::from_rotation_z(yaw), SEED);
+        // The Playroom's `face`: his standing forward (from his thighs) in the head capsule's frame.
+        let cap0 = frames[HEAD].rotation * delirium::nmdbm::rage_link(dms_game::HOMER_NM, HEAD);
+        let axis = if (cap0 * Vec3::Y).z < 0.0 { -Vec3::Y } else { Vec3::Y };
+        let fwd = Vec3::Z.cross(frames[4].translation - frames[1].translation).with_z(0.0).normalize_or(Vec3::Y);
+        let ahead = cap0.inverse() * fwd;
+        let ahead = (ahead - axis * ahead.dot(axis)).normalize_or(Vec3::Z);
         Ok(Follower {
             id,
             world,
@@ -316,6 +338,15 @@ impl Follower {
             pred_err: vec![],
             limit_use: vec![],
             pivot_gap: vec![],
+            room: room::Room::new(settings()),
+            tuned_tp: None,
+            freeze: false,
+            unfreeze: false,
+            frozen: false,
+            respawn: None,
+            said: vec![],
+            face: (ahead, axis),
+            yaw,
             data,
         })
     }
@@ -336,6 +367,40 @@ impl Follower {
         }
         self.queued.push(line.to_string());
         Ok(())
+    }
+
+    /// A reaction from the game for the next step (`room.rs`).
+    pub fn react(&mut self, r: React) {
+        self.room.queued.push(r);
+    }
+
+    /// Lua let the bodies go after a get-up by animation: NM takes them on its next step.
+    pub fn rise_done(&mut self) {
+        self.frozen = false;
+    }
+
+    pub fn data(&self) -> &Data {
+        &self.data
+    }
+
+    /// The Playroom's `face` frame on the head (its part's frame): the head capsule's centre (m), the face's forward
+    /// and up, the head's radius. Forward is the standing pose's, taken in the capsule's frame (`rage_link`), as the
+    /// Playroom takes it from its room's start.
+    pub fn face(&self) -> (Vec3, Vec3, Vec3, f32) {
+        let link = delirium::nmdbm::rage_link(dms_game::HOMER_NM, HEAD);
+        let (h, c) = (self.agent.doll.frames().nth(HEAD).unwrap_or_default(), self.agent.doll.capsules().nth(HEAD).unwrap_or_default());
+        let r = self.data.homer.parts.get(HEAD).map_or(0.1, |p| p.radius);
+        (h.rotation.inverse() * (c.translation - h.translation), link * self.face.0, link * self.face.1, r)
+    }
+
+    /// Part `k`'s drive this step (force N, torque N m).
+    pub fn drive(&self, k: usize) -> (Vec3, Vec3) {
+        self.drives.get(k).copied().unwrap_or_default()
+    }
+
+    /// A scenario's agent runs the Playroom's defaults: its switches and no tuning (docs/adr/0009).
+    fn scripted(&self) -> bool {
+        self.script.is_some()
     }
 
     /// NM's doll is asleep (the Playroom's `mode` 2): no behaviours, no drives.
@@ -368,8 +433,60 @@ impl Follower {
     /// One NM step (the Playroom's `tick`, with the body's state from Box3D).
     unsafe fn nm_step(&mut self, nm: &Nm, events: &mut Vec<Event>) -> Result<(), String> {
         let dt = DT as f32;
+        if !self.scripted() {
+            self.room.set = settings();
+            self.tuned_tp = tuning::taskparams();
+        }
+        // Getting up by animation: Lua holds the bodies on the clip; NM only plays it on (the Playroom's agent lies
+        // hidden meanwhile, and a new one stands up at the end).
+        if std::mem::take(&mut self.freeze) {
+            self.frozen = true;
+            events.push(Event { id: self.id, kind: "freeze", text: String::new(), value: 0.0 });
+        }
+        if std::mem::take(&mut self.unfreeze) {
+            events.push(Event { id: self.id, kind: "unfreeze", text: String::new(), value: 0.0 });
+        }
+        if self.frozen {
+            // The scenario goes on, and its record: the Playroom's line is its agent's, lying hidden under the clip,
+            // as NM's doll here is.
+            if self.script.as_ref().is_some_and(|s| !s.done) {
+                self.script_step();
+            }
+            if let Some(line) = self.script.as_ref().filter(|s| !s.done).map(|_| self.rec_line(self.steps + 1))
+                && let Some(s) = self.script.as_mut()
+            {
+                s.rec.push_str(&line);
+                s.rec.push('\n');
+            }
+            for r in std::mem::take(&mut self.room.queued) {
+                self.room_react(r);
+            }
+            for line in std::mem::take(&mut self.queued) {
+                self.send(&line);
+            }
+            if self.room.rise.is_some() {
+                self.rise_step(dt);
+            }
+            self.steps += 1;
+            self.drain_said(events);
+            return Ok(());
+        }
         let (mode, asleep) = (self.agent.doll.mode, self.agent.doll.asleep);
         let mut moved = (0.0f32, 0.0f32, 0.0f32);
+        if let Some(lines) = self.respawn.take() {
+            // The Playroom's new agent on the get-up's last pose (`Agent::new(.., Quat::IDENTITY, 0.3)`: its room's
+            // facing, here the one he was given), its messages' state new too.
+            let mut frames = Vec::with_capacity(PARTS);
+            for &o in &self.objects {
+                // SAFETY: a live object (the caller's promise).
+                let s = unsafe { nm.body_state(o) }.ok_or("GetBodyState failed")?;
+                frames.push(Transform::from_translation(Vec3::from_array(s.position) - self.origin).with_rotation(Quat::from_array(s.rotation).normalize()));
+            }
+            self.agent = Agent::new(&self.data.homer, Ragdoll::new(&self.data.homer, &frames, Vec3::ZERO), Quat::from_rotation_z(self.yaw), SEED);
+            self.msgs = msg::State::default();
+            (self.predicted, self.before) = (vec![], vec![]);
+            self.queued.extend(lines);
+        }
         for (k, &o) in self.objects.iter().enumerate() {
             // SAFETY: a live object (the caller's promise).
             let s = unsafe { nm.body_state(o) }.ok_or("GetBodyState failed")?;
@@ -421,9 +538,7 @@ impl Follower {
         let com_v = self.agent.doll.com().1;
         self.extras_frame();
         self.ledge();
-        if self.steps % 2 == 0 {
-            self.in_air(self.prev_com_v.unwrap_or(com_v));
-        }
+        self.room_before(self.prev_com_v.unwrap_or(com_v), events);
         self.prev_com_v = Some(com_v);
         self.stairs_frame();
         // The record's line of the step about to run: by the same token, the state the step starts from.
@@ -456,6 +571,10 @@ impl Follower {
             }
             events.push(Event { id: self.id, kind: "feedback", text: format!("{} {}", f.name, f.slot), value: f.value });
         }
+        // The end of the Playroom's `tick`, then its `rise`.
+        self.room_after();
+        self.rise_step(dt);
+        self.drain_said(events);
         if self.agent.fallen != self.was_fallen {
             self.was_fallen = self.agent.fallen;
             events.push(Event { id: self.id, kind: if self.agent.fallen { "fallen" } else { "up" }, text: String::new(), value: 0.0 });
@@ -499,7 +618,8 @@ impl Follower {
         } else {
             target
         };
-        if self.asleep() && self.kicks.is_empty() {
+        if self.asleep() && self.kicks.is_empty() || self.frozen {
+            self.kicks.clear();
             return;
         }
         let g_nm = Vec3::NEG_Z * GRAVITY;
@@ -575,6 +695,17 @@ impl Follower {
         if let Some(r) = self.script.as_mut() {
             let _ = writeln!(r.rec, "# {:.2} {s}", self.steps as f32 / 60.0);
         }
+        // The room's lines and the messages they send go to Lua too (`DMS_Reaction`); NM's feedback doesn't.
+        if !s.starts_with("ours  FB") && self.said.len() < 64 {
+            self.said.push(s.to_string());
+        }
+    }
+
+    /// The lines said since the last step, as events.
+    fn drain_said(&mut self, events: &mut Vec<Event>) {
+        for text in std::mem::take(&mut self.said) {
+            events.push(Event { id: self.id, kind: "say", text, value: self.steps as f32 / 60.0 });
+        }
     }
 
     fn unsupported(&mut self, what: &str) {
@@ -589,6 +720,8 @@ impl Follower {
         let mut w = line.split_whitespace();
         let Some(name) = w.next() else { return };
         let Some(m) = msg::find(name) else { return self.say(&format!("no message {name}")) };
+        // The tuning profile's values for the params the line doesn't give (docs/adr/0009); none for a scenario's.
+        let tuned = if self.scripted() { vec![] } else { tuning::params(name) };
         let mut ps: Vec<(&str, Value)> = vec![];
         for kv in w {
             let Some((k, v)) = kv.split_once('=') else { return self.say(&format!("{kv}: want name=value")) };
@@ -597,6 +730,16 @@ impl Follower {
             match parse_value(kind, v) {
                 Some(v) => ps.push((k, v)),
                 None => return self.say(&format!("{k}: not a {kind:?}")),
+            }
+        }
+        let starts = ps.iter().any(|(k, v)| *k == "start" && matches!(v, Value::Bool(true)));
+        for (k, v) in &tuned {
+            // On what starts a behaviour, or sets its params: never on the line's own, nor on a stop.
+            if ps.iter().any(|(p, _)| p == k) || !starts && ps.iter().any(|(p, _)| *p == "start") {
+                continue;
+            }
+            if let Some(v) = m.params.iter().find(|p| p.name == k).and_then(|p| parse_value(p.kind, v)) {
+                ps.push((k.as_str(), v));
             }
         }
         let short: String = line.chars().take(110).collect();
@@ -635,17 +778,6 @@ impl Follower {
                 None => self.send(&l),
             }
         }
-    }
-
-    /// The Playroom's `in_air` with its defaults (no additional reactions, no tasks, alive): falling faster than
-    /// 6 m/s with no extra running sends `stopAllBehaviours` and the game's `NMHighFall` task.
-    fn in_air(&mut self, com_v: Vec3) {
-        if !self.agent.extras.on.is_empty() || self.agent.high_falling() || com_v.z > -6.0 {
-            return;
-        }
-        self.send("stopAllBehaviours");
-        delirium::nm::task_high_fall(&mut self.agent, &self.data.homer, &self.world, &self.data.tp, "*", false);
-        self.say("ours  in the air: the game's NMHighFall");
     }
 
     /// The Playroom room's `ground` under `p` on NM's world: the highest top at most 5 cm over `p` (its blocks', or
@@ -715,7 +847,7 @@ impl Follower {
             return;
         }
         if s.headless && self.steps == HEADLESS_SHOT_STEP {
-            self.unsupported("the headless shot at step 60 (the Playroom's ShotTask, M6)");
+            self.room_button("shot");
         }
         while let Some(c) = self.script.as_mut().and_then(|s| s.commands.front().is_some_and(|c| c.0 <= self.steps).then(|| s.commands.pop_front()).flatten()) {
             self.command(&c.1);
@@ -728,6 +860,11 @@ impl Follower {
         match (w.next().unwrap_or(""), w.next()) {
             ("!button", Some(b)) => self.button(b.trim()),
             ("!poke", Some(a)) => self.poke(a),
+            (c @ ("!blast" | "!shoot" | "!weapon" | "!miss" | "!set" | "!hfall" | "!nododge"), a) => {
+                if let Err(e) = self.room_command(c, a.unwrap_or("").trim()) {
+                    self.unsupported(&format!("{line}: {e}"));
+                }
+            }
             ("!quit", _) => {}
             (c, _) if c.starts_with('!') => self.unsupported(line),
             _ => self.send(line),
@@ -738,10 +875,8 @@ impl Follower {
     fn button(&mut self, b: &str) {
         match b {
             "get-up" => {
-                // DMS has no get-up yet (M6): the mode is only logged, as the Playroom logs it.
-                let Some(s) = self.script.as_mut() else { return };
-                s.getup = (s.getup + 1) % GETUP_MODES.len();
-                let m = GETUP_MODES[s.getup];
+                self.room.set.getup = (self.room.set.getup + 1) % GETUP_MODES.len() as u8;
+                let m = GETUP_MODES[self.room.set.getup as usize];
                 return self.say(&format!("ours  get-up: {m}"));
             }
             "fall" => {
@@ -754,11 +889,10 @@ impl Follower {
             }
             _ => {}
         }
-        let Some(lines) = button_lines(b) else { return self.unsupported(&format!("!button {b}")) };
-        self.say(&format!("room  {b}"));
-        for l in lines {
-            self.send(l);
+        if !BUTTONS.contains(&b) && !delirium::extras::messages().any(|m| m.name == b) {
+            return self.unsupported(&format!("!button {b}"));
         }
+        self.room_button(b);
     }
 
     /// `!poke <part> [impulse]`: the Playroom's `poke`, 8 N s into the part away from its camera. Its camera moves
@@ -835,6 +969,14 @@ impl Follower {
             ("com", vec(com + o)),
             ("com_v", vec(v)),
             ("compensation", json::num(self.comp)),
+            ("health", json::num(self.room.health)),
+            ("dead", self.room.dead.to_string()),
+            ("rising", self.room.rise.is_some().to_string()),
+            ("frozen", self.frozen.to_string()),
+            ("burning", json::num(self.room.burning.max(0.0))),
+            ("shock", json::num(self.room.shock.max(0.0))),
+            ("getup", json::string(GETUP_MODES[self.room.set.getup as usize % 4])),
+            ("tuning", if self.scripted() { "null".into() } else { tuning::active().map_or("null".into(), |p| json::string(&p)) }),
             ("parts", json::array(frames.iter().map(|f| json::array((f.translation + o).to_array().iter().chain(&f.rotation.to_array()).map(|&x| json::num(x)))))),
             ("contacts", json::array(d.touch.iter().map(u8::to_string))),
             ("drives", json::array(self.drives.iter().map(|(f, t)| json::array(f.to_array().iter().chain(&t.to_array()).map(|&x| json::num(x)))))),

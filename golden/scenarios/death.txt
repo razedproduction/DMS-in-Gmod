@@ -1,0 +1,9 @@
+# Смерть (M6): стоит, через 2 с смертельный выстрел в голову (!shoot 12 fatal): здоровье 0 -> на следующем чётном
+# шаге stopAllBehaviours и bodyRelax (обмякает).
+#! window
+#! tol fall end_z=0.05 marks said=room__dead:0.05   # слой комнаты: смерть
+3 !button get-up
+3 !button get-up
+3 !button balance
+5 !shoot 12 fatal
+10 !quit

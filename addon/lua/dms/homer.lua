@@ -40,18 +40,33 @@ function DMS_SpawnHomer(pos, yaw)
 	ent:SetAngles(Angle(0, yaw, 0))
 	ent:Spawn()
 	ent:Activate()
-	local parts, why = DMS_HomerParts(ent)
-	if not parts then
+	local ok, why = DMS_BindRagdoll(ent, pos, yaw)
+	if not ok then
 		ent:Remove()
 		return nil, why
 	end
-	local ok, err = pcall(DMS.BindHomer, parts)
-	if not ok then
-		ent:Remove()
-		return nil, "bind: " .. tostring(err)
-	end
-	ent.DMS_Spawn = { pos = pos, yaw = yaw }
 	return ent
+end
+
+-- Binds a Homer ragdoll as it stands (just spawned) to NM's body: `floor` under his feet and his `yaw` (degrees),
+-- where NM's frame will start (by default the floor under his pelvis and his angles). True, or false and why.
+function DMS_BindRagdoll(ent, floor, yaw)
+	local parts, why = DMS_HomerParts(ent)
+	if not parts then return false, why end
+	if not DMS.DataInfo() then
+		local ok, err = pcall(DMS.LoadData, GetConVar("dms_game_dir"):GetString())
+		if not ok then return false, "NM's data isn't loaded: " .. tostring(err) end
+	end
+	DMS_MapWorld()
+	local ok, err = pcall(DMS.BindHomer, parts)
+	if not ok then return false, "bind: " .. tostring(err) end
+	if not floor then
+		local p = parts[1]:GetPos()
+		floor = DMS_FloorBelow(p, ent) or p
+	end
+	ent.DMS_Spawn = { pos = floor, yaw = yaw or ent:GetAngles().y }
+	ent.DMS_Bound = true
+	return true
 end
 
 -- Homer's parts as Box3D has them, a line each (for tools/golden body): the spawn's `spawn x y z yaw` (m, degrees),

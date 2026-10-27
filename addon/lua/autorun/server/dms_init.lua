@@ -1,3 +1,9 @@
+-- The clients' part (ROADMAP M6): Homer's face, skeleton and debug overlay, the spawn menu's DMS tab.
+AddCSLuaFile("autorun/client/dms_client.lua")
+AddCSLuaFile("dms/cl_face.lua")
+AddCSLuaFile("dms/cl_overlay.lua")
+AddCSLuaFile("dms/cl_menu.lua")
+
 if not util.IsBinaryModuleInstalled("dms") then
 	ErrorNoHalt("[DMS] gmsv_dms isn't installed: put gmsv_dms_win64.dll into garrysmod/lua/bin (x86-64 branch only)\n")
 	return
@@ -42,5 +48,9 @@ include("dms/nm_commands.lua")
 include("dms/homer.lua")
 include("dms/follow.lua")
 include("dms/world.lua")
+include("dms/reactions.lua")
+include("dms/api.lua")
+include("dms/tuning.lua")
+include("dms/overlay.lua")
 include("dms/bench_scene.lua")
 include("dms/dev.lua")

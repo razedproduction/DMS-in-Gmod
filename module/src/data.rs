@@ -30,6 +30,11 @@ pub struct Data {
     pub surface_names: Vec<String>,
     /// Where taskparams.txt came from, or why NM runs its defaults.
     pub taskparams: String,
+    /// The room's reactions' inputs (ROADMAP M6), as the Playroom's `load` reads them: weaponinfo.xml's weapons,
+    /// Homer's agility (pedpersonality.dat) and the get-up clips (none, and why, if the game hasn't them).
+    pub weapons: Vec<delirium_data::weapons::Weapon>,
+    pub agility: u8,
+    pub clips: Result<dms_game::getup::Clips, String>,
 }
 
 static DATA: Mutex<Option<Arc<Data>>> = Mutex::new(None);
@@ -102,12 +107,15 @@ fn read(dir: &str) -> Result<Data, String> {
         build: nm::Build::from_text(&dump)?,
         body: dms_game::body::Body::new(&build, &frames),
         tp: tp_text.as_deref().map_or_else(Default::default, delirium_data::taskparams::read),
-        homer: build,
         dump,
         floor_material: dms_game::concrete(&rows),
         surfaces: rows.len(),
         surface_names: rows.iter().map(|r| r.0.clone()).collect(),
         taskparams,
+        weapons: game.weapons(),
+        agility: game.agility(),
+        clips: game.clips(&build),
+        homer: build,
     })
 }
 

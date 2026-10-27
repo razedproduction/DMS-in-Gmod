@@ -351,6 +351,11 @@ fn mark_of(c: &str) -> Option<String> {
         ("!button", Some("fall")) => "ours  fall:".into(),
         ("!button", Some(b)) => format!("room  {b}"),
         ("!poke", _) => "room  poke".into(),
+        // The room's reactions (ROADMAP M6): the line each says first.
+        ("!blast", _) => "room  blast".into(),
+        ("!shoot", _) => "room  shot (".into(),
+        ("!miss", _) => "room  shot: ".into(),
+        ("!hfall", _) => "both  hfall".into(),
         (m, _) if m.starts_with('!') => return None,
         (m, _) => format!("ours  MSG {m}"),
     })
