@@ -17,23 +17,34 @@ function dms.Get(rag)
 	return setmetatable({ ent = rag }, Controller)
 end
 
--- NM on a Homer ragdoll (models/dms/homer.mdl, bound at its spawn). opts: `balance` (default true: bodyBalance, as
--- the Playroom's "balance" button). The controller, or nil and why.
+-- NM on a Homer ragdoll (models/dms/homer.mdl, bound at its spawn) or on any ValveBiped prop_ragdoll (ROADMAP M10: a
+-- body fitted to its model takes its pose and motion). opts: `balance` (default true: bodyBalance, as the Playroom's
+-- "balance" button). The controller, or nil and why.
 function dms.Attach(rag, opts)
 	opts = opts or {}
-	if not IsValid(rag) or rag:GetModel() ~= DMS_HOMER_MODEL then return nil, "not a Homer ragdoll (" .. DMS_HOMER_MODEL .. ")" end
-	if not rag.DMS_Bound then return nil, "not bound to NM's body (spawn him with dms_homer or the spawn menu)" end
-	local id, why = DMS_Follow(rag)
+	if not IsValid(rag) then return nil, "not a ragdoll" end
+	local id, why
+	if rag:GetModel() == DMS_HOMER_MODEL then
+		if not rag.DMS_Bound then return nil, "not bound to NM's body (spawn him with dms_homer or the spawn menu)" end
+		id, why = DMS_Follow(rag)
+	elseif DMS_IsValveBiped(rag) then
+		id, why = DMS_AttachRagdoll(rag)
+	else
+		return nil, "not a Homer ragdoll (" .. DMS_HOMER_MODEL .. ") nor a ValveBiped one"
+	end
 	if not id then return nil, why end
 	local c = dms.Get(rag)
 	if opts.balance ~= false then c:Balance() end
 	return c
 end
 
--- NM off: an ordinary ragdoll again.
+-- NM off: an ordinary ragdoll again. A ValveBiped one gets its own physics back as a new ragdoll in the same pose and
+-- motion (its own constraints were taken off for NM): true and the new entity.
 function dms.Detach(rag)
-	if IsValid(rag) and rag.DMS_Agent then DMS_Unfollow(rag) return true end
-	return false
+	if not IsValid(rag) or not rag.DMS_Agent then return false end
+	if rag.DMS_Native then return true, DMS_DetachRagdoll(rag) end
+	DMS_Unfollow(rag)
+	return true
 end
 
 -- Every Homer with NM on him.

@@ -88,6 +88,8 @@ local pending = {}
 local function flushShots()
 	for ent, s in pairs(pending) do
 		local line = string.format("shot at=%s dir=%s weapon=%s", at(s.pos), dir(s.dir), s.weapon)
+		-- On a ragdoll: the NM part of the physics bone the bullet hit (ragdolls.lua).
+		if s.part then line = line .. " part=" .. s.part end
 		if #s.more > 0 then line = line .. " more=" .. table.concat(s.more, ",") end
 		DMS_React(ent, line)
 	end
@@ -96,7 +98,8 @@ end
 
 -- The part NM's doll has nearest to a point (its capsules), for the shotgun's other pellets: the module picks the
 -- first's itself.
-local function partNear(ent, pos)
+local function partNear(ent, pos, d)
+	if ent.DMS_Native then return DMS_RagdollPartAt(ent, pos, d) or 9 end
 	local parts = DMS_HomerParts(ent)
 	if not parts then return 9 end
 	local best, bd = 9, math.huge
@@ -119,10 +122,10 @@ hook.Add("EntityTakeDamage", "DMS_Reactions", function(ent, dmg)
 		local d = force:IsZero() and IsValid(att) and (pos - (att.EyePos and att:EyePos() or att:GetPos())) or force
 		local s = pending[ent]
 		if s then
-			s.more[#s.more + 1] = partNear(ent, pos)
+			s.more[#s.more + 1] = partNear(ent, pos, d)
 		else
 			if not next(pending) then timer.Simple(0, flushShots) end
-			pending[ent] = { pos = pos, dir = d:GetNormalized(), weapon = weaponOf(dmg), more = {} }
+			pending[ent] = { pos = pos, dir = d:GetNormalized(), weapon = weaponOf(dmg), more = {}, part = ent.DMS_Native and partNear(ent, pos, d) }
 		end
 		-- The bullet's push is the Playroom's applyImpulse (the module's): not the game's as well.
 		dmg:SetDamageForce(vector_origin)
@@ -183,7 +186,10 @@ local function contact(ent, data)
 end
 
 hook.Add("DMS_Detached", "DMS_Reactions", function(ent)
-	if IsValid(ent) then ent:SetNW2Bool("DMS_Homer", false) end
+	if IsValid(ent) then
+		ent:SetNW2Bool("DMS_Homer", false)
+		ent:SetNW2Bool("DMS_Agent", false)
+	end
 end)
 
 hook.Add("DMS_Attached", "DMS_Reactions", function(ent)
@@ -298,7 +304,9 @@ hook.Add("Think", "DMS_Reactions", function()
 		if r and s then
 			-- Burning (the Playroom's fire) while the game has him on fire.
 			if ent:IsOnFire() then DMS_React(ent, "burn") end
-			ent:SetNW2Bool("DMS_Homer", true)
+			-- The face and the overlay are Homer's (his model's bones); the HUD and the window take any agent.
+			ent:SetNW2Bool("DMS_Homer", not ent.DMS_Native)
+			ent:SetNW2Bool("DMS_Agent", true)
 			if ent.DMS_Spawn then ent:SetNW2Float("DMS_Floor", ent.DMS_Spawn.pos.z) end
 			ent:SetNW2Float("DMS_Health", r.health)
 			ent:SetNW2Bool("DMS_Dead", r.dead)
@@ -329,41 +337,46 @@ end)
 
 local function admin(ply) return not IsValid(ply) or ply:IsSuperAdmin() end
 
--- The Homer the player looks at (or the only one / all for the server console).
+-- The Homer or ValveBiped ragdoll the player looks at (or the only one / all for the server console).
 local function aimed(ply)
 	if not IsValid(ply) then return nil end
 	local tr = ply:GetEyeTrace()
 	local ent = tr.Entity
-	if IsValid(ent) and ent:GetModel() == DMS_HOMER_MODEL then return ent, tr end
+	if IsValid(ent) and (ent:GetModel() == DMS_HOMER_MODEL or DMS_IsValveBiped(ent)) then return ent, tr end
 end
 
--- dms_attach: NM on the Homer ragdoll looked at (balancing).
+local LOOK = "look at a Homer ragdoll (" .. DMS_HOMER_MODEL .. ") or any ValveBiped ragdoll"
+
+-- dms_attach: NM on the ragdoll looked at (balancing): Homer, or any ValveBiped model (ragdolls.lua), as it lies.
 concommand.Add("dms_attach", function(ply)
 	if not admin(ply) then return end
 	local ent = aimed(ply)
-	if not ent then return say(ply, "[DMS] dms_attach: look at a Homer ragdoll (" .. DMS_HOMER_MODEL .. ")") end
+	if not ent then return say(ply, "[DMS] dms_attach: " .. LOOK) end
 	local c, why = dms.Attach(ent)
-	say(ply, c and ("[DMS] NM on " .. tostring(ent)) or ("[DMS] dms_attach: " .. tostring(why)))
+	if not c then return say(ply, "[DMS] dms_attach: " .. tostring(why)) end
+	local fit = ent.DMS_Native and string.format(" (fitted body: %.2f m, %.1f kg%s)", ent:GetNW2Float("DMS_FitHeight"), ent:GetNW2Float("DMS_FitMass"),
+		ent:GetNW2String("DMS_FitWarn") ~= "" and ("; " .. ent:GetNW2String("DMS_FitWarn")) or "") or ""
+	say(ply, "[DMS] NM on " .. tostring(ent) .. fit)
 end)
 
--- dms_detach: NM off the Homer looked at (an ordinary ragdoll).
+-- dms_detach: NM off the ragdoll looked at (an ordinary ragdoll, moving on as it was).
 concommand.Add("dms_detach", function(ply)
 	if not admin(ply) then return end
 	local ent = aimed(ply)
-	if not ent then return say(ply, "[DMS] dms_detach: look at a Homer ragdoll (" .. DMS_HOMER_MODEL .. ")") end
+	if not ent then return say(ply, "[DMS] dms_detach: " .. LOOK) end
 	if not ent.DMS_Agent then return say(ply, "[DMS] dms_detach: NM isn't on " .. tostring(ent)) end
 	dms.Detach(ent)
 	say(ply, "[DMS] NM off " .. tostring(ent))
 end)
 
--- dms_detach_all: NM off every Homer.
+-- dms_detach_all: NM off every body.
 concommand.Add("dms_detach_all", function(ply)
 	if not admin(ply) then return end
 	local n = 0
 	for _, ent in pairs(table.Copy(DMS_Agents)) do
-		if IsValid(ent) then DMS_Unfollow(ent) n = n + 1 end
+		if IsValid(ent) then dms.Detach(ent) n = n + 1 end
 	end
-	say(ply, string.format("[DMS] NM off %d Homer(s)", n))
+	say(ply, string.format("[DMS] NM off %d bodies", n))
 end)
 
 -- dms_send <message line>: to the Homer looked at (every Homer from the server console).

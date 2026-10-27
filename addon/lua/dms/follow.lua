@@ -27,15 +27,29 @@ local function mode()
 	return m
 end
 
--- NM on Homer's bound ragdoll (DMS_SpawnHomer), facing as he was spawned. The agent's id, or nil and why.
-function DMS_Follow(ent)
-	if ent.DMS_Agent then return ent.DMS_Agent end
+-- Whether NM may go on one more body (dms_max_agents): true, or false and why.
+function DMS_AgentRoom()
 	local n = 0
 	for _, e in pairs(DMS_Agents) do
 		-- Removed this frame: its agent goes as the frame ends.
 		if IsValid(e) and not e:IsMarkedForDeletion() then n = n + 1 end
 	end
-	if n >= maxAgents:GetInt() then return nil, string.format("dms_max_agents (%d) Homers have NM already", maxAgents:GetInt()) end
+	if n >= maxAgents:GetInt() then return false, string.format("dms_max_agents (%d) bodies have NM already", maxAgents:GetInt()) end
+	return true
+end
+
+-- The parts' PhysObj of an agent's entity: Homer's 21; none for a ragdoll on a native body (ragdolls.lua), whose
+-- bodies Lua can't reach.
+local function partsOfEnt(ent)
+	if ent.DMS_Native then return {} end
+	return DMS_HomerParts(ent)
+end
+
+-- NM on Homer's bound ragdoll (DMS_SpawnHomer), facing as he was spawned. The agent's id, or nil and why.
+function DMS_Follow(ent)
+	if ent.DMS_Agent then return ent.DMS_Agent end
+	local room, full = DMS_AgentRoom()
+	if not room then return nil, full end
 	local parts, why = DMS_HomerParts(ent)
 	if not parts then return nil, why end
 	local s = ent.DMS_Spawn or { pos = ent:GetPos(), yaw = ent:GetAngles().y }
@@ -58,6 +72,8 @@ local function forget(ent, id, why)
 	if not IsValid(ent) then return end
 	ent.DMS_Agent, ent.DMS_Lod, ent.DMS_StillFor = nil, nil, nil
 	if ent.DMS_Rising then DMS_Unfreeze(ent) end
+	-- A ragdoll's native body goes with its agent (ragdolls.lua).
+	if ent.DMS_Native then DMS_RagdollGone(ent) end
 	hook.Run("DMS_Detached", ent, why)
 end
 
@@ -80,7 +96,7 @@ end
 local function partsOf(id)
 	local ent = DMS_Agents[id]
 	if not IsValid(ent) then return end
-	return ent, DMS_HomerParts(ent)
+	return ent, partsOfEnt(ent)
 end
 
 -- By event kind; reactions.lua adds the room's (freeze, unfreeze, died, say).
@@ -121,7 +137,7 @@ hook.Add("Think", "DMS_Follow", function()
 	if CurTime() < nextMask then return end
 	nextMask = CurTime() + 0.25
 	for id, ent in pairs(DMS_Agents) do
-		local parts = IsValid(ent) and DMS_HomerParts(ent)
+		local parts = IsValid(ent) and partsOfEnt(ent)
 		if parts then
 			local mask, frozen = 0, false
 			for i, p in ipairs(parts) do

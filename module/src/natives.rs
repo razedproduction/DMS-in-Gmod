@@ -14,6 +14,7 @@ pub const NATIVES: &[(&CStr, lua::CFunction)] = &[
     (c"InterfaceVersion", interface_version),
     (c"BodyState", body_state),
     (c"BodyInertia", body_inertia),
+    (c"SetBodyState", set_body_state),
     (c"Drive", drive),
     (c"FindJoint", find_joint),
     (c"SetArmature", set_armature),
@@ -64,6 +65,27 @@ unsafe fn body_state_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> 
             api.push_vector(l, v);
             (api.setfield)(l, -2, name.as_ptr());
         }
+    }
+    Ok(1)
+}
+
+native!(set_body_state => set_body_state_impl);
+/// `DMS.SetBodyState(physobj, pos, rot, vel, angvel)`: `DMS.BodyState`'s inverse (`SetBodyState`, `VBOX3D_NM_006`):
+/// the body teleported there, moving so. False if it's refused (frozen, static), nil before `_006`.
+unsafe fn set_body_state_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
+    let nm = nm()?;
+    let object = unsafe { api.check_physobj(l, 1)? };
+    let rot = unsafe { api.check_vec4(l, 3)? };
+    let s = vphysics_nm::PhysicsNMBodyState {
+        position: unsafe { api.check_vec3(l, 2)? },
+        rotation: rot,
+        velocity: unsafe { api.check_vec3(l, 4)? },
+        angular_velocity: unsafe { api.check_vec3(l, 5)? },
+    };
+    // SAFETY: a live PhysObj, from a native (outside Simulate).
+    match unsafe { nm.set_body_state(object, &s) } {
+        Some(ok) => unsafe { (api.pushboolean)(l, ok.into()) },
+        None => unsafe { (api.pushnil)(l) },
     }
     Ok(1)
 }

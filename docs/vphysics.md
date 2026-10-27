@@ -1,7 +1,7 @@
 # The VPhysics-Box3D fork in `vphysics/`
 
 `vphysics/` is a fork of [Asphaltian/VPhysics-Box3D](https://github.com/Asphaltian/VPhysics-Box3D) (a replacement of
-GMod's `vphysics.dll` on Box3D) with the NM extension `IPhysicsNM` (`include/vphysics_nm.h`, now `VBOX3D_NM_005`). It
+GMod's `vphysics.dll` on Box3D) with the NM extension `IPhysicsNM` (`include/vphysics_nm.h`, now `VBOX3D_NM_006`). It
 lives in this repository as a **git subtree** with its full history (ADR 0015): changes to the module and the physics
 go in one PR, upstream comes with `git subtree pull`. The former separate repository `razedproduction/VPhysics-Box3D`
 isn't updated any more.
@@ -127,3 +127,11 @@ game data, material, callback flags, game flags with `FVPHYSICS_NO_SELF_COLLISIO
 with a ragdoll constraint as the game's ragdolls have it, wide open until the bind gives it NM's pivot, frames and limits;
 `DestroyJoint` and `DestroyBody` take them away (the body's hull with it). Not from the step callback. The older
 interface strings give the same object.
+
+## NM's own collision pairs and the swap in M10 (ADR 0027, `VBOX3D_NM_006`)
+
+`SetBodyCollisionPairs` makes a native body's 21 bodies one set: `CPhysicsObject` keeps a shared `NMCollisionSet_t` and
+its index, and `ShouldCollide`, `IsCollisionAllowed` and `EvaluateCollision` take the set's decision for two of its
+bodies (fred.xrt's self-collision pairs) before asking the game. `SetBodyState` teleports a body to a state (centre of
+mass, rotation, velocities, SI) through `SetPositionMatrix` and `SetVelocityInstantaneous`. `CreateBody` keeps each
+hull by its points' bytes (up to 4096) and reuses it; `DestroyBody` leaves a kept hull.

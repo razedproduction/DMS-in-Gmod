@@ -221,6 +221,9 @@ pub enum React {
     Thrown { from: Vec3, vel: Vec3 },
     /// Let go of in the air (the Playroom's `fall`).
     Dropped,
+    /// The Playroom's click (`poke`): its 8 N s into a part (or the nearest to `at`) at `at` along `dir` (the gravity
+    /// gun's punt).
+    Poke { part: Option<usize>, at: Vec3, dir: Vec3 },
     /// The Playroom's buttons (`balance`, `flinch`, `brace`, `shot`, `RESET health`, ...).
     Button(String),
     /// Health set (`kill` = 0).
@@ -238,6 +241,7 @@ impl React {
             React::NearMiss { from, dir } => React::NearMiss { from: from - o, dir },
             React::Car { id, impulse, at, player } => React::Car { id, impulse, at: at - o, player },
             React::Thrown { from, vel } => React::Thrown { from: from - o, vel },
+            React::Poke { part, at, dir } => React::Poke { part, at: at - o, dir },
             r => r,
         }
     }
@@ -403,6 +407,13 @@ impl Follower {
             React::Car { id, impulse, at, player } => self.car_react(id, impulse, at, player),
             React::Thrown { from, vel } => self.throw(from, vel),
             React::Dropped => self.dropped(),
+            React::Poke { part, at, dir } => {
+                let part = part.unwrap_or_else(|| nearest(self, at)).min(PARTS - 1);
+                let d = dir.normalize_or(Vec3::X) * super::POKE;
+                self.say(&format!("room  poke {} ({:.1} N s)", delirium_data::nm_asset::PARTS.get(part).unwrap_or(&"?"), super::POKE));
+                self.send(&format!("applyImpulse start=true partIndex={part} hitPoint={} impulse={}", super::v3(at), super::v3(d)));
+                self.extra_look(at - dir.normalize_or_zero() * 2.0);
+            }
             React::Button(b) => self.room_button(&b),
             React::Health(h) => {
                 self.room.health = h.max(0.0);
@@ -1151,15 +1162,24 @@ impl Follower {
             let v = self.agent.doll.com().1.length();
             let slow = e.speed.filter(|_| !e.fail || self.room.failed).is_some_and(|s| v < s);
             if (t >= e.min && slow) || (t >= e.max && v < 2.0) {
-                self.say(&format!("ours  game task: out of NM after {t:.2} s at {v:.2} m/s: {}", if lying { "getting up" } else { "back to the animation" }));
                 self.room.nm_t = None;
+                // A fitted body has no clips of its own (Homer's don't fit it): it stays in NM (ROADMAP M10).
+                if self.def.fitted {
+                    self.say(&format!("ours  game task: out of NM after {t:.2} s; a fitted body stays in NM (no get-up clips)"));
+                    self.room.last = pelvis;
+                    return;
+                }
+                self.say(&format!("ours  game task: out of NM after {t:.2} s at {v:.2} m/s: {}", if lying { "getting up" } else { "back to the animation" }));
                 self.room.rise = Some(if lying { clips.start(now) } else { clips.stand(now) });
                 self.freeze = true;
             }
             self.room.last = pelvis;
             return;
         }
-        let down = self.room.set.getup != 2
+        // A fitted body doesn't get up by Homer's clips: with the animation's mode it stays down (ROADMAP M10, the
+        // user's choice); the muscles' get-up takes the clip's poses as targets only, and runs.
+        let getup = if self.def.fitted && self.room.set.getup == 0 { 2 } else { self.room.set.getup };
+        let down = getup != 2
             && !self.room.set.tasks
             && self.room.health >= 50.0
             && now[HEAD].translation.z - pelvis.z < 0.3
@@ -1177,7 +1197,7 @@ impl Follower {
             if std::mem::take(&mut self.room.curled) {
                 self.send("bodyFoetal start=false");
             }
-            match self.room.set.getup {
+            match getup {
                 3 => self.say("ours  no getup.net here (the learned get-up isn't ported)"),
                 1 => {
                     self.room.musc = Some(clips.start(now));

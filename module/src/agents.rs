@@ -30,7 +30,43 @@ pub const NATIVES: &[(&CStr, lua::CFunction)] = &[
     (c"FollowStats", follow_stats),
     (c"SetThreads", set_threads),
     (c"EnvTimestep", env_timestep),
+    (c"FollowGrab", follow_grab),
+    (c"FollowNearest", follow_nearest),
 ];
+
+native!(follow_grab => follow_grab_impl);
+/// `DMS.FollowGrab(id, target[, part, at])`: the Playroom's grab (its `pull`, ROADMAP M10: the physgun and the gravity
+/// gun on a fitted body): part `part` grabbed at `at` (m, the game's frame, on it now) and pulled toward `target`; without
+/// `part` only the target moves; `DMS.FollowGrab(id)` lets go. False for no such agent.
+unsafe fn follow_grab_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
+    let id = unsafe { api.check_number(l, 1)? } as u32;
+    let grab = if unsafe { (api.type_)(l, 2) } <= lua::TNIL {
+        None
+    } else {
+        let target = Vec3::from_array(unsafe { api.check_vec3(l, 2)? });
+        let start = if unsafe { (api.type_)(l, 3) } > lua::TNIL {
+            Some((unsafe { api.check_number(l, 3)? } as usize, Vec3::from_array(unsafe { api.check_vec3(l, 4)? })))
+        } else {
+            None
+        };
+        Some((start, target))
+    };
+    let found = step::with(id, |f| f.set_grab(grab)).is_some();
+    unsafe { (api.pushboolean)(l, found.into()) };
+    Ok(1)
+}
+
+native!(follow_nearest => follow_nearest_impl);
+/// `DMS.FollowNearest(id, at)`: the part of NM's doll nearest a point (m, the game's frame), nil for no such agent.
+unsafe fn follow_nearest_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
+    let id = unsafe { api.check_number(l, 1)? } as u32;
+    let at = Vec3::from_array(unsafe { api.check_vec3(l, 2)? });
+    match step::with(id, |f| f.nearest(at)) {
+        Some(k) => unsafe { (api.pushnumber)(l, k as f64) },
+        None => unsafe { (api.pushnil)(l) },
+    }
+    Ok(1)
+}
 
 native!(follow_park => follow_park_impl);
 /// `DMS.FollowPark(id, on[, on_motion])`: LOD (docs/adr/0021): NM off the agent's bodies (no steps, drives or

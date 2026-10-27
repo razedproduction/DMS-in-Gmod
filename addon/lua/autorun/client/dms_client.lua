@@ -4,3 +4,4 @@
 include("dms/cl_face.lua")
 include("dms/cl_overlay.lua")
 include("dms/cl_menu.lua")
+include("dms/cl_ragdolls.lua")

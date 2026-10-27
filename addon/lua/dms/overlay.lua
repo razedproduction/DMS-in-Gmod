@@ -13,11 +13,12 @@ util.AddNetworkString("dms_shape")
 local pedcol = CreateConVar("dms_pedcol", "0", { FCVAR_ARCHIVE, FCVAR_REPLICATED }, "Homer's colours: 0 red & blue, 1 all blue, 2 all red, 3 solid blue, 4 opaque red & blue")
 local function skins()
 	for _, ent in pairs(DMS_Agents) do
-		if IsValid(ent) then ent:SetSkin(math.Clamp(pedcol:GetInt(), 0, 4)) end
+		if IsValid(ent) and not ent.DMS_Native then ent:SetSkin(math.Clamp(pedcol:GetInt(), 0, 4)) end
 	end
 end
 cvars.AddChangeCallback("dms_pedcol", skins, "DMS_Overlay")
-hook.Add("DMS_Attached", "DMS_Overlay", function(ent) ent:SetSkin(math.Clamp(pedcol:GetInt(), 0, 4)) end)
+-- Homer's skins only: a ragdoll's model keeps its own.
+hook.Add("DMS_Attached", "DMS_Overlay", function(ent) if not ent.DMS_Native then ent:SetSkin(math.Clamp(pedcol:GetInt(), 0, 4)) end end)
 
 -- Each part's NM shape in its bone's frame (units): capsule ends, radius, box half sizes, the box's angles, the part's
 -- centre; and its parent. The same for every Homer, taken from one with NM on him.
@@ -54,7 +55,8 @@ end
 net.Receive("dms_shape", function(_, ply)
 	if not shape then
 		for _, ent in pairs(DMS_Agents) do
-			if IsValid(ent) then shape = makeShape(ent) break end
+			-- Homer's bones (a fitted ragdoll's model has others).
+			if IsValid(ent) and not ent.DMS_Native then shape = makeShape(ent) break end
 		end
 	end
 	if not shape then return end

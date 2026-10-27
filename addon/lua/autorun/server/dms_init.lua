@@ -3,11 +3,12 @@ AddCSLuaFile("autorun/client/dms_client.lua")
 AddCSLuaFile("dms/cl_face.lua")
 AddCSLuaFile("dms/cl_overlay.lua")
 AddCSLuaFile("dms/cl_menu.lua")
+AddCSLuaFile("dms/cl_ragdolls.lua")
 
 -- This addon's release: the module has to be the same one (scripts\package.ps1 checks both are Cargo.toml's).
 DMS_ADDON_VERSION = "0.1.0"
--- The IPhysicsNM the module binds Homer with (docs/adr/0018).
-local INTERFACE = "VBOX3D_NM_004"
+-- The IPhysicsNM the module binds Homer with (docs/adr/0018), and the one GMod's ragdolls need (docs/adr/0027).
+local INTERFACE, INTERFACE_RAGDOLLS = 4, 6
 
 -- What's wrong, to superadmins as they join (the console has it already).
 local function tellSuperadmins(name, lines)
@@ -73,7 +74,7 @@ include("dms/tuning.lua")
 include("dms/overlay.lua")
 include("dms/bench_scene.lua")
 include("dms/dev.lua")
-include("dms/spike_ragdolls.lua")
+include("dms/ragdolls.lua")
 
 -- What keeps Homer from working here, a line each (empty: nothing): the fork, Homer's model, NM's data. For the
 -- console at start, superadmins as they join, and the DMS window's Debug tab.
@@ -84,9 +85,13 @@ function DMS_Problems()
 		-- docs/adr/0005: without IPhysicsNM nothing runs.
 		out[#out + 1] = "vphysics.dll isn't VPhysics-Box3D (no IPhysicsNM): DMS is disabled. Steam's file check puts "
 			.. "the original back: reinstall the fork (install.ps1)"
-	elseif iface ~= INTERFACE then
-		out[#out + 1] = string.format("vphysics.dll is an older VPhysics-Box3D (%s, DMS needs %s): reinstall the fork "
-			.. "from this release (install.ps1)", iface, INTERFACE)
+	else
+		local n = tonumber(iface:match("(%d+)$")) or 0
+		if n < INTERFACE_RAGDOLLS then
+			out[#out + 1] = string.format("vphysics.dll is an older VPhysics-Box3D (%s, DMS needs VBOX3D_NM_%03d%s): reinstall "
+				.. "the fork from this release (install.ps1)", iface, INTERFACE_RAGDOLLS,
+				n >= INTERFACE and "; Homer works, GMod's ragdolls don't" or "")
+		end
 	end
 	if not util.IsValidModel(DMS_HOMER_MODEL) then
 		out[#out + 1] = DMS_HOMER_MODEL .. " isn't there: make it with dms-homer from your GTA IV (install.ps1 -Gta)"

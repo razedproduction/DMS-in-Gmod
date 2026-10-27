@@ -1,4 +1,4 @@
-//! VPhysics-Box3D's `IPhysicsNM` (`VBOX3D_NM_005`), as `include/vphysics_nm.h` of the fork declares it (a copy
+//! VPhysics-Box3D's `IPhysicsNM` (`VBOX3D_NM_006`), as `include/vphysics_nm.h` of the fork declares it (a copy
 //! is beside this file).
 //!
 //! Win64 only: a C++ virtual call is a plain C call with `this` first, so the vtable is a struct of
@@ -26,7 +26,8 @@ pub struct IPhysicsEnvironment {
     _private: [u8; 0],
 }
 
-pub const INTERFACE_VERSION: &str = "VBOX3D_NM_005";
+pub const INTERFACE_VERSION: &str = "VBOX3D_NM_006";
+pub const INTERFACE_VERSION_005: &str = "VBOX3D_NM_005";
 pub const INTERFACE_VERSION_004: &str = "VBOX3D_NM_004";
 pub const INTERFACE_VERSION_003: &str = "VBOX3D_NM_003";
 pub const INTERFACE_VERSION_002: &str = "VBOX3D_NM_002";
@@ -122,6 +123,10 @@ pub struct IPhysicsNMVtbl {
         unsafe extern "C" fn(this: *mut IPhysicsNM, parent: *mut IPhysicsObject, child: *mut IPhysicsObject, hinge: bool) -> *mut IPhysicsConstraint,
     pub destroy_joint: unsafe extern "C" fn(this: *mut IPhysicsNM, constraint: *mut IPhysicsConstraint),
     pub destroy_body: unsafe extern "C" fn(this: *mut IPhysicsNM, object: *mut IPhysicsObject),
+    /// From `VBOX3D_NM_006` on: a `_005` vtable ends before them.
+    pub set_body_collision_pairs:
+        unsafe extern "C" fn(this: *mut IPhysicsNM, objects: *const *mut IPhysicsObject, count: c_int, pairs: *const c_int, pair_count: c_int) -> bool,
+    pub set_body_state: unsafe extern "C" fn(this: *mut IPhysicsNM, object: *mut IPhysicsObject, state: *const PhysicsNMBodyState) -> bool,
 }
 
 /// Which version of the interface the loaded vphysics gave.
@@ -132,6 +137,7 @@ pub enum Version {
     V003 = 3,
     V004 = 4,
     V005 = 5,
+    V006 = 6,
 }
 
 impl Version {
@@ -141,7 +147,8 @@ impl Version {
             Version::V002 => INTERFACE_VERSION_002,
             Version::V003 => INTERFACE_VERSION_003,
             Version::V004 => INTERFACE_VERSION_004,
-            Version::V005 => INTERFACE_VERSION,
+            Version::V005 => INTERFACE_VERSION_005,
+            Version::V006 => INTERFACE_VERSION,
         }
     }
 }
@@ -162,7 +169,7 @@ static VERSION: AtomicU8 = AtomicU8::new(0);
 pub fn acquire() -> Result<Version, AcquireError> {
     release();
     let create = sys::create_interface().ok_or(AcquireError::NoVphysics)?;
-    for (version, name) in [(Version::V005, c"VBOX3D_NM_005"), (Version::V004, c"VBOX3D_NM_004"), (Version::V003, c"VBOX3D_NM_003"), (Version::V002, c"VBOX3D_NM_002"), (Version::V001, c"VBOX3D_NM_001")] {
+    for (version, name) in [(Version::V006, c"VBOX3D_NM_006"), (Version::V005, c"VBOX3D_NM_005"), (Version::V004, c"VBOX3D_NM_004"), (Version::V003, c"VBOX3D_NM_003"), (Version::V002, c"VBOX3D_NM_002"), (Version::V001, c"VBOX3D_NM_001")] {
         // SAFETY: vphysics' exported factory, given a null terminated name and no return code.
         let p = unsafe { create(name.as_ptr(), ptr::null_mut()) }.cast::<IPhysicsNM>();
         if !p.is_null() {
@@ -189,6 +196,7 @@ pub fn get() -> Option<Nm> {
         3 => Version::V003,
         4 => Version::V004,
         5 => Version::V005,
+        6 => Version::V006,
         _ => return None,
     };
     (!p.is_null()).then_some(Nm { this: p, version })
@@ -404,6 +412,31 @@ impl Nm {
         if self.version >= Version::V005 {
             unsafe { (self.vtbl().destroy_body)(self.this, object) }
         }
+    }
+
+    /// `SetBodyCollisionPairs`: `objects` one body for their own collisions, only `pairs` (indices into `objects`)
+    /// colliding. `None` before `VBOX3D_NM_006`.
+    ///
+    /// # Safety
+    /// The objects are live; not from the step callback.
+    pub unsafe fn set_body_collision_pairs(&self, objects: &[*mut IPhysicsObject], pairs: &[(usize, usize)]) -> Option<bool> {
+        if self.version < Version::V006 {
+            return None;
+        }
+        let flat: Vec<c_int> = pairs.iter().flat_map(|&(a, b)| [a as c_int, b as c_int]).collect();
+        Some(unsafe { (self.vtbl().set_body_collision_pairs)(self.this, objects.as_ptr(), objects.len() as c_int, flat.as_ptr(), pairs.len() as c_int) })
+    }
+
+    /// `SetBodyState`: the body teleported to `state` (centre of mass, rotation, velocities; SI, world). `None` before
+    /// `VBOX3D_NM_006`.
+    ///
+    /// # Safety
+    /// `object` is null or a live `IPhysicsObject` of this vphysics; not from the step callback.
+    pub unsafe fn set_body_state(&self, object: *mut IPhysicsObject, state: &PhysicsNMBodyState) -> Option<bool> {
+        if self.version < Version::V006 {
+            return None;
+        }
+        Some(unsafe { (self.vtbl().set_body_state)(self.this, object, state) })
     }
 }
 
