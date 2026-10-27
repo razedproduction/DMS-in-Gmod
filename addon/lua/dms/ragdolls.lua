@@ -41,6 +41,12 @@ function DMS_IsValveBiped(ent)
 		and ent:LookupBone(PELVIS) ~= nil and ent:GetPhysicsObjectCount() > 1
 end
 
+-- An entity of any class (an NPC, a player) whose model is a ValveBiped one with a ragdoll (not Homer's).
+function DMS_HasValveBiped(ent)
+	return IsValid(ent) and ent:GetModel() ~= DMS_HOMER_MODEL and ent:LookupBone(PELVIS) ~= nil
+		and util.IsValidRagdoll(ent:GetModel())
+end
+
 -- Homer's build fitted to the model (kept by the module): its fit, or nil and why.
 function DMS_RagdollFit(model)
 	if not loadData() then return nil, "NM's data isn't loaded" end
@@ -100,6 +106,17 @@ function DMS_AttachRagdoll(ent, stand)
 	local f, why = DMS_RagdollFit(model)
 	if not f then return nil, why end
 	DMS_MapWorld()
+	-- A velocity the game set this tick (SetVelocity, a ragdoll just made) waits for the next step in the fork, where
+	-- GetBodyState doesn't see it: made the body's own first, so NM's body takes it.
+	if not stand then
+		for i = 0, ent:GetPhysicsObjectCount() - 1 do
+			local p = ent:GetPhysicsObjectNum(i)
+			if IsValid(p) and p:IsMotionEnabled() then
+				p:SetVelocityInstantaneous(p:GetVelocity())
+				p:SetAngleVelocityInstantaneous(p:GetAngleVelocity())
+			end
+		end
+	end
 	local objs = objectsOf(ent)
 	local ok, handle, ms = pcall(DMS.RagdollBody, model, ent:GetPhysicsObjectNum(0), stand or objs)
 	if not ok then return nil, "NM's body: " .. tostring(handle) end
@@ -117,6 +134,10 @@ function DMS_AttachRagdoll(ent, stand)
 		return nil, "NM: " .. tostring(id)
 	end
 	hold(ent)
+	-- The duplicator and saves copy it without DMS's fields; the copy gets NM again (lifecycle.lua).
+	ent.PreEntityCopy, ent.PostEntityCopy = DMS_PreCopy, DMS_PostCopy
+	-- A ragdoll's paste doesn't carry its Lua table: the mark that it had NM goes as a modifier.
+	duplicator.StoreEntityModifier(ent, "DMS_NM", { on = true })
 	local bones = {}
 	for _, o in ipairs(objs) do bones[o.index] = o.name end
 	ent.DMS_Agent, ent.DMS_Native, ent.DMS_Fit, ent.DMS_FitBones = id, handle, model, f.bones

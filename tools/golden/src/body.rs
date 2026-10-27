@@ -98,14 +98,23 @@ fn compare(a: &Body, b: &Body, w: &mut Worst) -> Result<(), String> {
     Ok(())
 }
 
-/// The body against the SDK's C API on `dump` (part info and frames, an agent's joints at the origin).
-fn against_sdk(body: &Body, dump: &str, w: &mut Worst) -> Result<(), String> {
+/// The body against the SDK's C API on `dump` (part info and frames, an agent's joints at the origin); with `fit`, on
+/// the SDK's own fit of that build to those joints (`nm_build_fit`).
+fn against_sdk(body: &Body, dump: &str, fit: Option<&[f32]>, w: &mut Worst) -> Result<(), String> {
     let c = std::ffi::CString::new(dump).map_err(|e| e.to_string())?;
     // SAFETY: the SDK's own calls on a build and an agent made here, with outputs as big as they write.
     unsafe {
-        let b = sdk::nm_build_from_text(c.as_ptr());
+        let mut b = sdk::nm_build_from_text(c.as_ptr());
         if b.is_null() {
             return Err("nm_build_from_text failed".into());
+        }
+        if let Some(j) = fit {
+            let fitted = sdk::nm_build_fit(b, j.as_ptr());
+            sdk::nm_build_destroy(b);
+            if fitted.is_null() {
+                return Err("nm_build_fit failed".into());
+            }
+            b = fitted;
         }
         let a = sdk::nm_agent_create(b, [0.0f32; 3].as_ptr(), 0.0, 0.3);
         let placed = body.placed(Vec3::ZERO, 0.0);
@@ -155,7 +164,7 @@ pub fn build(ours: &Body, ours_dump: &str, theirs_dump: &str) -> Result<bool, St
     let theirs = Body::new(&b, &frames);
     let mut w = Worst::default();
     compare(ours, &theirs, &mut w)?;
-    against_sdk(ours, theirs_dump, &mut w)?;
+    against_sdk(ours, theirs_dump, None, &mut w)?;
     let same_dump = ours_dump == theirs_dump;
     println!("  dump byte for byte: {}", if same_dump { "yes" } else { "NO" });
     println!("  {} parts, {} joints ({} hinges), {} self-collision pairs", ours.parts.len(), ours.joints.len(),
@@ -275,7 +284,16 @@ end
 return DMS_HomerReport(ent) .. "\njoints " .. joints .. " " .. ent:GetPhysicsObjectCount()
 "#;
     let text = ch.request("lua", spawn, Duration::from_secs(30))?;
-    let ((at, yaw), parts) = report(&text)?;
+    let ok = against_game(body, &text, true)?;
+    let dropped = drop_test(&mut ch, body, HOMER_DROPPED)?;
+    Ok(ok && dropped)
+}
+
+/// A body's report from the game (`spawn`, `part` and `joints` lines) against NM's body standing where it was spawned:
+/// frames, masses, damping, inertia, joints. `bones`: its objects are a model's, each bone's origin on its joint's
+/// pivot (Homer's; a native body's have no bone).
+fn against_game(body: &Body, text: &str, bones: bool) -> Result<bool, String> {
+    let ((at, yaw), parts) = report(text)?;
     let (joints, objects) = text.lines().find_map(|l| l.strip_prefix("joints ")).and_then(|l| {
         let mut w = l.split_whitespace().filter_map(|x| x.parse::<usize>().ok());
         Some((w.next()?, w.next()?))
@@ -284,15 +302,17 @@ return DMS_HomerReport(ent) .. "\njoints " .. joints .. " " .. ent:GetPhysicsObj
     let (mut wpos, mut wrot, mut wmass) = (Worst::default(), Worst::default(), Worst::default());
     let mut inertia = Worst::default();
     let mut diag = Worst::default();
-    let mut ok = parts.len() == body.parts.len() && objects == body.parts.len() && joints == body.joints.len();
+    let ok = parts.len() == body.parts.len() && objects == body.parts.len() && joints == body.joints.len();
     for ((p, g), (pos, rot)) in body.parts.iter().zip(&parts).zip(&want) {
         if g.name != p.name {
             return Err(format!("the game's part {} where NM's {} is", g.name, p.name));
         }
         wpos.add("frame position (m)", vgap(g.pos, *pos), p.name);
         // The bone (the PhysObj's origin) sits on the joint's pivot, the centre of mass on the part's centre.
-        let k = body.parts.iter().position(|q| q.name == p.name).unwrap_or(0);
-        wpos.add("bone origin off NM's pivot (m)", vgap(g.origin, *pos + *rot * body.bone_offset(k)), p.name);
+        if bones {
+            let k = body.parts.iter().position(|q| q.name == p.name).unwrap_or(0);
+            wpos.add("bone origin off NM's pivot (m)", vgap(g.origin, *pos + *rot * body.bone_offset(k)), p.name);
+        }
         wrot.add("frame rotation (rad)", qgap(g.rot, *rot), p.name);
         wmass.add("mass (relative)", ((g.mass - p.mass) / p.mass).abs(), p.name);
         wmass.add("damping", g.damping[0].abs().max(g.damping[1].abs()), p.name);
@@ -303,7 +323,7 @@ return DMS_HomerReport(ent) .. "\njoints " .. joints .. " " .. ent:GetPhysicsObj
         let d = Vec3::new(p.inertia.x_axis.x, p.inertia.y_axis.y, p.inertia.z_axis.z);
         diag.add("inertia diagonal (relative)", ((g.inertia - d) / d).abs().max_element(), p.name);
     }
-    println!("  {} physics objects, {} of {} joints found by FindConstraint, every joint bound (DMS.BindHomer)", objects, joints, body.joints.len());
+    println!("  {} physics objects, {} of {} joints found by FindConstraint, every joint bound (DMS.BindHomer, bind.rs)", objects, joints, body.joints.len());
     let pos_ok = wpos.report(POS_TOL) & wrot.report(ROT_TOL) & wmass.report(1e-6);
     let diag_ok = diag.report(INERTIA_TOL);
     let tensor_ok = inertia.report(INERTIA_TOL);
@@ -316,18 +336,89 @@ return DMS_HomerReport(ent) .. "\njoints " .. joints .. " " .. ent:GetPhysicsObj
                      t.z_axis.z, t.y_axis.x, t.z_axis.x, t.z_axis.y);
         }
     }
-    ok &= pos_ok && diag_ok;
-    let dropped = drop_test(&mut ch, body)?;
-    Ok(ok && tensor_ok && dropped)
+    Ok(ok && pos_ok && diag_ok && tensor_ok)
 }
 
-/// Homer, bound but without NM, left to fall from his standing pose for a few seconds: every body finite and
-/// slow at the end, every joint's two pivots together, every joint within NM's limits (with a margin).
-fn drop_test(ch: &mut dms_ctl::Channel, body: &Body) -> Result<bool, String> {
-    const SECONDS: u64 = 4;
-    println!("  dropped without NM for {SECONDS} s:");
-    std::thread::sleep(Duration::from_secs(SECONDS));
-    let text = ch.request("lua", r#"
+/// ROADMAP M11: `golden body --fit <model>`, the body check of a body fitted to a GMod model (M10), which the fork
+/// makes natively (no `.phy`). The module gives the 21 joints it fitted Homer's build to (`DMS.FitJoints`, the model's
+/// skeleton in Homer's stance: the mapping's input); here Homer's build (`homer`, from the game as `dms-game` reads it)
+/// is fitted to them as the module does, and: 1. against the SDK's C API fitting the Playroom's dump of Homer
+/// (`homer_dump`) to the same joints (`nm_build_fit`, 1e-5); 2. on the bench, the native body made standing
+/// (`DMS.RagdollBody`, without NM) against it (frames, masses, inertia, joints, as Homer's), then dropped without NM.
+/// (A fitted build's own dump can't be the reference: it doesn't carry the parts' sizes.)
+pub fn fitted(model: &str, homer: (&delirium::ragdoll::Build, &[Transform]), homer_dump: &str) -> Result<bool, String> {
+    let bench = dms_ctl::Bench::load()?;
+    let mut ch = dms_ctl::Channel::bench(&bench)?;
+    let q = format!("{model:?}");
+    let text = ch.request("lua", &format!("local f, why = DMS_RagdollFit({q}) if not f then return 'error ' .. tostring(why) end return DMS.FitJoints({q})"),
+                          Duration::from_secs(30))?;
+    if text.starts_with("error") {
+        return Err(text);
+    }
+    let joints: Vec<f32> = text.split_whitespace().map(|x| x.parse::<f32>().map_err(|_| format!("bad joints: {text}"))).collect::<Result<_, _>>()?;
+    if joints.len() != 63 {
+        return Err(format!("{} numbers for 21 joints: {text}", joints.len()));
+    }
+    let at: Vec<Vec3> = joints.chunks(3).map(|c| Vec3::new(c[0], c[1], c[2])).collect();
+    // As the module fits: from Homer's body's frames (data.rs, ragdolls.rs `fit`).
+    let frames: Vec<Transform> = Body::new(homer.0, homer.1).parts.iter().map(|p| Transform::from_translation(p.pos).with_rotation(p.rot)).collect();
+    let (b, frames) = homer.0.fit(&frames, &at);
+    let body = Body::new(&b, &frames);
+    println!("golden: body --fit 1/2: Homer's build fitted to {model}'s joints against the SDK's nm_build_fit, tolerance {BUILD_TOL:e}");
+    let mut w = Worst::default();
+    against_sdk(&body, homer_dump, Some(&joints), &mut w)?;
+    println!("  {} parts, {} joints ({} hinges), {} self-collision pairs, {:.1} kg", body.parts.len(), body.joints.len(),
+             body.joints.iter().filter(|j| j.hinge).count(), body.pairs.len(), body.parts.iter().map(|p| p.mass).sum::<f32>());
+    let build_ok = w.report(BUILD_TOL);
+    println!("golden: body --fit 2/2: in the game (the bench, dms-ctl): the native body made standing against the build");
+    let spawn = format!(r#"
+local model = {q}
+local sp = ents.FindByClass("info_player_start")[1]
+local at = sp and sp:GetPos() or Vector(0, 0, 0)
+local floor = DMS_FloorAt(util.TraceLine({{ start = at + Vector(0, 0, 64), endpos = at - Vector(0, 0, 4096) }}).HitPos + Vector(120, 40, 0))
+if IsValid(DMS_GOLDEN_FIT) then DMS_GOLDEN_FIT:Remove() end
+local rag = ents.Create("prop_ragdoll")
+rag:SetModel(model)
+rag:SetPos(floor)
+rag:Spawn()
+rag:Activate()
+rag.DMS_Bench = true
+local ok, handle = pcall(DMS.RagdollBody, model, rag:GetPhysicsObjectNum(0), {{ pos = floor, yaw = 37 }})
+if not ok then rag:Remove() return "error " .. tostring(handle) end
+-- The model's own objects out of the way, as with NM on it (ragdolls.lua).
+rag:RemoveInternalConstraint(-1)
+for i = 0, rag:GetPhysicsObjectCount() - 1 do
+	local p = rag:GetPhysicsObjectNum(i)
+	p:EnableMotion(false)
+	p:EnableCollisions(false)
+	p:EnableGravity(false)
+end
+rag.DMS_GoldenHandle = handle
+rag:CallOnRemove("DMS_GoldenFit", function() DMS.RagdollRemove(handle) end)
+DMS_GOLDEN_FIT = rag
+return string.format("spawn %.9g %.9g %.9g %.9g\n", floor.x * 0.0254, floor.y * 0.0254, floor.z * 0.0254, 37) .. DMS.RagdollReport(model, handle)
+"#);
+    let text = ch.request("lua", &spawn, Duration::from_secs(30))?;
+    let ok = against_game(&body, &text, false)?;
+    let dropped = drop_test(&mut ch, &body, &format!(r#"
+local rag = DMS_GOLDEN_FIT
+if not IsValid(rag) then return "error the ragdoll's gone" end
+local model, handle = {q}, rag.DMS_GoldenHandle
+local out = {{ "spawn 0 0 0 0", DMS.RagdollReport(model, handle) }}
+-- The fastest bone of the model NM's parts pose (their origins' speed).
+local fastest = 0
+for _, b in pairs(DMS.PoseModel(model, handle)) do fastest = math.max(fastest, Vector(b.vel.x, b.vel.y, b.vel.z):Length()) end
+out[#out + 1] = "speed " .. fastest
+-- Posed on the server from the parts (ragdolls.lua): nothing of the model drawn off them to check here.
+out[#out + 1] = "drawn 0"
+rag:Remove()
+return table.concat(out, "\n")
+"#))?;
+    Ok(build_ok && ok && dropped)
+}
+
+/// Lua for the dropped Homer: his report, his fastest body (m/s), how far Source draws a bone off its body (m).
+const HOMER_DROPPED: &str = r#"
 local ent = DMS_GOLDEN_HOMER
 if not IsValid(ent) then return "error Homer's gone" end
 local out = { DMS_HomerReport(ent) }
@@ -345,7 +436,15 @@ end
 out[#out + 1] = "drawn " .. drawn
 ent:Remove()
 return table.concat(out, "\n")
-"#, Duration::from_secs(30))?;
+"#;
+
+/// A body, left without NM to fall from its standing pose for a few seconds: every body finite and slow at the
+/// end, every joint's two pivots together, every joint within NM's limits (with a margin). `lua` reports it.
+fn drop_test(ch: &mut dms_ctl::Channel, body: &Body, lua: &str) -> Result<bool, String> {
+    const SECONDS: u64 = 4;
+    println!("  dropped without NM for {SECONDS} s:");
+    std::thread::sleep(Duration::from_secs(SECONDS));
+    let text = ch.request("lua", lua, Duration::from_secs(30))?;
     let (_, parts) = report(&text)?;
     let speed: f32 = text.lines().find_map(|l| l.strip_prefix("speed ")).and_then(|s| s.trim().parse().ok()).unwrap_or(f32::NAN);
     let drawn: f32 = text.lines().find_map(|l| l.strip_prefix("drawn ")).and_then(|s| s.trim().parse().ok()).unwrap_or(f32::NAN);

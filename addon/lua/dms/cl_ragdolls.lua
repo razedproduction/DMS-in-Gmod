@@ -69,11 +69,15 @@ local function render(ent, flags)
 	ent:DrawModel(flags)
 end
 
+-- A player's death ragdoll (deaths.lua) in the player's colour: the PlayerColor material proxy asks the entity.
+local function playerColor(ent) return ent:GetNW2Vector("DMS_PlayerColor") end
+
 local nextLook = 0
 hook.Add("Think", "DMS_Ragdolls", function()
 	if CurTime() < nextLook then return end
 	nextLook = CurTime() + 0.25
 	for _, ent in ipairs(ents.FindByClass("prop_ragdoll")) do
+		if not ent.GetPlayerColor and IsValid(ent:GetNW2Entity("DMS_Owner")) then ent.GetPlayerColor = playerColor end
 		local on = ent:GetNW2Bool("DMS_Ragdoll")
 		if on and not ent.DMS_Finishing then
 			ent.DMS_Finishing, ent.DMS_OldRender = true, ent.RenderOverride
@@ -82,4 +86,21 @@ hook.Add("Think", "DMS_Ragdolls", function()
 			ent.DMS_Finishing, ent.RenderOverride, ent.DMS_OldRender = nil, ent.DMS_OldRender, nil
 		end
 	end
+end)
+
+-- The death camera on a player's server death ragdoll, as GMod's (HL2MP's) follows its client one: over the
+-- ragdoll's root, CHASE units back along the view, stopped by walls; the mouse turns it.
+local CHASE, DEAD_VIEW, WALL = 96, 14, Vector(6, 6, 6)
+local PELVIS = "ValveBiped.Bip01_Pelvis"
+hook.Add("CalcView", "DMS_DeathCamera", function(ply, _, angles, fov)
+	if ply:Alive() then return end
+	local mode = ply:GetObserverMode()
+	if mode ~= OBS_MODE_NONE and mode ~= OBS_MODE_DEATHCAM and mode ~= OBS_MODE_FREEZECAM then return end
+	local rag = ply:GetNW2Entity("DMS_Corpse")
+	if not IsValid(rag) then return end
+	local b = rag:LookupBone(PELVIS)
+	local root = b and rag:GetBonePosition(b) or rag:GetPos()
+	local eye = root + Vector(0, 0, DEAD_VIEW)
+	local tr = util.TraceHull({ start = eye, endpos = eye - angles:Forward() * CHASE, mins = -WALL, maxs = WALL, mask = MASK_SOLID, filter = { ply, rag } })
+	return { origin = tr.HitPos, angles = angles, fov = fov, drawviewer = false }
 end)

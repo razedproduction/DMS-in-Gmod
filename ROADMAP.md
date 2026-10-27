@@ -554,7 +554,7 @@ constraints, within 7 mm), the 6 bones without objects finished on the client. P
       Homer — its reference its own LEAD on the crate (`golden fit`, there), the Playroom can't load a fitted build (M9).
       `stand` and `catchfall` within them; `push` (COM mean 0.061 m, tolerance 0.05) and `shot` (0.378 m, 0.25) off:
       it steps away further than its LEAD (Homer: 0.020, 0.148), never falls, ends as high.
-- [ ] The body check (`golden body`) on the fitted body (moved to M11).
+- [x] The body check (`golden body`) on the fitted body (moved to M11; done there: `golden body --fit`).
 - [x] The DMS window: "NM on the ragdoll under the crosshair" works on any model, the model's fit shown (height, mass,
       warnings).
 
@@ -573,15 +573,28 @@ male_07's fitted build within tolerance; the look of the model unchanged.
 
 ### M11. Death ragdolls and auto-attach — 3–5 days
 
-- [ ] NPCs: their server ragdolls (`CreateEntityRagdoll`, `ai_serverragdolls`) get NM at once, in the dying pose and
+- [x] NPCs: their server ragdolls (`CreateEntityRagdoll`, `ai_serverragdolls`) get NM at once, in the dying pose and
       velocity; the reaction to the killing hit as the Playroom's death and shot layer (ADR 0016).
-- [ ] Players: GMod's player death ragdolls are client-side (they can't have FOLLOW, ADR 0002) — a server ragdoll of
+- [x] Players: GMod's player death ragdolls are client-side (they can't have FOLLOW, ADR 0002) — a server ragdoll of
       the player's model instead (the client one suppressed), the camera on it as GMod's death camera.
-- [ ] Convars: `dms_autoattach_npc`, `dms_autoattach_players`, a limit (M7's LOD and budget); removal with the ragdoll's
+- [x] Convars: `dms_autoattach_npc`, `dms_autoattach_players`, a limit (M7's LOD and budget); removal with the ragdoll's
       fade/cleanup.
+- [x] M10's ends: `golden body` on a fitted body (`golden body --fit`); the duplicator and saves of a ragdoll with NM
+      (the copy got the original's fields and stayed frozen).
 
 **DoD:** killing NPCs and players gives NM ragdolls reacting to the last hit as in the Playroom, without the frame time
 going over M7's budget at the limit.
+
+**Done (ADR 0028):** a ValveBiped NPC's lethal damage makes its ragdoll on the server without the game's push, and a tick
+later NM is on it (undo and cleanup take it in the NPC's place); a dead player's client ragdoll gives way in the same
+tick to a server ragdoll of their model posed from their bones, the death camera on it as GMod's. The killing hit is the
+room's: a bullet `shot … fatal=1`, the rest their reaction and health 0, then the room's death (`STOP all`, `relax`), as
+the golden `death`. The motion is handed over (the fork's pending velocity made the body's own first: with the game's
+push left on NM's body took 44.6 m/s). `dms_autoattach_max` 4 (within `dms_max_agents`) and `dms_autoattach_time` 30 s;
+NM off is the swap. A model's hulls are made ahead as NPCs and players spawn (a death ragdoll in 1.1 ms, not 914 ms).
+On the bench: 8 NPCs shot 0.3 s apart, limit 4: the tick 14.8 ms mean, 21 ms worst, NM 3.2 ms a step for the 4 (M7's
+1–2 ms an agent). Copies of a ragdoll with NM get NM again. `golden body --fit` on male_07, female_01, combine_soldier:
+the build within 1e-6 of the SDK's `nm_build_fit`, the native body's frames within 2.2 µm, masses and tensors exact.
 
 ### M12. Workshop models and other humanoids — 5–8 days
 

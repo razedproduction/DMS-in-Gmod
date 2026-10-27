@@ -46,17 +46,46 @@ end
 -- A Homer that turns up without his spawn's binding: a copy (DMS_Copy), a copy from a save older than this (an agent
 -- that isn't his), or one made elsewhere. He's bound as he is (the binding doesn't depend on the pose), and gets NM if
 -- the Homer he copies had it, or with dms_autoattach.
-local function adopt(ent)
-	if not IsValid(ent) or ent:GetModel() ~= DMS_HOMER_MODEL then return end
-	local copy = ent.DMS_Copy
-	local stale = ent.DMS_Agent ~= nil and DMS_Agents[ent.DMS_Agent] ~= ent
-	if not copy and not stale and ent.DMS_Bound then return end
-	local rising = ent.DMS_Rising
+local function forgetFields(ent)
 	local keys = {}
 	for k in pairs(ent:GetTable()) do
 		if isstring(k) and k:sub(1, 4) == "DMS_" then keys[#keys + 1] = k end
 	end
 	for _, k in ipairs(keys) do ent[k] = nil end
+end
+
+-- A copy of a ValveBiped ragdoll NM drove (ROADMAP M11): its objects come frozen (as NM held the original's), so its
+-- own physics first, then NM again; a copy from a save older than this has the original's fields (`stale`).
+local function adoptRagdoll(ent)
+	local copy = ent.DMS_Copy
+	local stale = ent.DMS_Agent ~= nil and DMS_Agents[ent.DMS_Agent] ~= ent
+	if copy ~= "attached" and not stale then return end
+	forgetFields(ent)
+	for i = 0, ent:GetPhysicsObjectCount() - 1 do
+		local p = ent:GetPhysicsObjectNum(i)
+		if IsValid(p) then
+			p:EnableMotion(true)
+			p:EnableCollisions(true)
+			p:EnableGravity(true)
+			p:Wake()
+		end
+	end
+	local c, why = dms.Attach(ent)
+	if not c then print("[DMS] NM isn't on a ragdoll's copy: " .. tostring(why)) end
+end
+
+-- The mark a ValveBiped ragdoll with NM leaves in its copies (ragdolls.lua): a ragdoll's paste doesn't carry its Lua
+-- table, only its modifiers.
+duplicator.RegisterEntityModifier("DMS_NM", function(_, ent) ent.DMS_Copy = "attached" end)
+
+local function adopt(ent)
+	if DMS_IsValveBiped(ent) then return adoptRagdoll(ent) end
+	if not IsValid(ent) or ent:GetModel() ~= DMS_HOMER_MODEL then return end
+	local copy = ent.DMS_Copy
+	local stale = ent.DMS_Agent ~= nil and DMS_Agents[ent.DMS_Agent] ~= ent
+	if not copy and not stale and ent.DMS_Bound then return end
+	local rising = ent.DMS_Rising
+	forgetFields(ent)
 	-- A copy of one held on his get-up clip: his bodies were frozen with it.
 	if rising then
 		for _, p in ipairs(DMS_HomerParts(ent) or {}) do

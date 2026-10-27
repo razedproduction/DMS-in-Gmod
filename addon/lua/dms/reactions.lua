@@ -73,6 +73,17 @@ local function weaponOf(dmg)
 	if dmg:IsDamageType(DMG_BUCKSHOT) then return "shotgun" end
 	return "pistol"
 end
+DMS_WeaponOf = weaponOf
+
+-- Where a blast that hurt `ent` was: Source's RadiusDamage puts its centre in the damage position.
+function DMS_BlastCentre(ent, dmg, pos)
+	local inf = dmg:GetInflictor()
+	local centre = dmg:GetDamagePosition()
+	if centre:IsZero() then centre = dmg:GetReportedPosition() end
+	if centre:IsZero() and IsValid(inf) and inf ~= ent then centre = inf:GetPos() end
+	if centre:IsZero() then centre = pos end
+	return centre
+end
 
 local function homerMass(ent)
 	local m = 0
@@ -133,12 +144,7 @@ hook.Add("EntityTakeDamage", "DMS_Reactions", function(ent, dmg)
 		-- One blast a tick (the game hurts each of his bodies).
 		if lastBlast[ent] ~= engine.TickCount() then
 			lastBlast[ent] = engine.TickCount()
-			-- Source's RadiusDamage puts the blast's centre in the damage position.
-			local centre = dmg:GetDamagePosition()
-			if centre:IsZero() then centre = dmg:GetReportedPosition() end
-			if centre:IsZero() and IsValid(inf) and inf ~= ent then centre = inf:GetPos() end
-			if centre:IsZero() then centre = pos end
-			DMS_React(ent, "blast at=" .. at(centre))
+			DMS_React(ent, "blast at=" .. at(DMS_BlastCentre(ent, dmg, pos)))
 		end
 		dmg:SetDamageForce(vector_origin)
 	elseif dmg:IsDamageType(DMG_BURN) or dmg:IsDamageType(DMG_SLOWBURN) then
