@@ -42,9 +42,9 @@ end
 local function aimed()
 	local tr = LocalPlayer():GetEyeTrace()
 	local ent = tr.Entity
-	if IsValid(ent) and ent:GetNW2Bool("DMS_Homer") then return ent end
+	if IsValid(ent) and ent:GetNW2Bool("DMS_Agent") then return ent end
 	for _, e in ipairs(ents.FindByClass("prop_ragdoll")) do
-		if e:GetNW2Bool("DMS_Homer") then return e end
+		if e:GetNW2Bool("DMS_Agent") then return e end
 	end
 end
 
@@ -285,6 +285,40 @@ local function homerTab(p)
 	note(p, "Close the window to aim: these act on the Homer under your crosshair. The DMS tool (Tools -> DMS) does the same and more.")
 	local auto = check(p, "NM on Homers spawned from the spawn menu", switchHelp("autoattach"), function(v) switch("autoattach", v and 1 or 0) end)
 	bindSwitch("autoattach", function(v) auto:SetChecked(tonumber(v) ~= 0) end)
+
+	heading(p, "Any ragdoll (ValveBiped models)")
+	note(p, "NM on GMod's own ragdolls: HL2's citizens, combine, Alyx, player models. Homer's body is fitted to the model's skeleton (sizes, masses) and NM drives it as it drives Homer; the model keeps its look. Getting up by animation is Homer's only: a fitted body stays down.")
+	local g = row(p)
+	local on = button(g, "NM on the ragdoll you look at", "Puts NM on the ragdoll under your crosshair, as it lies or falls: Homer, or any ValveBiped model (its fit is shown below).\n\ndms_attach", function() RunConsoleCommand("dms_attach") end)
+	on:Dock(LEFT)
+	on:SetWide(180)
+	local offr = button(g, "NM off the ragdoll you look at", "Takes NM off: the model gets its own physics back, moving on as it was.\n\ndms_detach", function() RunConsoleCommand("dms_detach") end)
+	offr:Dock(LEFT)
+	offr:DockMargin(6, 0, 0, 0)
+	offr:SetWide(180)
+	local s = row(p)
+	local citizen = button(s, "Spawn a citizen with NM", "A citizen (male_07) in front of you on a fitted body, balancing.\n\ndms_ragdoll [model]", function() RunConsoleCommand("dms_ragdoll") end)
+	citizen:Dock(LEFT)
+	citizen:SetWide(180)
+	local fit = note(p, "")
+	fit.Think = function(self)
+		if (self.dmsNext or 0) > CurTime() then return end
+		self.dmsNext = CurTime() + 0.3
+		local ent = LocalPlayer():GetEyeTrace().Entity
+		local text
+		if IsValid(ent) and ent:GetNW2Bool("DMS_Ragdoll") then
+			local warn = ent:GetNW2String("DMS_FitWarn")
+			text = string.format("Under your crosshair: %s, fitted %.2f m, %.1f kg (Homer 1.77 m, 77.7 kg)%s", ent:GetModel(),
+				ent:GetNW2Float("DMS_FitHeight"), ent:GetNW2Float("DMS_FitMass"), warn ~= "" and ("\nWarnings: " .. warn) or "")
+		elseif IsValid(ent) and ent:GetClass() == "prop_ragdoll" then
+			text = "Under your crosshair: " .. ent:GetModel() .. " (no NM on it: its fit shows once it has)"
+		else
+			text = "Look at a ragdoll (close the window to aim) to see its fit."
+		end
+		if text ~= self:GetText() then self:SetText(text) end
+	end
+	local autor = check(p, "NM on ValveBiped ragdolls spawned from the spawn menu", "They balance where they land.\n\ndms_autoattach_ragdolls")
+	autor:SetConVar("dms_autoattach_ragdolls")
 
 	heading(p, "What you see (this client)")
 	for _, c in ipairs({

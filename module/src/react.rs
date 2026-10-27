@@ -101,10 +101,11 @@ pub fn parse(line: &str) -> Result<React, String> {
         "car" => React::Car { id: num("id", 0.0)? as i32, impulse: need("impulse")?, at: need("at")?, player: num("player", 0.0)? != 0.0 },
         "thrown" => React::Thrown { from: need("from")?, vel: v("vel")?.unwrap_or(Vec3::ZERO) },
         "dropped" => React::Dropped,
+        "poke" => React::Poke { part, at: need("at")?, dir: need("dir")? },
         "button" => React::Button(kv.get("name").map(|s| s.replace('_', " ")).ok_or("button needs name=<button> (STOP_all for `STOP all`)")?),
         "health" => React::Health(num("value", 200.0)?),
         "kill" => React::Shot { part, aim: None, weapon: 0, fatal: true, more: vec![] },
-        _ => return Err(format!("{kind}: shot, prop, blast, burn, taser, melee, nearmiss, car, thrown, dropped, button, health or kill")),
+        _ => return Err(format!("{kind}: shot, prop, blast, burn, taser, melee, nearmiss, car, thrown, dropped, poke, button, health or kill")),
     })
 }
 
@@ -114,7 +115,8 @@ native!(follow_react => follow_react_impl);
 /// `shot [part=k] [at= dir=] [weapon=pistol|deagle|smg|ak47|sniper|shotgun|...] [fatal=1] [more=k,k]`,
 /// `prop at= impulse=`, `blast at=`, `burn`,
 /// `taser [part=k] [at=]`, `melee damage= at= impulse= head=`, `nearmiss from= dir=`, `car impulse= at= [id=]
-/// [player=1]`, `thrown from= vel=`, `dropped`, `button name=<Playroom button>`, `health value=`, `kill`.
+/// [player=1]`, `thrown from= vel=`, `dropped`, `poke [part=k] at= dir=`, `button name=<Playroom button>`,
+/// `health value=`, `kill`.
 unsafe fn follow_react_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
     let id = unsafe { api.check_number(l, 1)? } as u32;
     let line = unsafe { api.check_string(l, 2)? };

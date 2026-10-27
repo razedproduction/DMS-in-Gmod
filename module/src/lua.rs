@@ -39,6 +39,7 @@ struct UserData {
 
 pub struct Api {
     pub settop: unsafe extern "C" fn(*mut LuaState, c_int),
+    pub gettop: unsafe extern "C" fn(*mut LuaState) -> c_int,
     pub type_: unsafe extern "C" fn(*mut LuaState, c_int) -> c_int,
     pub tonumber: unsafe extern "C" fn(*mut LuaState, c_int) -> c_double,
     pub toboolean: unsafe extern "C" fn(*mut LuaState, c_int) -> c_int,
@@ -80,6 +81,7 @@ fn load() -> Result<Api, String> {
     }
     Ok(Api {
         settop: get!("lua_settop"),
+        gettop: get!("lua_gettop"),
         type_: get!("lua_type"),
         tonumber: get!("lua_tonumber"),
         toboolean: get!("lua_toboolean"),
@@ -320,6 +322,33 @@ impl Api {
             unsafe {
                 (self.getfield)(l, arg, name.as_ptr());
                 if kind == TTABLE && (self.type_)(l, -1) == TNIL {
+                    (self.settop)(l, -2);
+                    (self.rawgeti)(l, arg, i as c_int + 1);
+                }
+                let ok = (self.type_)(l, -1) == TNUMBER;
+                *c = (self.tonumber)(l, -1) as f32;
+                (self.settop)(l, -2);
+                if !ok {
+                    return Err(format!("bad argument #{arg} (component {} isn't a number)", i + 1));
+                }
+            }
+        }
+        Ok(v)
+    }
+
+    /// A quaternion argument: a table `{x =, y =, z =, w =}` or `{x, y, z, w}`.
+    ///
+    /// # Safety
+    /// `l` is a live Lua state, called from its own thread.
+    pub unsafe fn check_vec4(&self, l: *mut LuaState, arg: c_int) -> Result<[f32; 4], String> {
+        if unsafe { (self.type_)(l, arg) } != TTABLE {
+            return Err(format!("bad argument #{arg} ({{x, y, z, w}} expected)"));
+        }
+        let mut v = [0.0; 4];
+        for (i, (c, name)) in v.iter_mut().zip([c"x", c"y", c"z", c"w"]).enumerate() {
+            unsafe {
+                (self.getfield)(l, arg, name.as_ptr());
+                if (self.type_)(l, -1) == TNIL {
                     (self.settop)(l, -2);
                     (self.rawgeti)(l, arg, i as c_int + 1);
                 }

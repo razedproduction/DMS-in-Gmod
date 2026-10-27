@@ -11,10 +11,12 @@
 #include "box3d/math_functions.h"
 
 #include <cfloat>
+#include <memory>
 #include <string>
 #include <vector>
 
 class CPhysCollide;
+struct NMCollisionSet_t;
 class CPhysicsConstraint;
 class CPhysicsEnvironment;
 class CPhysicsSpring;
@@ -333,6 +335,11 @@ public:
 	void SetNMMaterial( float flFriction, float flElasticity );
 	bool IsNMDriven() const { return m_bNMDriven; }
 
+	// IPhysicsNM::SetBodyCollisionPairs: the set the body is in and its index there (null for none)
+	void SetNMCollisionSet( std::shared_ptr<const NMCollisionSet_t> pSet, int nIndex ) { m_pNMCollisionSet = std::move( pSet ); m_nNMCollisionIndex = nIndex; }
+	const NMCollisionSet_t *GetNMCollisionSet() const { return m_pNMCollisionSet.get(); }
+	int GetNMCollisionIndex() const { return m_nNMCollisionIndex; }
+
 	// The velocity an NM-driven body starts step nStep with, before its controllers (gravity) add theirs: what
 	// GetBodyState reports during that step
 	void CaptureNMStepStart( uint32_t nStep );
@@ -578,6 +585,8 @@ private:
 	bool m_bVelocityFlushQueued = false;
 	bool m_bStiffnessQueued = false;
 	bool m_bNMDriven = false;
+	std::shared_ptr<const NMCollisionSet_t> m_pNMCollisionSet;
+	int m_nNMCollisionIndex = -1;
 	bool m_bQueuedAsWoken = false;
 	bool m_bHasFilterBounds = false;
 	bool m_bCoreVelocityValid = false;

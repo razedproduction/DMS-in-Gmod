@@ -32,7 +32,10 @@ class IPhysicsConstraint;
 class IPhysicsEnvironment;
 class IPhysicsObject;
 
-#define VPHYSICS_NM_INTERFACE_VERSION "VBOX3D_NM_005"
+#define VPHYSICS_NM_INTERFACE_VERSION "VBOX3D_NM_006"
+
+// The same interface without SetBodyCollisionPairs and SetBodyState, for controllers built against the fifth version
+#define VPHYSICS_NM_INTERFACE_VERSION_005 "VBOX3D_NM_005"
 
 // The same interface without CreateBody, CreateJoint, DestroyJoint and DestroyBody, for controllers built against the
 // fourth version
@@ -177,7 +180,9 @@ public:
 	// (quaternion x, y, z, w), in pEnvironment. pOwner, if not null, is the game object it stands in for: the body takes
 	// its game data, material and callback flags and its game flags or'ed with nGameFlags, so the game hears of its
 	// contacts as the owner's entity's and filters its collisions as the owner's. Null for bad arguments or a hull that
-	// can't be made. Not from the step callback. Remove it with DestroyBody, its joints first.
+	// can't be made. Not from the step callback. Remove it with DestroyBody, its joints first. The hull made for a set
+	// of points is kept and reused by later bodies of the same points (from VBOX3D_NM_006 on; a controller's bodies
+	// fitted to one model are made again and again).
 	virtual IPhysicsObject *CreateBody( IPhysicsEnvironment *pEnvironment, IPhysicsObject *pOwner, const float *pPoints, int nPoints, float flMass, const float *pPosition, const float *pRotation, unsigned short nGameFlags ) = 0;
 
 	// Joins two bodies with a ragdoll constraint as the game's ragdolls have them (the child the reference, the parent
@@ -190,6 +195,23 @@ public:
 	// Removes a constraint CreateJoint made. Null is ignored.
 	virtual void DestroyJoint( IPhysicsConstraint *pConstraint ) = 0;
 
-	// Removes a body CreateBody made, with the hull made for it. Null is ignored.
+	// Removes a body CreateBody made (its hull stays for the next body of the same points). Null is ignored.
 	virtual void DestroyBody( IPhysicsObject *pObject ) = 0;
+
+	// VBOX3D_NM_006 from here on.
+
+	// Makes ppObjects (nObjects bodies of one controller's model, in its part order) one body for collisions among
+	// themselves, as an NM-style controller's self-collision pairs have it: of the pairs of them only the nPairs pairs
+	// of indices in pPairs (two ints each, into ppObjects) collide, decided before the game's collision filter is asked;
+	// their contacts with anything else are filtered by the game as before. nPairs 0 (or a null pPairs) lets none of
+	// them collide with each other. A body is in one such set at a time: a later call takes it out of its old one. Kept
+	// until the body goes. False for a null array, fewer than 2 objects, a null or repeated object, or an index out of
+	// range.
+	virtual bool SetBodyCollisionPairs( IPhysicsObject **ppObjects, int nObjects, const int *pPairs, int nPairs ) = 0;
+
+	// Puts the body where pState says (its centre of mass, world, m, and its rotation) moving as it says (the centre
+	// of mass' velocity, m/s, and the angular velocity, world, rad/s), as a teleport: for handing a body's motion over
+	// from other objects (a game ragdoll's) to a controller's model and back. Wakes it. Not from the step callback.
+	// False for a null pointer, a static or frozen body, or a non-finite value.
+	virtual bool SetBodyState( IPhysicsObject *pObject, const PhysicsNMBodyState_t *pState ) = 0;
 };

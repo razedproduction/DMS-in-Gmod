@@ -18,7 +18,7 @@ dms.Detach(rag)                    -- an ordinary ragdoll
 ## Versions
 
 `DMS.Version` (the module), `DMS_ADDON_VERSION` (the Lua addon), `DMS.DeliriumVersion` (the Delirium built into the
-module), `DMS.InterfaceVersion()` (the fork's `IPhysicsNM`, `VBOX3D_NM_004` needed, `VBOX3D_NM_005` for GMod's ragdolls), `DMS.HomerModelVersion` (the body
+module), `DMS.InterfaceVersion()` (the fork's `IPhysicsNM`, `VBOX3D_NM_004` needed, `VBOX3D_NM_006` for GMod's ragdolls), `DMS.HomerModelVersion` (the body
 `homer.mdl` has to be made for; `DMS_HomerModelVersion()` reads the model's mark). The module and the addon of
 different releases don't start; `DMS_Problems()` lists what keeps Homer from working (the fork, the model, the GTA IV
 folder), `dms_info` prints it all.
@@ -27,8 +27,8 @@ folder), `dms_info` prints it all.
 
 | Function | What it does |
 |---|---|
-| `dms.Attach(rag[, opts])` | NM on Homer (`opts.balance = false`: without `bodyBalance`). A controller, or `nil, reason`. The ragdoll has to be bound to NM's body (spawned through `dms_homer`, `DMS_SpawnHomer` or the spawn menu) |
-| `dms.Detach(rag)` | NM off: armature 0, no drives, an ordinary ragdoll |
+| `dms.Attach(rag[, opts])` | NM on Homer or on any ValveBiped `prop_ragdoll` (`opts.balance = false`: without `bodyBalance`). A controller, or `nil, reason`. Homer has to be bound to NM's body (spawned through `dms_homer`, `DMS_SpawnHomer` or the spawn menu); a ValveBiped ragdoll gets a body fitted to its model that takes its pose and motion (ADR 0027) |
+| `dms.Detach(rag)` | NM off: armature 0, no drives, an ordinary ragdoll. A ValveBiped one is given back as a new ragdoll in NM's pose and motion: `true, newRagdoll` |
 | `dms.Get(rag)` | Homer's controller with NM, or `nil` |
 | `dms.All()` | the controllers of every Homer with NM |
 | `dms.Messages()` | the names of all NM messages (behaviours) |
@@ -154,9 +154,12 @@ by default). Lua: `DMS_ReactAt(ent, kind, rest, hit, from, impulse)`, the Playro
 | Command | What |
 |---|---|
 | `dms_homer` | Homer in front of the player, NM, `bodyBalance` |
-| `dms_attach` | NM on the Homer the player looks at |
-| `dms_detach` | NM off the Homer the player looks at |
-| `dms_detach_all` | NM off every Homer |
+| `dms_attach` | NM on the Homer or ValveBiped ragdoll the player looks at, as it lies or falls |
+| `dms_detach` | NM off the ragdoll the player looks at (a ValveBiped one moves on with its own physics) |
+| `dms_detach_all` | NM off every body |
+| `dms_ragdoll [model]` | a model's ragdoll (default male_07) in front of the player on a fitted body, NM, `bodyBalance` |
+| `dms_fit [model]` | the model's fit: height, mass, warnings (kept by the model and its checksum) |
+| `dms_autoattach_ragdolls 1` | NM on ValveBiped ragdolls spawned from the spawn menu (off by default) |
 | `dms_send <line>` | an NM message to the Homer under the crosshair (from the server console: to all) |
 | `dms_react <reaction> [key=value …]` | a reaction of the Homer under the crosshair; without `at=`, the crosshair's point |
 | `dms_status`, `dms_tuning_status` | the agents (NM's step cost, threads, LOD), tuning |

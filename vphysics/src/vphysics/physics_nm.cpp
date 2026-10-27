@@ -11,6 +11,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -273,8 +275,27 @@ bool CPhysicsNM::GetBodyInertia( const IPhysicsObject *pObject, float *pTensor )
 	}
 	return true;
 }
-// The hulls CreateBody made, by body: an object only points at its collide, which has to outlive it
+// The hulls CreateBody made, by body: an object only points at its collide, which has to outlive it (null for a
+// kept hull, which the next body of the same points takes)
 static std::unordered_map<const IPhysicsObject *, CPhysCollide *> s_NMBodies;
+
+// The hulls kept, by their points' bytes: a hull takes far longer to make than a body (VBOX3D_NM_006)
+static std::unordered_map<std::string, CPhysCollide *> s_NMHulls;
+static constexpr size_t MAX_NM_HULLS = 4096;
+
+bool GetNMCollisionDecision( const CPhysicsObject *pObject0, const CPhysicsObject *pObject1, bool &bCollide )
+{
+	const NMCollisionSet_t *pSet = pObject0 ? pObject0->GetNMCollisionSet() : nullptr;
+	if ( !pSet || !pObject1 || pObject1->GetNMCollisionSet() != pSet )
+		return false;
+
+	const int i = pObject0->GetNMCollisionIndex(), j = pObject1->GetNMCollisionIndex();
+	if ( i < 0 || j < 0 || i >= pSet->m_nCount || j >= pSet->m_nCount )
+		return false;
+
+	bCollide = pSet->m_Collide[i * pSet->m_nCount + j] != 0;
+	return true;
+}
 
 // A rotation (quaternion x, y, z, w) and a point (Source units) as a matrix3x4_t
 static void QuatMatrix( const b3Quat &q, const Vector &origin, matrix3x4_t &m )
@@ -324,13 +345,26 @@ IPhysicsObject *CPhysicsNM::CreateBody( IPhysicsEnvironment *pEnvironment, IPhys
 		pointers[i] = &points[i];
 	}
 
-	CPhysConvex *pConvex = g_PhysicsCollision.ConvexFromVerts( pointers.data(), nPoints );
-	if ( !pConvex )
-		return nullptr;
-
-	CPhysCollide *pCollide = g_PhysicsCollision.ConvertConvexToCollide( &pConvex, 1 );
+	std::string key( reinterpret_cast<const char *>( pPoints ), sizeof( float ) * 3 * static_cast<size_t>( nPoints ) );
+	auto kept = s_NMHulls.find( key );
+	CPhysCollide *pCollide = kept != s_NMHulls.end() ? kept->second : nullptr;
+	bool bKept = pCollide != nullptr;
 	if ( !pCollide )
-		return nullptr;
+	{
+		CPhysConvex *pConvex = g_PhysicsCollision.ConvexFromVerts( pointers.data(), nPoints );
+		if ( !pConvex )
+			return nullptr;
+
+		pCollide = g_PhysicsCollision.ConvertConvexToCollide( &pConvex, 1 );
+		if ( !pCollide )
+			return nullptr;
+
+		if ( s_NMHulls.size() < MAX_NM_HULLS )
+		{
+			s_NMHulls.emplace( std::move( key ), pCollide );
+			bKept = true;
+		}
+	}
 
 	matrix3x4_t frame;
 	QuatMatrix( rotation, ToSource( position ), frame );
@@ -347,7 +381,8 @@ IPhysicsObject *CPhysicsNM::CreateBody( IPhysicsEnvironment *pEnvironment, IPhys
 	IPhysicsObject *pObject = pEnvironment->CreatePolyObject( pCollide, pOwner ? pOwner->GetMaterialIndex() : -1, ToSource( position ), MatrixAngles( frame ), &params );
 	if ( !pObject )
 	{
-		g_PhysicsCollision.DestroyCollide( pCollide );
+		if ( !bKept )
+			g_PhysicsCollision.DestroyCollide( pCollide );
 		return nullptr;
 	}
 
@@ -362,7 +397,7 @@ IPhysicsObject *CPhysicsNM::CreateBody( IPhysicsEnvironment *pEnvironment, IPhys
 	}
 	// the angles' round trip loses a little: the frame as given
 	pObject->SetPositionMatrix( frame, true );
-	s_NMBodies[pObject] = pCollide;
+	s_NMBodies[pObject] = bKept ? nullptr : pCollide;
 	static_cast<CPhysicsObject *>( pObject )->SetNMDriven();
 	pObject->Wake();
 	return pObject;
@@ -417,4 +452,62 @@ void CPhysicsNM::DestroyBody( IPhysicsObject *pObject )
 	static_cast<CPhysicsObject *>( pObject )->GetEnvironment()->DestroyObject( pObject );
 	if ( pCollide )
 		g_PhysicsCollision.DestroyCollide( pCollide );
+}
+
+bool CPhysicsNM::SetBodyCollisionPairs( IPhysicsObject **ppObjects, int nObjects, const int *pPairs, int nPairs )
+{
+	if ( !ppObjects || nObjects < 2 || nPairs < 0 || ( nPairs > 0 && !pPairs ) )
+		return false;
+
+	for ( int i = 0; i < nObjects; ++i )
+	{
+		if ( !ppObjects[i] || std::find( ppObjects, ppObjects + i, ppObjects[i] ) != ppObjects + i )
+			return false;
+	}
+
+	auto pSet = std::make_shared<NMCollisionSet_t>();
+	pSet->m_nCount = nObjects;
+	pSet->m_Collide.assign( static_cast<size_t>( nObjects ) * nObjects, 0 );
+	for ( int k = 0; k < nPairs; ++k )
+	{
+		const int a = pPairs[2 * k], b = pPairs[2 * k + 1];
+		if ( a < 0 || b < 0 || a >= nObjects || b >= nObjects )
+			return false;
+		pSet->m_Collide[a * nObjects + b] = pSet->m_Collide[b * nObjects + a] = 1;
+	}
+
+	std::shared_ptr<const NMCollisionSet_t> pShared = pSet;
+	for ( int i = 0; i < nObjects; ++i )
+		static_cast<CPhysicsObject *>( ppObjects[i] )->SetNMCollisionSet( pShared, i );
+	// the filter's cached decisions about them are stale
+	for ( int i = 0; i < nObjects; ++i )
+		ppObjects[i]->RecheckCollisionFilter();
+	return true;
+}
+
+bool CPhysicsNM::SetBodyState( IPhysicsObject *pObject, const PhysicsNMBodyState_t *pState )
+{
+	if ( !pObject || !pState || pObject->IsStatic() || !pObject->IsMotionEnabled() )
+		return false;
+
+	b3Vec3 center, velocity, angular;
+	b3Quat rotation;
+	if ( !LoadVector( pState->m_Position, IVP_TO_SOURCE, center ) || !LoadQuat( pState->m_Rotation, rotation ) || !LoadVector( pState->m_Velocity, IVP_TO_SOURCE, velocity ) || !LoadVector( pState->m_AngularVelocity, 1.0f, angular ) )
+		return false;
+
+	// the frame's origin: the centre of mass less its offset in the body's frame (Source units)
+	const Vector local = pObject->GetMassCenterLocalSpace();
+	const b3Vec3 origin = b3Sub( center, b3RotateVector( rotation, { local.x, local.y, local.z } ) );
+	matrix3x4_t frame;
+	QuatMatrix( rotation, ToSource( origin ), frame );
+	pObject->SetPositionMatrix( frame, true );
+
+	// IPhysicsObject's: units/s, and degrees/s about the body's own axes
+	const Vector v = ToSource( velocity );
+	const b3Vec3 w = b3InvRotateVector( rotation, angular );
+	const float flDegrees = 180.0f / 3.14159265358979f;
+	const AngularImpulse spin( w.x * flDegrees, w.y * flDegrees, w.z * flDegrees );
+	pObject->SetVelocityInstantaneous( &v, &spin );
+	pObject->Wake();
+	return true;
 }

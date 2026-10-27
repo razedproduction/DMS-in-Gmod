@@ -151,7 +151,7 @@ pub unsafe fn follow(make: impl FnOnce(&Nm, u32) -> Result<Follower, String>) ->
     let mut state = state();
     let id = state.next_id;
     let f = make(&nm, id)?;
-    attach(&nm, &mut state, f.objects()[0])?;
+    attach(&nm, &mut state, f.anchor())?;
     state.next_id += 1;
     state.followers.push(f);
     Ok(id)

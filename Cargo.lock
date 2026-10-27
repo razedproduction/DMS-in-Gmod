@@ -682,6 +682,7 @@ dependencies = [
  "delirium-data",
  "delirium-sdk",
  "dms-game",
+ "dms-homer",
 ]
 
 [[package]]

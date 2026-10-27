@@ -3,6 +3,7 @@
 #include "vphysics_nm.h"
 
 #include <cstdint>
+#include <vector>
 
 class CPhysicsNM final : public IPhysicsNM
 {
@@ -26,9 +27,24 @@ public:
 	IPhysicsConstraint *CreateJoint( IPhysicsObject *pParent, IPhysicsObject *pChild, bool bHinge ) override;
 	void DestroyJoint( IPhysicsConstraint *pConstraint ) override;
 	void DestroyBody( IPhysicsObject *pObject ) override;
+	bool SetBodyCollisionPairs( IPhysicsObject **ppObjects, int nObjects, const int *pPairs, int nPairs ) override;
+	bool SetBodyState( IPhysicsObject *pObject, const PhysicsNMBodyState_t *pState ) override;
 };
 
 extern CPhysicsNM g_PhysicsNM;
+
+// SetBodyCollisionPairs' set: which of its bodies collide with which (n by n, by their indices in it)
+struct NMCollisionSet_t
+{
+	int m_nCount = 0;
+	std::vector<unsigned char> m_Collide;
+};
+
+class CPhysicsObject;
+
+// The pair's decision if both bodies are in one SetBodyCollisionPairs set: true with bCollide set, false otherwise
+// (the game's filter decides). Read only, so safe from Box3D's filter threads.
+bool GetNMCollisionDecision( const CPhysicsObject *pObject0, const CPhysicsObject *pObject1, bool &bCollide );
 
 // A Box3D shape material's userMaterialId of a body SetBodyMaterial gave NM's material: this bit, with its surface
 // property in the low bits.

@@ -1439,6 +1439,10 @@ bool CPhysicsEnvironment::EvaluateCollision( CPhysicsObject *pObject0, CPhysicsO
 	if ( IsPendingDeletePair( pObject0, pObject1 ) )
 		return false;
 
+	bool bNM;
+	if ( GetNMCollisionDecision( pObject0, pObject1, bNM ) )
+		return bNM;
+
 	return !m_pCollisionSolver || m_pCollisionSolver->ShouldCollide( pObject0, pObject1, pObject0->GetGameData(), pObject1->GetGameData() ) != 0;
 }
 
@@ -1446,6 +1450,11 @@ bool CPhysicsEnvironment::ShouldCollide( CPhysicsObject *pObject0, CPhysicsObjec
 {
 	if ( IsPendingDeletePair( pObject0, pObject1 ) )
 		return false;
+
+	// an NM body's own pairs (IPhysicsNM::SetBodyCollisionPairs), before the game is asked
+	bool bNM;
+	if ( GetNMCollisionDecision( pObject0, pObject1, bNM ) )
+		return bNM;
 
 	if ( !m_pCollisionSolver )
 		return true;
@@ -1467,10 +1476,13 @@ bool CPhysicsEnvironment::IsCollisionAllowed( CPhysicsObject *pObject0, CPhysics
 	if ( IsPendingDeletePair( pObject0, pObject1 ) )
 		return false;
 
+	bool bCollide;
+	if ( GetNMCollisionDecision( pObject0, pObject1, bCollide ) )
+		return bCollide;
+
 	if ( !m_pCollisionSolver )
 		return true;
 
-	bool bCollide;
 	if ( pObject0->FindFilterDecision( pObject1, bCollide ) )
 		return bCollide;
 

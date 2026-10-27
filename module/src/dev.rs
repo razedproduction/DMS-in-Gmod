@@ -21,6 +21,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::Duration;
 
+use delirium::prelude::Vec3;
+
 use crate::agents;
 use crate::bench::{Bench, ScriptMode, json};
 use crate::data;
@@ -258,6 +260,9 @@ fn parse_run(text: &str) -> Result<Run, String> {
     let lead = head.contains(&"lead");
     // `stage=<name>`: the Playroom's `--stage` (ROADMAP M5), on the stages map.
     let stage = head.iter().find_map(|w| w.strip_prefix("stage=")).map(String::from);
+    // `fit=<model>`: on a body fitted to the model (ROADMAP M10): FOLLOW on its native body, or with `lead` the crate's
+    // LEAD on its build (the reference: the Playroom can't load a fitted build).
+    let fit = head.iter().find_map(|w| w.strip_prefix("fit=")).map(String::from);
     if let Some(s) = stage.as_deref().filter(|s| dms_game::stage::stage(s).is_none()) {
         return Err(format!("stage {s}: the bench has {}", dms_game::stage::NAMES.join(", ")));
     }
@@ -289,7 +294,7 @@ fn parse_run(text: &str) -> Result<Run, String> {
         At::Step(s) => s,
         At::Time(t) => ((t - t0) * 60.0).round().max(0.0) as u64,
     };
-    if lead {
+    if lead && fit.is_none() {
         let lines = commands.iter().map(|(a, c)| (match *a { At::Time(t) => t, At::Step(s) => s as f32 / 60.0 }, c.clone())).collect();
         return Ok(Run::Lead(mode, lines));
     }
@@ -310,6 +315,7 @@ fn parse_run(text: &str) -> Result<Run, String> {
         }
     };
     script.stage = stage;
+    (script.fit, script.lead) = (fit, lead);
     Ok(Run::Follow(script))
 }
 
@@ -396,7 +402,9 @@ unsafe fn think(api: &Api, l: *mut LuaState, now: f64, tick: f64, dt: f32, gravi
             let up = s.fallen_from.unwrap_or(0.0);
             let stage = s.stage.as_deref().unwrap_or("room");
             let [x, y, z] = s.stage.as_deref().and_then(dms_game::stage::stage).map_or([0.0; 3], |s| s.start);
-            for_lua.push(Request { conn: *conn, id: *id, kind: "bench_spawn".into(), text: format!("{up} {stage} {x} {y} {z}") });
+            // A fitted body's: `... <model> <lead 0|1>` (DMS.BenchFitted).
+            let fit = s.fit.as_deref().map_or(String::new(), |m| format!(" {m} {}", u8::from(s.lead)));
+            for_lua.push(Request { conn: *conn, id: *id, kind: "bench_spawn".into(), text: format!("{up} {stage} {x} {y} {z}{fit}") });
         }
     }
     for (agent, f) in step::finished() {
@@ -480,6 +488,7 @@ fn publish(shared: &Shared, fields: Vec<(&'static str, String)>) {
 
 pub const NATIVES: &[(&CStr, lua::CFunction)] = &[
     (c"BenchFollow", bench_follow),
+    (c"BenchFitted", bench_fitted),
     (c"DevStart", dev_start),
     (c"DevStop", dev_stop),
     (c"DevPort", dev_port),
@@ -510,10 +519,50 @@ native!(bench_follow => bench_follow_impl);
 unsafe fn bench_follow_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
     let objects = unsafe { agents::parts(api, l, 1)? };
     let origin = unsafe { api.check_vec3(l, 2)? };
+    // SAFETY: Lua unfollows the bench's Homer before removing him.
+    let agent = unsafe { bench_start(|| agents::start(objects, 0.0, origin.into(), true))? };
+    unsafe { (api.pushnumber)(l, f64::from(agent)) };
+    Ok(1)
+}
+
+native!(bench_fitted => bench_fitted_impl);
+/// `DMS.BenchFitted(model, handle, origin)`: the waiting scenario on a body fitted to `model` (`fit=` on its mode line),
+/// at the room's start (`origin`, m): in FOLLOW on the native body `handle` (`DMS.RagdollBody`, standing there), or
+/// for `lead` in LEAD on the build alone (`handle` then a PhysObj whose environment it steps with, `up` m high for
+/// the Playroom's `fall`). The agent's id.
+unsafe fn bench_fitted_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
+    let model = unsafe { api.check_string(l, 1)? };
+    let origin = Vec3::from_array(unsafe { api.check_vec3(l, 3)? });
+    let def = crate::ragdolls::fitted_def(&model)?;
+    let lead = lock(&MAIN).pending.as_ref().is_some_and(|p| p.2.lead);
+    let agent = if lead {
+        let anchor = unsafe { api.check_physobj(l, 2)? };
+        let up = lock(&MAIN).pending.as_ref().and_then(|p| p.2.fallen_from).unwrap_or(0.0);
+        let d = data::get().ok_or("NM's data isn't loaded")?;
+        let (world, _) = agents::world_at(&d, origin, true, origin);
+        // SAFETY: the world's PhysObj lives as long as the map.
+        unsafe {
+            bench_start(|| {
+                crate::step::follow(|_, id| Ok(crate::follow::Follower::new_lead(id, d.clone(), def.clone(), world.clone(), anchor, origin, Vec3::Z * up, true)))
+            })?
+        }
+    } else {
+        let objects = crate::ragdolls::native_objects(unsafe { api.check_number(l, 2)? } as u32)?;
+        // SAFETY: Lua unfollows the bench's body before removing it.
+        unsafe { bench_start(|| agents::start_body(objects, def.clone(), 0.0, origin, true))? }
+    };
+    unsafe { (api.pushnumber)(l, f64::from(agent)) };
+    Ok(1)
+}
+
+/// The waiting scenario on the agent `start` makes; its answer goes to `dms-ctl` as the scenario ends.
+///
+/// # Safety
+/// As `start`'s.
+unsafe fn bench_start(start: impl FnOnce() -> Result<u32, String>) -> Result<u32, String> {
     let mut main = lock(&MAIN);
     let (conn, id, script) = main.pending.take().ok_or("no FOLLOW scenario is waiting")?;
-    // SAFETY: Lua unfollows the bench's Homer before removing him.
-    let agent = match unsafe { agents::start(objects, 0.0, origin.into(), true) } {
+    let agent = match start() {
         Ok(a) => a,
         Err(e) => {
             if let Some((shared, _)) = running() {
@@ -529,8 +578,7 @@ unsafe fn bench_follow_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String
         f.room.set = crate::follow::Settings::default();
     });
     main.follow_run = Some((conn, id, agent));
-    unsafe { (api.pushnumber)(l, f64::from(agent)) };
-    Ok(1)
+    Ok(agent)
 }
 
 native!(dev_start => dev_start_impl);

@@ -49,7 +49,7 @@ local function benchSpawn(r)
 	local scene, err = DMS.BenchScene(stage)
 	if not scene then error("bench scene: " .. err) end
 	DMS_MapWorld()
-	for _, e in ipairs(ents.FindByModel(DMS_HOMER_MODEL)) do
+	for _, e in ipairs(ents.FindByClass("prop_ragdoll")) do
 		if e.DMS_Bench then
 			DMS_Unfollow(e)
 			e:Remove()
@@ -62,6 +62,42 @@ local function benchSpawn(r)
 		p:SetEyeAngles(Angle(10, 90, 0))
 	end
 	local up = tonumber(w[1]) or 0
+	-- A body fitted to a model (ROADMAP M10, `fit=`): in LEAD on its build alone (the reference), or in FOLLOW on its
+	-- native body under the model's ragdoll, standing at the start as Homer is put there.
+	local model, lead = w[6], w[7] == "1"
+	if model then
+		local f, fwhy = DMS_RagdollFit(model)
+		if not f then error(fwhy) end
+		local origin = scene.origin * METRES_PER_UNIT
+		if lead then
+			DMS.BenchFitted(model, game.GetWorld():GetPhysicsObject(), origin)
+			return
+		end
+		local at = scene.origin + start + Vector(0, 0, up / METRES_PER_UNIT)
+		local rag = ents.Create("prop_ragdoll")
+		rag:SetModel(model)
+		rag:SetPos(at)
+		rag:Spawn()
+		rag:Activate()
+		rag.DMS_Bench = true
+		local ok, handle = pcall(DMS.RagdollBody, model, rag:GetPhysicsObjectNum(0), { pos = at, yaw = 0 })
+		if not ok then rag:Remove() error(handle) end
+		rag:RemoveInternalConstraint(-1)
+		for i = 0, rag:GetPhysicsObjectCount() - 1 do
+			local p = rag:GetPhysicsObjectNum(i)
+			p:EnableMotion(false)
+			p:EnableCollisions(false)
+			p:EnableGravity(false)
+		end
+		local bones = {}
+		for i = 0, rag:GetPhysicsObjectCount() - 1 do bones[i] = rag:GetBoneName(rag:TranslatePhysBoneToBone(i)) end
+		local id = DMS.BenchFitted(model, handle, origin)
+		rag.DMS_Agent, rag.DMS_Native, rag.DMS_Fit, rag.DMS_PhysBones, rag.DMS_FitBones = id, handle, model, bones, f.bones
+		rag:SetNW2Bool("DMS_Ragdoll", true)
+		DMS_Agents[id] = rag
+		rag:CallOnRemove("DMS_Unfollow", function(e) DMS_Unfollow(e) end)
+		return
+	end
 	local ent, why = DMS_SpawnHomer(scene.origin + start + Vector(0, 0, up / METRES_PER_UNIT), 0)
 	if not ent then error(why) end
 	ent.DMS_Bench = true

@@ -1,8 +1,11 @@
-//! GMod's ragdolls (ROADMAP M9, docs/adr/0025): the spikes' natives. A model's skeleton read from its `.mdl` (S1),
-//! ValveBiped mapped onto NM's 21 joints and Homer's build fitted to them (`Build::fit`, as the SDK's Unity bridge
-//! does, S2), the fitted body bound and driven in FOLLOW (S3), the model's bones posed from its parts (S4).
+//! GMod's ragdolls (ROADMAP M9–M10, docs/adr/0025, 0027): a model's skeleton read from its `.mdl`, ValveBiped mapped
+//! onto NM's 21 joints and Homer's build fitted to them (`Build::fit`, as the SDK's Unity bridge does), the fitted
+//! body made by the fork natively (`VBOX3D_NM_005`/`_006`) in the model's ragdoll's environment, bound and driven in
+//! FOLLOW as Homer is, the model's bones posed from its parts.
 //!
-//! Fitted bodies are kept by a key (the model's path) for the session; nothing of a model is written anywhere.
+//! Fitted bodies are kept by the model's path and its checksum for the session; nothing of a model is written
+//! anywhere. The swap (`dms_attach`): the native body takes the ragdoll's pose and every part's velocity, and gives
+//! them back to the model's objects on `dms_detach` (`DMS.PoseModel`).
 
 use std::collections::HashMap;
 use std::ffi::{CStr, c_int};
@@ -12,30 +15,28 @@ use delirium::prelude::*;
 use delirium::ragdoll::{Build, Ragdoll};
 
 use crate::data;
-use crate::ffi::vphysics_nm::{self, IPhysicsConstraint, IPhysicsObject, Version};
+use crate::ffi::vphysics_nm::{self, IPhysicsConstraint, IPhysicsObject, PhysicsNMBodyState, Version};
 use crate::follow::BodyDef;
-use crate::lua::{self, Api, LuaState, TNUMBER, TTABLE, native};
+use crate::lua::{self, Api, LuaState, TTABLE, native};
 
 pub const NATIVES: &[(&CStr, lua::CFunction)] = &[
     (c"ModelSkeleton", model_skeleton),
-    (c"FitModel", fit_model),
-    (c"FitBody", fit_body),
+    (c"RagdollFit", ragdoll_fit),
     (c"FitDump", fit_dump),
-    (c"FitJoints", fit_joints),
     (c"FitLead", fit_lead),
-    (c"BindFitted", bind_fitted),
-    (c"FollowFitted", follow_fitted),
+    (c"RagdollBody", ragdoll_body),
+    (c"RagdollFollow", ragdoll_follow),
+    (c"RagdollRemove", ragdoll_remove),
     (c"PoseModel", pose_model),
-    (c"NativeBody", native_body),
-    (c"NativeBind", native_bind),
-    (c"NativeFollow", native_follow),
-    (c"NativeRemove", native_remove),
 ];
 
 /// Metres per Source unit.
 const M: f32 = 0.0254;
 /// `mstudiobone_t`'s size (studio versions 44 to 49).
 const BONE_SIZE: usize = 216;
+/// Delirium's behaviours are tuned for about this height (m): a fitted body far from it gets a warning.
+const TUNED_HEIGHT: f32 = 1.8;
+const HEIGHT_WARN: f32 = 0.25;
 
 pub struct Bone {
     pub name: String,
@@ -166,12 +167,16 @@ const POSED: [(&str, usize); 21] = [
     ("ValveBiped.Bip01_R_Hand", 20),
 ];
 
+/// The parts a ValveBiped ragdoll has no physics object for, each between two that it has (or that come before it
+/// here) and how far along: where their pose comes from when NM takes over the ragdoll's.
+const BETWEEN: [(usize, usize, usize, f32); 6] = [(7, 0, 9, 1.0 / 3.0), (8, 0, 9, 2.0 / 3.0), (10, 9, 12, 1.0 / 3.0), (11, 9, 12, 2.0 / 3.0), (13, 10, 14, 0.5), (17, 10, 18, 0.5)];
+
 /// NM's 21 joints on a ValveBiped skeleton in its bind pose (m, the model's space), as `NmCharacter.Joints` takes
-/// them from a Unity humanoid: the pelvis, then each part's joint with its parent; the 4 spine joints spread evenly
-/// from Spine to Neck; a missing Neck or Clavicle put between its neighbours. Also what was made up.
+/// them from a Unity humanoid: the pelvis, then each part's joint with its parent; the 4 spine joints spread from
+/// Spine to Neck by `spread`; a missing Neck or Clavicle put between its neighbours. Also what was made up.
 pub fn valvebiped_joints(s: &Skeleton, spread: [f32; 3]) -> Result<([Vec3; 21], Vec<String>), String> {
     let at = |k: usize| VALVEBIPED[k].and_then(|n| s.find(n)).map(|i| s.bones[i].bind.0 * M);
-    let need = |k: usize| at(k).ok_or_else(|| format!("no {}", VALVEBIPED[k].unwrap_or("?")));
+    let need = |k: usize| at(k).ok_or_else(|| format!("no {} (not a ValveBiped skeleton)", VALVEBIPED[k].unwrap_or("?")));
     let mut made = vec![];
     let (spine, head) = (need(7)?, need(12)?);
     let neck = at(11).unwrap_or_else(|| {
@@ -208,19 +213,22 @@ pub fn homer_spread(body: &dms_game::body::Body) -> [f32; 3] {
 /// A body fitted to a model.
 pub struct Fitted {
     pub def: Arc<BodyDef>,
+    /// The `.mdl`'s checksum it was fitted from.
+    pub checksum: i32,
     /// The fitted build's frames, standing as the model's bind pose (m, the model's space).
     pub frames: Vec<Transform>,
     /// The model's bones posed from parts (S4): bone, part, the bone's frame in the part's (m).
     pub posed: Vec<(String, usize, Vec3, Quat)>,
-    pub made: Vec<String>,
-    /// The 21 joints it was fitted to (m, the model's space).
-    pub joints: [Vec3; 21],
+    /// What the player should know: joints made up, a height far from NM's tuning, bones posed only on the client.
+    pub warnings: Vec<String>,
+    pub height: f32,
+    pub mass: f32,
 }
 
 static FITS: Mutex<Option<HashMap<String, Arc<Fitted>>>> = Mutex::new(None);
 
 fn fitted(key: &str) -> Result<Arc<Fitted>, String> {
-    FITS.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|m| m.get(key).cloned()).ok_or_else(|| format!("{key}: not fitted (DMS.FitModel)"))
+    FITS.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|m| m.get(key).cloned()).ok_or_else(|| format!("{key}: not fitted (DMS.RagdollFit)"))
 }
 
 /// Drops the fitted bodies (the module's unload, docs/adr/0021).
@@ -230,23 +238,74 @@ pub fn unload() {
     *NATIVE.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
+/// Each part's segment: from its joint to this child's (the leaves, feet, hands and head, turn with their parent).
+const SEGMENT: [(usize, usize); 15] = [(1, 2), (2, 3), (4, 5), (5, 6), (7, 8), (8, 9), (9, 10), (10, 11), (11, 12), (13, 14), (14, 15), (15, 16), (17, 18), (18, 19), (19, 20)];
+
+/// Homer's 21 joints as he stands (his build's frames): each part's pivot on its parent, the root's centre.
+fn homer_joints(body: &dms_game::body::Body) -> Vec<Vec3> {
+    (0..body.parts.len())
+        .map(|k| body.joints.iter().find(|j| j.part == k).map_or(body.parts[k].pos, |j| body.parts[k].pos + body.parts[k].rot * j.anchor_child))
+        .collect()
+}
+
+/// The model's joints (`bind`, its reference pose) put in Homer's stance (ROADMAP M10): each segment keeps the model's
+/// length and takes the way Homer's goes, turned to the model's facing (its hips' line). NM's standing frames are what
+/// it holds as the body's neutral, so a body fitted to ValveBiped's reference pose stood with its arms out and its head
+/// forward. Also each part's turn from the reference pose to the stance, for the model's bones.
+fn repose(body: &dms_game::body::Body, bind: &[Vec3; 21]) -> ([Vec3; 21], [Quat; 21]) {
+    let h = homer_joints(body);
+    let flat = |v: Vec3| v.with_z(0.0).normalize_or(Vec3::X);
+    // Homer's hips' line onto the model's: a turn about Z.
+    let face = Quat::from_rotation_arc(flat(h[4] - h[1]), flat(bind[4] - bind[1]));
+    let mut at = *bind;
+    for k in 1..21 {
+        let p = body.parts[k].parent.unwrap_or(0);
+        let way = (face * (h[k] - h[p])).normalize_or_zero();
+        let len = bind[k].distance(bind[p]);
+        at[k] = if way == Vec3::ZERO { at[p] + (bind[k] - bind[p]) } else { at[p] + way * len };
+    }
+    let mut turn = [Quat::IDENTITY; 21];
+    for k in 1..21 {
+        let p = body.parts[k].parent.unwrap_or(0);
+        turn[k] = match SEGMENT.iter().find(|s| s.0 == k) {
+            Some(&(_, c)) => {
+                let (a, b) = ((bind[c] - bind[k]).normalize_or_zero(), (at[c] - at[k]).normalize_or_zero());
+                if a == Vec3::ZERO || b == Vec3::ZERO { turn[p] } else { Quat::from_rotation_arc(a, b) }
+            }
+            None => turn[p],
+        };
+    }
+    (at, turn)
+}
+
 /// Homer's build fitted to a ValveBiped skeleton (`Build::fit` on Homer's standing frames), NM's spine joints spread
-/// evenly from Spine to Neck (`even`, as `NmCharacter.Joints`) or as Homer's are along his spine.
-pub fn fit(d: &data::Data, s: &Skeleton, even: bool) -> Result<Fitted, String> {
-    let (joints, made) = valvebiped_joints(s, if even { [0.25, 0.5, 0.75] } else { homer_spread(&d.body) })?;
+/// as Homer's are along his spine (ADR 0025), the skeleton put in Homer's stance first ([`repose`], ADR 0027).
+pub fn fit(d: &data::Data, s: &Skeleton) -> Result<Fitted, String> {
+    let (bind, made) = valvebiped_joints(s, homer_spread(&d.body))?;
+    let (joints, turn) = repose(&d.body, &bind);
     let frames: Vec<Transform> = d.body.parts.iter().map(|p| Transform::from_translation(p.pos).with_rotation(p.rot)).collect();
     let (build, frames) = d.homer.fit(&frames, &joints);
     let body = dms_game::body::Body::new(&build, &frames);
-    let posed = POSED
+    let posed: Vec<(String, usize, Vec3, Quat)> = POSED
         .iter()
         .filter_map(|&(name, k)| {
             let b = &s.bones[s.find(name)?];
-            let (pos, rot) = (b.bind.0 * M, b.bind.1);
+            // The bone as the stance has it: turned with its part about the part's joint.
+            let (pos, rot) = (joints[k] + turn[k] * (b.bind.0 * M - bind[k]), (turn[k] * b.bind.1).normalize());
             let f = frames[k];
             Some((b.name.clone(), k, f.rotation.inverse() * (pos - f.translation), (f.rotation.inverse() * rot).normalize()))
         })
         .collect();
-    Ok(Fitted { def: Arc::new(BodyDef { build, body }), frames, posed, made, joints })
+    let (height, mass) = (height(&body), body.parts.iter().map(|p| p.mass).sum::<f32>());
+    let mut warnings: Vec<String> = made.iter().map(|m| format!("no {m} bone: put between its neighbours")).collect();
+    if (height - TUNED_HEIGHT).abs() > HEIGHT_WARN {
+        warnings.push(format!("{height:.2} m tall: Delirium's behaviours are tuned for about {TUNED_HEIGHT} m and work worse this far from it"));
+    }
+    let missing: Vec<&str> = VALVEBIPED.iter().flatten().copied().filter(|n| s.find(n).and_then(|i| (s.bones[i].physics >= 0).then_some(())).is_none()).collect();
+    if missing.len() > 6 {
+        warnings.push(format!("{} of NM's bones have no physics object here: they're drawn on the client only", missing.len()));
+    }
+    Ok(Fitted { def: Arc::new(BodyDef { build, body, fitted: true }), checksum: s.checksum, frames, posed, warnings, height, mass })
 }
 
 /// The body's height (m): its lowest point to its highest, its parts' capsules as they stand.
@@ -287,27 +346,49 @@ unsafe fn model_skeleton_impl(api: &Api, l: *mut LuaState) -> Result<c_int, Stri
     Ok(1)
 }
 
-native!(fit_model => fit_model_impl);
-/// `DMS.FitModel(key, mdl[, even])`: Homer's build fitted to the ValveBiped `.mdl` (its bytes; `even`: NM's spine
-/// joints spread evenly, as the Unity bridge does, else as Homer's) and kept as `key` (the
-/// model's path) for `DMS.BindFitted` and the rest: `{height, mass, homer_height, homer_mass, made, parts = {{name,
-/// mass, radius, half, size}, ...}}` (m, kg; `made` the joints put between neighbours, `size` the part's scale).
-unsafe fn fit_model_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
+native!(ragdoll_fit => ragdoll_fit_impl);
+/// `DMS.RagdollFit(model, mdl)`: Homer's build fitted to the ValveBiped `.mdl` (`model` its path, `mdl` its bytes),
+/// kept by the path and the `.mdl`'s checksum (a changed model is fitted again): `{height, mass, homer_height,
+/// homer_mass, checksum, cached, ms, warnings = {...}, bones = {[bone] = part}, parts = {{name, mass, radius, half,
+/// size}, ...}}` (m, kg; `bones` the model's bones NM's parts pose, 0-based parts). A Lua error for a model that isn't
+/// ValveBiped.
+unsafe fn ragdoll_fit_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
     let key = unsafe { api.check_string(l, 1)? };
-    let s = read_mdl(unsafe { api.check_bytes(l, 2)? })?;
+    let bytes = unsafe { api.check_bytes(l, 2)? };
     let d = data::get().ok_or_else(|| format!("NM's data isn't loaded (DMS.LoadData): {}", data::how_to()))?;
-    let even = unsafe { (api.toboolean)(l, 3) } != 0;
-    let f = Arc::new(fit(&d, &s, even)?);
+    let started = std::time::Instant::now();
+    let checksum = i32_at(bytes, 8).unwrap_or(0);
+    let kept = fitted(&key).ok().filter(|f| f.checksum == checksum);
+    let cached = kept.is_some();
+    let f = match kept {
+        Some(f) => f,
+        None => {
+            let f = Arc::new(fit(&d, &read_mdl(bytes)?)?);
+            FITS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(key, f.clone());
+            f
+        }
+    };
     let body = &f.def.body;
-    let mass = |b: &dms_game::body::Body| b.parts.iter().map(|p| p.mass).sum::<f32>();
     unsafe {
-        (api.createtable)(l, 0, 6);
-        api.set_number(l, c"height", f64::from(height(body)));
-        api.set_number(l, c"mass", f64::from(mass(body)));
+        (api.createtable)(l, 0, 10);
+        api.set_number(l, c"height", f64::from(f.height));
+        api.set_number(l, c"mass", f64::from(f.mass));
         api.set_number(l, c"homer_height", f64::from(height(&d.body)));
-        api.set_number(l, c"homer_mass", f64::from(mass(&d.body)));
-        api.set_str(l, c"made", &f.made.join(", "));
-        api.set_vector(l, c"spread", &homer_spread(&d.body));
+        api.set_number(l, c"homer_mass", f64::from(d.body.parts.iter().map(|p| p.mass).sum::<f32>()));
+        api.set_number(l, c"checksum", f64::from(f.checksum));
+        api.set_bool(l, c"cached", cached);
+        api.set_number(l, c"ms", started.elapsed().as_secs_f64() * 1000.0);
+        (api.createtable)(l, f.warnings.len() as c_int, 0);
+        for (i, w) in f.warnings.iter().enumerate() {
+            api.push_str(l, w);
+            api.append(l, i + 1);
+        }
+        (api.setfield)(l, -2, c"warnings".as_ptr());
+        (api.createtable)(l, 0, f.posed.len() as c_int);
+        for (bone, k, _, _) in &f.posed {
+            api.set_number(l, &std::ffi::CString::new(bone.as_str()).unwrap_or_default(), *k as f64);
+        }
+        (api.setfield)(l, -2, c"bones".as_ptr());
         (api.createtable)(l, body.parts.len() as c_int, 0);
         for (k, p) in body.parts.iter().enumerate() {
             (api.createtable)(l, 0, 5);
@@ -320,52 +401,19 @@ unsafe fn fit_model_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
         }
         (api.setfield)(l, -2, c"parts".as_ptr());
     }
-    FITS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(key, f);
-    Ok(1)
-}
-
-native!(fit_body => fit_body_impl);
-/// `DMS.FitBody(key[, pos, yaw])`: the fitted body standing as `nm_agent_create` puts it at `pos` (m, its feet's
-/// level) facing `yaw` (rad), as `DMS.HomerBody` has Homer's.
-unsafe fn fit_body_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
-    let f = fitted(&unsafe { api.check_string(l, 1)? })?;
-    let at = if unsafe { (api.type_)(l, 2) } > lua::TNIL { Vec3::from_array(unsafe { api.check_vec3(l, 2)? }) } else { Vec3::ZERO };
-    let yaw = unsafe { api.opt_number(l, 3, 0.0)? } as f32;
-    let body = &f.def.body;
-    unsafe { (api.createtable)(l, body.parts.len() as c_int, 0) };
-    for (i, (p, (pos, rot))) in body.parts.iter().zip(body.placed(at, yaw)).enumerate() {
-        unsafe {
-            (api.createtable)(l, 0, 5);
-            api.set_str(l, c"name", p.name);
-            api.set_number(l, c"parent", p.parent.map_or(-1.0, |q| q as f64));
-            api.set_number(l, c"mass", f64::from(p.mass));
-            api.set_vector(l, c"pos", &pos.to_array());
-            api.set_vector(l, c"rot", &rot.to_array());
-            api.append(l, i + 1);
-        }
-    }
     Ok(1)
 }
 
 native!(fit_dump => fit_dump_impl);
-/// `DMS.FitDump(key)`: the fitted build as the Playroom's `NM_DUMP` writes one (`Build::dump`), for
-/// `delirium-room <xrt> <build.txt>` and `dms-homer --fit`.
+/// `DMS.FitDump(model)`: the fitted build as the Playroom's `NM_DUMP` writes one (`Build::dump`).
 unsafe fn fit_dump_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
     let f = fitted(&unsafe { api.check_string(l, 1)? })?;
     unsafe { api.push_str(l, &f.def.build.dump(&f.frames)) };
     Ok(1)
 }
 
-native!(fit_joints => fit_joints_impl);
-/// `DMS.FitJoints(key)`: the 21 joints the body was fitted to, `x y z` (m) a line, for `dms-homer --joints`.
-unsafe fn fit_joints_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
-    let f = fitted(&unsafe { api.check_string(l, 1)? })?;
-    unsafe { api.push_str(l, &f.joints.iter().map(|j| format!("{} {} {}\n", j.x, j.y, j.z)).collect::<String>()) };
-    Ok(1)
-}
-
 native!(fit_lead => fit_lead_impl);
-/// `DMS.FitLead(key, steps[, message])`: the fitted body in LEAD (NM's own physics, the crate as the Playroom runs
+/// `DMS.FitLead(model, steps[, message])`: the fitted body in LEAD (NM's own physics, the crate as the Playroom runs
 /// it) on the Playroom's floor, `bodyBalance` from the start (or `message`): `{z = {pelvis height per step}, fell}`
 /// (m), whether it stands without Box3D at all.
 unsafe fn fit_lead_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
@@ -410,43 +458,6 @@ pub fn lead(d: &data::Data, build: &Build, body: &dms_game::body::Body, steps: u
     Ok(z)
 }
 
-/// The 21 PhysObj of the table at `arg`.
-unsafe fn objects(api: &Api, l: *mut LuaState, arg: c_int, count: usize) -> Result<Vec<*mut IPhysicsObject>, String> {
-    if unsafe { (api.type_)(l, arg) } != TTABLE {
-        return Err(format!("bad argument #{arg} (a table of {count} PhysObj in NM's part order expected)"));
-    }
-    (0..count)
-        .map(|i| unsafe {
-            (api.rawgeti)(l, arg, i as c_int + 1);
-            let p = api.check_physobj(l, -1).map_err(|_| format!("bad argument #{arg} ([{}] isn't a PhysObj)", i + 1));
-            (api.settop)(l, -2);
-            p
-        })
-        .collect()
-}
-
-native!(bind_fitted => bind_fitted_impl);
-/// `DMS.BindFitted(key, parts)`: `DMS.BindHomer` for a fitted body: its 21 PhysObj (a proxy ragdoll's, or the
-/// fork's own bodies) get the fitted body's inertia, materials, pivots, frames and limits.
-unsafe fn bind_fitted_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
-    let f = fitted(&unsafe { api.check_string(l, 1)? })?;
-    let parts = unsafe { objects(api, l, 2, f.def.body.parts.len())? };
-    unsafe { crate::bind::bind_body(api, l, &f.def.body, &parts) }
-}
-
-native!(follow_fitted => follow_fitted_impl);
-/// `DMS.FollowFitted(key, parts, yaw, floor[, room])`: `DMS.Follow` on a fitted body bound by `DMS.BindFitted`.
-unsafe fn follow_fitted_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
-    let f = fitted(&unsafe { api.check_string(l, 1)? })?;
-    let parts = unsafe { objects(api, l, 2, f.def.body.parts.len())? };
-    let yaw = unsafe { api.check_number(l, 3)? } as f32;
-    let floor = Vec3::from_array(unsafe { api.check_vec3(l, 4)? });
-    let room = unsafe { (api.toboolean)(l, 5) } != 0;
-    let id = unsafe { crate::agents::start_body(parts, f.def.clone(), yaw, floor, room)? };
-    unsafe { (api.pushnumber)(l, f64::from(id)) };
-    Ok(1)
-}
-
 /// Source's angles (pitch, yaw, roll; degrees) of a rotation (`MatrixAngles`).
 pub fn angles(q: Quat) -> [f32; 3] {
     let m = Mat3::from_quat(q);
@@ -460,45 +471,13 @@ pub fn angles(q: Quat) -> [f32; 3] {
     [pitch.to_degrees(), yaw.to_degrees(), roll.to_degrees()]
 }
 
-native!(pose_model => pose_model_impl);
-/// `DMS.PoseModel(key, parts)`: where the model's mapped bones are with the fitted body's parts as they are now
-/// (S4), `parts` its 21 PhysObj or a native body's handle: `{[bone name] = {pos (units), ang = {x = pitch, y = yaw,
-/// z = roll}}}`.
-unsafe fn pose_model_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
-    let f = fitted(&unsafe { api.check_string(l, 1)? })?;
-    let parts = if unsafe { (api.type_)(l, 2) } == TNUMBER {
-        native(unsafe { api.check_number(l, 2)? } as u32)?.objects
-    } else {
-        unsafe { objects(api, l, 2, f.def.body.parts.len())? }
-    };
-    let nm = vphysics_nm::get().ok_or("IPhysicsNM isn't available")?;
-    let poses = parts
-        .iter()
-        // SAFETY: PhysObj Lua handed over, alive for this call.
-        .map(|&o| unsafe { nm.body_state(o) }.map(|s| (Vec3::from_array(s.position), Quat::from_array(s.rotation).normalize())).ok_or("GetBodyState failed"))
-        .collect::<Result<Vec<_>, _>>()?;
-    unsafe { (api.createtable)(l, 0, f.posed.len() as c_int) };
-    for (name, k, at, turn) in &f.posed {
-        let (p, q) = poses[*k];
-        let (pos, rot) = ((p + q * *at) / M, (q * *turn).normalize());
-        let [pitch, yaw, roll] = angles(rot);
-        let name = std::ffi::CString::new(name.as_str()).unwrap_or_default();
-        unsafe {
-            (api.createtable)(l, 0, 2);
-            api.set_vector(l, c"pos", &pos.to_array());
-            api.set_vector(l, c"ang", &[pitch, yaw, roll]);
-            (api.setfield)(l, -2, name.as_ptr());
-        }
-    }
-    Ok(1)
-}
-
 /// The game flag that keeps an entity's objects off each other (Source's `FVPHYSICS_NO_SELF_COLLISIONS`): the native
-/// bodies take their owner's entity, so they touch neither each other nor the model's own objects.
+/// bodies take their owner's entity, so the game keeps them off the model's own objects; among themselves the fork's
+/// pairs (`SetBodyCollisionPairs`) decide first.
 const NO_SELF_COLLISIONS: u16 = 0x8000;
 
-/// A fitted body made by the fork (S3 (a), `VBOX3D_NM_005`): its 21 bodies in part order and their joints (null for
-/// the root).
+/// A fitted body made by the fork (`VBOX3D_NM_005`+): its 21 bodies in part order and their joints (null for the
+/// root).
 #[derive(Clone)]
 pub struct NativeBody {
     pub objects: Vec<*mut IPhysicsObject>,
@@ -514,26 +493,140 @@ fn native(handle: u32) -> Result<NativeBody, String> {
     NATIVE.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|(_, m)| m.get(&handle).cloned()).ok_or_else(|| format!("no native body #{handle}"))
 }
 
-native!(native_body => native_body_impl);
-/// `DMS.NativeBody(key, owner, pos, yaw)`: the fitted body made by the fork in `owner`'s environment (a PhysObj of
-/// the model's ragdoll, whose entity the bodies stand in for), standing as `nm_agent_create` puts it at `pos` (m, its
-/// feet's level) facing `yaw` (rad): NM's capsules and boxes as `dms-homer` hulls them, NM's masses, a ragdoll
-/// constraint per joint. Its handle and how long it took (ms).
-unsafe fn native_body_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
+/// A part's state: frame (m, world) and its centre's velocity and spin.
+#[derive(Clone, Copy)]
+struct PartState {
+    pos: Vec3,
+    rot: Quat,
+    vel: Vec3,
+    spin: Vec3,
+}
+
+impl PartState {
+    /// The rigid motion of this part carried to a point.
+    fn at(&self, p: Vec3) -> Vec3 {
+        self.vel + self.spin.cross(p - self.pos)
+    }
+}
+
+/// The model's ragdoll objects handed over by Lua: `{{name = bone, obj = PhysObj, pos = its origin (units)}, ...}`.
+unsafe fn model_objects(api: &Api, l: *mut LuaState, arg: c_int) -> Result<Vec<(String, *mut IPhysicsObject, Vec3)>, String> {
+    if unsafe { (api.type_)(l, arg) } != TTABLE {
+        return Err(format!("bad argument #{arg} (a table of {{name, obj, pos}} expected)"));
+    }
+    let mut out = vec![];
+    for i in 1.. {
+        unsafe { (api.rawgeti)(l, arg, i) };
+        if unsafe { (api.type_)(l, -1) } != TTABLE {
+            unsafe { (api.settop)(l, -2) };
+            break;
+        }
+        let top = unsafe { (api.gettop)(l) };
+        let item = (|| unsafe {
+            (api.getfield)(l, top, c"name".as_ptr());
+            let name = api.check_string(l, -1);
+            (api.settop)(l, -2);
+            (api.getfield)(l, top, c"obj".as_ptr());
+            let obj = api.check_physobj(l, -1);
+            (api.settop)(l, -2);
+            (api.getfield)(l, top, c"pos".as_ptr());
+            let pos = api.check_vec3(l, -1);
+            (api.settop)(l, -2);
+            Ok::<_, String>((name?, obj?, Vec3::from_array(pos?) * M))
+        })();
+        unsafe { (api.settop)(l, -2) };
+        out.push(item.map_err(|e| format!("bad argument #{arg} ([{i}]: {e})"))?);
+    }
+    Ok(out)
+}
+
+/// Every part's state from the model's ragdoll as it is now: the parts whose bones have an object from them (each
+/// bone's bind-pose offset to its part), the rest between their neighbours ([`BETWEEN`]), or off their parent as in
+/// the bind pose.
+fn parts_from_model(f: &Fitted, objects: &[(String, *mut IPhysicsObject, Vec3)]) -> Result<Vec<PartState>, String> {
+    let nm = vphysics_nm::get().ok_or("IPhysicsNM isn't available")?;
+    let n = f.def.body.parts.len();
+    let mut parts: Vec<Option<PartState>> = vec![None; n];
+    for (name, obj, origin) in objects {
+        let Some((_, k, at, turn)) = f.posed.iter().find(|p| p.0.eq_ignore_ascii_case(name)) else { continue };
+        // SAFETY: a PhysObj of the model's ragdoll Lua handed over.
+        let s = unsafe { nm.body_state(*obj) }.ok_or("GetBodyState failed")?;
+        let bone_rot = Quat::from_array(s.rotation).normalize();
+        let rot = (bone_rot * turn.inverse()).normalize();
+        let pos = *origin - rot * *at;
+        let (com, v, w) = (Vec3::from_array(s.position), Vec3::from_array(s.velocity), Vec3::from_array(s.angular_velocity));
+        parts[*k] = Some(PartState { pos, rot, vel: v + w.cross(pos - com), spin: w });
+    }
+    if parts[0].is_none() {
+        return Err("the model's ragdoll has no pelvis object".into());
+    }
+    // Part b's frame as it is in the bind pose relative to part a's, carried by a's state.
+    let rel = |a: &PartState, ka: usize, kb: usize| -> PartState {
+        let (fa, fb) = (f.frames[ka], f.frames[kb]);
+        let rot = (a.rot * fa.rotation.inverse() * fb.rotation).normalize();
+        let pos = a.pos + a.rot * (fa.rotation.inverse() * (fb.translation - fa.translation));
+        PartState { pos, rot, vel: a.at(pos), spin: a.spin }
+    };
+    for &(k, a, b, t) in &BETWEEN {
+        if parts[k].is_some() {
+            continue;
+        }
+        if let (Some(pa), Some(pb)) = (parts[a], parts[b]) {
+            let (x, y) = (rel(&pa, a, k), rel(&pb, b, k));
+            parts[k] = Some(PartState { pos: x.pos.lerp(y.pos, t), rot: x.rot.slerp(y.rot, t).normalize(), vel: x.vel.lerp(y.vel, t), spin: x.spin.lerp(y.spin, t) });
+        }
+    }
+    for k in 0..n {
+        if parts[k].is_none() {
+            let p = f.def.body.parts[k].parent.ok_or("a root without an object")?;
+            parts[k] = parts[p].map(|pp| rel(&pp, p, k));
+        }
+    }
+    parts.into_iter().collect::<Option<Vec<_>>>().ok_or_else(|| "a part's pose couldn't be made".into())
+}
+
+native!(ragdoll_body => ragdoll_body_impl);
+/// `DMS.RagdollBody(model, owner, objects | {pos =, yaw =})`: the fitted body made by the fork in the environment of
+/// `owner` (a PhysObj of the model's ragdoll, whose entity the bodies stand in for): NM's capsules and boxes as
+/// `dms-homer` hulls them (the fork keeps the hulls), NM's masses, a ragdoll constraint per joint, bound to NM's
+/// body (pivots, frames, limits, inertia, materials) and only NM's self-collision pairs colliding (`VBOX3D_NM_006`).
+/// Posed as the model's ragdoll is now and moving as its objects do (`objects`: `{{name = bone, obj = PhysObj, pos =
+/// its origin}, ...}`, as `DMS.PoseModel` gives them back), or standing as `nm_agent_create` puts one at `pos` (units,
+/// its feet's level) facing `yaw` (degrees). Its handle and how long it took (ms).
+unsafe fn ragdoll_body_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
     let f = fitted(&unsafe { api.check_string(l, 1)? })?;
     let owner = unsafe { api.check_physobj(l, 2)? };
-    let at = Vec3::from_array(unsafe { api.check_vec3(l, 3)? });
-    let yaw = unsafe { api.check_number(l, 4)? } as f32;
     let nm = vphysics_nm::get().ok_or("IPhysicsNM isn't available")?;
-    if nm.version < Version::V005 {
-        return Err(format!("{} has no CreateBody: update VPhysics-Box3D", nm.version.name()));
+    if nm.version < Version::V006 {
+        return Err(format!("{} can't make GMod's ragdolls' bodies: update VPhysics-Box3D ({} needed)", nm.version.name(), Version::V006.name()));
+    }
+    let body = &f.def.body;
+    // `{pos, yaw}` (a table with a `pos`) or the objects' list.
+    unsafe { (api.getfield)(l, 3, c"pos".as_ptr()) };
+    let stand = unsafe { (api.type_)(l, -1) } > lua::TNIL;
+    unsafe { (api.settop)(l, -2) };
+    let states: Vec<PartState> = if stand {
+        unsafe { (api.getfield)(l, 3, c"pos".as_ptr()) };
+        let at = unsafe { api.check_vec3(l, -1) };
+        unsafe { (api.settop)(l, -2) };
+        unsafe { (api.getfield)(l, 3, c"yaw".as_ptr()) };
+        let yaw = unsafe { api.opt_number(l, -1, 0.0) };
+        unsafe { (api.settop)(l, -2) };
+        body.placed(Vec3::from_array(at?) * M, (yaw? as f32).to_radians())
+            .into_iter()
+            .map(|(pos, rot)| PartState { pos, rot, vel: Vec3::ZERO, spin: Vec3::ZERO })
+            .collect()
+    } else {
+        parts_from_model(&f, &unsafe { model_objects(api, l, 3)? })?
+    };
+    if states.iter().any(|s| !(s.pos.is_finite() && s.rot.is_finite() && s.vel.is_finite() && s.spin.is_finite())) {
+        return Err("the ragdoll's pose isn't finite".into());
     }
     let started = std::time::Instant::now();
     // SAFETY: a PhysObj Lua handed over.
     let env = unsafe { nm.object_environment(owner) };
-    let body = &f.def.body;
     let mut made = NativeBody { objects: vec![], joints: vec![std::ptr::null_mut(); body.parts.len()] };
-    let undo = |nm: &vphysics_nm::Nm, made: &NativeBody| {
+    let undo = |made: &NativeBody| {
         for &j in &made.joints {
             // SAFETY: made below, not destroyed yet.
             unsafe { nm.destroy_joint(j) };
@@ -542,12 +635,12 @@ unsafe fn native_body_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String>
             unsafe { nm.destroy_body(o) };
         }
     };
-    for (p, (pos, rot)) in body.parts.iter().zip(body.placed(at, yaw)) {
+    for (p, s) in body.parts.iter().zip(&states) {
         let points: Vec<[f32; 3]> = dms_homer::hull::points(&p.shape).iter().map(|v| v.to_array()).collect();
         // SAFETY: `env` is the owner's live environment; outside the step callback (Lua).
-        let o = unsafe { nm.create_body(env, owner, &points, p.mass, &pos.to_array(), &rot.to_array(), NO_SELF_COLLISIONS) }.unwrap_or(std::ptr::null_mut());
+        let o = unsafe { nm.create_body(env, owner, &points, p.mass, &s.pos.to_array(), &s.rot.to_array(), NO_SELF_COLLISIONS) }.unwrap_or(std::ptr::null_mut());
         if o.is_null() {
-            undo(&nm, &made);
+            undo(&made);
             return Err(format!("{}: CreateBody failed", p.name));
         }
         made.objects.push(o);
@@ -556,10 +649,28 @@ unsafe fn native_body_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String>
         // SAFETY: two bodies just made.
         let c = unsafe { nm.create_joint(made.objects[j.parent], made.objects[j.part], j.hinge) }.unwrap_or(std::ptr::null_mut());
         if c.is_null() {
-            undo(&nm, &made);
+            undo(&made);
             return Err(format!("{}: CreateJoint failed", body.parts[j.part].name));
         }
         made.joints[j.part] = c;
+    }
+    // NM's pivots, frames and limits in the pose they're in, then their motion and NM's own collision pairs.
+    let top = unsafe { (api.gettop)(l) };
+    let bound = unsafe { crate::bind::bind_body(api, l, body, &made.objects) };
+    unsafe { (api.settop)(l, top) };
+    if let Err(e) = bound {
+        undo(&made);
+        return Err(format!("bind: {e}"));
+    }
+    for (&o, s) in made.objects.iter().zip(&states) {
+        let state = PhysicsNMBodyState { position: s.pos.to_array(), rotation: s.rot.to_array(), velocity: s.vel.to_array(), angular_velocity: s.spin.to_array() };
+        // SAFETY: a body just made, outside the step callback.
+        unsafe { nm.set_body_state(o, &state) };
+    }
+    // SAFETY: as above.
+    if unsafe { nm.set_body_collision_pairs(&made.objects, &body.pairs) } != Some(true) {
+        undo(&made);
+        return Err("SetBodyCollisionPairs refused NM's self-collision pairs".into());
     }
     let ms = started.elapsed().as_secs_f64() * 1000.0;
     let mut slot = NATIVE.lock().unwrap_or_else(|e| e.into_inner());
@@ -573,34 +684,38 @@ unsafe fn native_body_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String>
     Ok(2)
 }
 
-native!(native_bind => native_bind_impl);
-/// `DMS.NativeBind(key, handle)`: `DMS.BindFitted` on a native body.
-unsafe fn native_bind_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
-    let f = fitted(&unsafe { api.check_string(l, 1)? })?;
-    let n = native(unsafe { api.check_number(l, 2)? } as u32)?;
-    unsafe { crate::bind::bind_body(api, l, &f.def.body, &n.objects) }
-}
-
-native!(native_follow => native_follow_impl);
-/// `DMS.NativeFollow(key, handle, yaw, floor)`: `DMS.FollowFitted` on a native body; the agent's id.
-unsafe fn native_follow_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
+native!(ragdoll_follow => ragdoll_follow_impl);
+/// `DMS.RagdollFollow(model, handle, yaw, floor)`: NM on a native body (`DMS.Follow` for a fitted one): `yaw` where
+/// it faces (rad), `floor` (m) where NM's frame starts. The agent's id; `DMS.Unfollow` it before `DMS.RagdollRemove`.
+unsafe fn ragdoll_follow_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
     let f = fitted(&unsafe { api.check_string(l, 1)? })?;
     let n = native(unsafe { api.check_number(l, 2)? } as u32)?;
     let yaw = unsafe { api.check_number(l, 3)? } as f32;
     let floor = Vec3::from_array(unsafe { api.check_vec3(l, 4)? });
+    // SAFETY: Lua unfollows before it removes the native body.
     let id = unsafe { crate::agents::start_body(n.objects, f.def.clone(), yaw, floor, false)? };
     unsafe { (api.pushnumber)(l, f64::from(id)) };
     Ok(1)
 }
 
-native!(native_remove => native_remove_impl);
-/// `DMS.NativeRemove(handle)`: the native body's joints and bodies gone (its agent taken off first, `DMS.Unfollow`).
-unsafe fn native_remove_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
+/// The native body `handle`'s objects (the bench's fitted runs, `dev.rs`).
+pub fn native_objects(handle: u32) -> Result<Vec<*mut IPhysicsObject>, String> {
+    native(handle).map(|n| n.objects)
+}
+
+/// A fitted body's definition (the bench's fitted runs).
+pub fn fitted_def(model: &str) -> Result<Arc<BodyDef>, String> {
+    fitted(model).map(|f| f.def.clone())
+}
+
+native!(ragdoll_remove => ragdoll_remove_impl);
+/// `DMS.RagdollRemove(handle)`: the native body's joints and bodies gone (its agent taken off first, `DMS.Unfollow`).
+unsafe fn ragdoll_remove_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
     let handle = unsafe { api.check_number(l, 1)? } as u32;
     let n = NATIVE.lock().unwrap_or_else(|e| e.into_inner()).as_mut().and_then(|(_, m)| m.remove(&handle));
     if let (Some(n), Some(nm)) = (n, vphysics_nm::get()) {
         for &j in &n.joints {
-            // SAFETY: made by `native_body`, not destroyed yet.
+            // SAFETY: made by `ragdoll_body`, not destroyed yet.
             unsafe { nm.destroy_joint(j) };
         }
         for &o in &n.objects {
@@ -608,4 +723,38 @@ unsafe fn native_remove_impl(api: &Api, l: *mut LuaState) -> Result<c_int, Strin
         }
     }
     Ok(0)
+}
+
+native!(pose_model => pose_model_impl);
+/// `DMS.PoseModel(model, handle)`: where the model's mapped bones are with the native body's parts as they are now
+/// (S4): `{[bone name] = {pos (units), ang = {x = pitch, y = yaw, z = roll}, rot (quaternion), vel (m/s, the bone's
+/// origin's), spin (rad/s, world)}}`, for posing the model every tick and for handing the motion back on detach.
+unsafe fn pose_model_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
+    let f = fitted(&unsafe { api.check_string(l, 1)? })?;
+    let parts = native(unsafe { api.check_number(l, 2)? } as u32)?.objects;
+    let nm = vphysics_nm::get().ok_or("IPhysicsNM isn't available")?;
+    let states = parts
+        .iter()
+        // SAFETY: the native body's live objects.
+        .map(|&o| unsafe { nm.body_state(o) }.ok_or("GetBodyState failed"))
+        .collect::<Result<Vec<_>, _>>()?;
+    unsafe { (api.createtable)(l, 0, f.posed.len() as c_int) };
+    for (name, k, at, turn) in &f.posed {
+        let s = states[*k];
+        let (p, q) = (Vec3::from_array(s.position), Quat::from_array(s.rotation).normalize());
+        let (v, w) = (Vec3::from_array(s.velocity), Vec3::from_array(s.angular_velocity));
+        let (pos, rot) = (p + q * *at, (q * *turn).normalize());
+        let [pitch, yaw, roll] = angles(rot);
+        let name = std::ffi::CString::new(name.as_str()).unwrap_or_default();
+        unsafe {
+            (api.createtable)(l, 0, 5);
+            api.set_vector(l, c"pos", &(pos / M).to_array());
+            api.set_vector(l, c"ang", &[pitch, yaw, roll]);
+            api.set_vector(l, c"rot", &rot.to_array());
+            api.set_vector(l, c"vel", &(v + w.cross(pos - p)).to_array());
+            api.set_vector(l, c"spin", &w.to_array());
+            (api.setfield)(l, -2, name.as_ptr());
+        }
+    }
+    Ok(1)
 }

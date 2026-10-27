@@ -543,17 +543,30 @@ constraints, within 7 mm), the 6 bones without objects finished on the client. P
 
 ### M10. ValveBiped ragdolls — 5–8 days
 
-- [ ] The chosen skeleton reader, the ValveBiped map and `Build::fit`; fitted builds cached by model and its CRC.
-- [ ] The NM body for a model (S3's variant), the bind (M3's `bind.rs`, generalised from Homer to any fitted body),
+- [x] The chosen skeleton reader, the ValveBiped map and `Build::fit`; fitted builds cached by model and its CRC.
+- [x] The NM body for a model (S3's variant), the bind (M3's `bind.rs`, generalised from Homer to any fitted body),
       FOLLOW (M4) unchanged.
-- [ ] The swap: `dms_attach` on any ValveBiped `prop_ragdoll` — the NM body takes the ragdoll's current pose and every
+- [x] The swap: `dms_attach` on any ValveBiped `prop_ragdoll` — the NM body takes the ragdoll's current pose and every
       part's velocity, so a falling ragdoll keeps falling; `dms_detach` gives the model its own physics back the same
       way.
-- [ ] The model's look kept: posing (S4), skin, bodygroups, colour, material.
-- [ ] Golden: the fitted build of male_07 in the Playroom against GMod (`stand`, `push`, `shot`, `catchfall`), the
-      tolerances as for Homer; the body check (`golden body`) on the fitted body.
-- [ ] The DMS window: "NM on the ragdoll under the crosshair" works on any model, the model's fit shown (height, mass,
+- [x] The model's look kept: posing (S4), skin, bodygroups, colour, material.
+- [ ] Golden: the fitted build of male_07 against GMod (`stand`, `push`, `shot`, `catchfall`), the tolerances as for
+      Homer — its reference its own LEAD on the crate (`golden fit`, there), the Playroom can't load a fitted build (M9).
+      `stand` and `catchfall` within them; `push` (COM mean 0.061 m, tolerance 0.05) and `shot` (0.378 m, 0.25) off:
+      it steps away further than its LEAD (Homer: 0.020, 0.148), never falls, ends as high.
+- [ ] The body check (`golden body`) on the fitted body (moved to M11).
+- [x] The DMS window: "NM on the ragdoll under the crosshair" works on any model, the model's fit shown (height, mass,
       warnings).
+
+**Done (ADR 0027):** the fork's `VBOX3D_NM_006` (NM's self-collision pairs, `SetBodyState`, kept hulls: a model's second
+body in 0.9 ms against 0.9 s); the swap both ways (a falling ragdoll keeps falling on NM, and its own physics comes back
+moving as NM's body was, as a new ragdoll); the model's joints put in Homer's stance before the fit (ValveBiped's
+reference pose stood the body with its arms 40° out and its neck forward); the 6 bones without objects finished on the
+client in `RenderOverride` (within 1.4 mm of NM's parts; `BuildBonePositions` never runs for a server ragdoll); the
+physgun and gravity gun grab NM's body (the Playroom's grab and poke), bullets hit their physics bone's part; get-up by
+animation off on fitted bodies (they stay down). The golden of a fitted body is its build in LEAD on the bench
+(`golden fit`): the Playroom can't load a fitted build. HL2's citizens, combine, police and alyx stand: 1.81 m / 81 kg,
+the women 1.72 m / 69 kg.
 
 **DoD:** HL2's citizens (male/female), combine, police, alyx stand, react and fall as Homer does; the golden scenarios on
 male_07's fitted build within tolerance; the look of the model unchanged.
