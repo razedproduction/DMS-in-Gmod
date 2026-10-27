@@ -3,9 +3,16 @@
 //!
 //! No Lua runs in here (docs/adr/0003): natives change the lists between steps, the callback only steps the agents
 //! and calls `IPhysicsNM`; what Lua should hear of comes out through the event queue, taken in `Think`.
+//!
+//! Each Source step (docs/adr/0021): every agent reads its bodies from Box3D on this thread (`Follower::begin`), the
+//! agents' NM steps run on up to `threads` threads at once (`Follower::compute`: pure, each agent on its own), and
+//! the armature and drives go back on this thread (`Follower::finish`). A panic takes only its agent off.
 
+use std::any::Any;
 use std::ffi::c_void;
+use std::panic::{self, AssertUnwindSafe};
 use std::ptr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
 use delirium::prelude::Vec3;
@@ -15,6 +22,17 @@ use crate::follow::{Event, Finished, Follower, GravityMode};
 
 /// Events kept for Lua at most; older ones go.
 const MAX_EVENTS: usize = 4096;
+/// Threads the agents step on at most, and a thread's stack (NM's step is deep).
+const MAX_THREADS: usize = 16;
+const STACK: usize = 8 << 20;
+
+/// `DMS.DevPanic("step")`: the next agent's step panics, to show the callback survives it.
+pub static PANIC_NEXT: AtomicBool = AtomicBool::new(false);
+
+/// A panic's message.
+pub fn panic_text(p: &(dyn Any + Send)) -> String {
+    p.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| p.downcast_ref::<String>().cloned()).unwrap_or_else(|| "?".into())
+}
 
 /// A force and torque applied to one object every step.
 struct Drive {
@@ -39,6 +57,11 @@ struct State {
     finished: Vec<(u32, Finished)>,
     /// NM steps' time over the last Source steps (s), for `dms_status`.
     cost: f64,
+    /// Threads the agents step on (`DMS.SetThreads`, 0: the CPU's cores less one).
+    threads: usize,
+    /// Callback calls: all, and those from an environment it isn't set on (a listen server's client's, docs/adr/0021).
+    calls: u64,
+    foreign: u64,
 }
 
 // SAFETY: the pointers are only used on the game's main thread, where the physics and Lua both run.
@@ -54,6 +77,9 @@ static STATE: Mutex<State> = Mutex::new(State {
     events: Vec::new(),
     finished: Vec::new(),
     cost: 0.0,
+    threads: 0,
+    calls: 0,
+    foreign: 0,
 });
 
 fn state() -> MutexGuard<'static, State> {
@@ -191,13 +217,47 @@ pub fn cost_ms() -> f64 {
     state().cost * 1000.0
 }
 
+/// LOD (docs/adr/0021): agent `id` parked (NM off its bodies, the agent kept; `on_motion`: it wakes once they move)
+/// or not. False for no such agent.
+pub fn park(id: u32, on: bool, on_motion: bool) -> bool {
+    let mut state = state();
+    let Some(f) = state.followers.iter_mut().find(|f| f.id == id) else { return false };
+    match (on, vphysics_nm::get()) {
+        // SAFETY: its ragdoll is alive until Lua unfollows it.
+        (true, Some(nm)) => unsafe { f.park(&nm, on_motion) },
+        (true, None) => {}
+        (false, _) => f.unpark(),
+    }
+    true
+}
+
+/// Threads the agents step on (0: the CPU's cores less one).
+pub fn set_threads(n: usize) {
+    state().threads = n.min(MAX_THREADS);
+}
+
+/// `(threads used, callback calls, calls from another environment)`.
+pub fn stats() -> (usize, u64, u64) {
+    let s = state();
+    (threads(s.threads), s.calls, s.foreign)
+}
+
+fn threads(setting: usize) -> usize {
+    match setting {
+        0 => std::thread::available_parallelism().map_or(1, |n| n.get().saturating_sub(1)).clamp(1, MAX_THREADS),
+        n => n,
+    }
+}
+
 /// Drops every drive and agent and removes the callback. For `ShutDown` and the module's unloading.
 pub fn shutdown() {
     let mut state = state();
-    state.drives.clear();
-    state.followers.clear();
-    state.events.clear();
-    state.finished.clear();
+    unset(&mut state);
+    // Their buffers too: the module may be unloaded next.
+    state.drives = Vec::new();
+    state.followers = Vec::new();
+    state.events = Vec::new();
+    state.finished = Vec::new();
     unset(&mut state);
 }
 
@@ -218,12 +278,79 @@ fn unset(state: &mut State) {
     state.env = ptr::null_mut();
 }
 
-/// `PhysicsNMStepFn_t`: steps the agents and applies every drive for the step about to be solved.
+/// `PhysicsNMStepFn_t`: steps the agents and applies every drive for the step about to be solved. A panic stops
+/// at it (docs/adr/0021): whatever it was in the middle of, every agent comes off and the game goes on.
 unsafe extern "C" fn on_step(env: *mut IPhysicsEnvironment, timestep: f32, _context: *mut c_void) {
+    // SAFETY: the callback's own arguments.
+    let Err(p) = panic::catch_unwind(AssertUnwindSafe(|| unsafe { step(env, timestep) })) else { return };
+    let text = format!("panic: {}", panic_text(&*p));
+    let _ = panic::catch_unwind(AssertUnwindSafe(|| {
+        let mut state = state();
+        state.drives.clear();
+        let nm = vphysics_nm::get();
+        for f in std::mem::take(&mut state.followers) {
+            if let Some(nm) = &nm {
+                // SAFETY: its ragdoll is alive (Lua hasn't unfollowed it).
+                unsafe { f.release(nm) };
+            }
+            state.events.push(Event { id: f.id, kind: "detached", text: text.clone(), value: 0.0 });
+        }
+    }));
+}
+
+/// An agent's NM steps, a panic in them its error.
+fn compute(f: &mut Follower) -> (Result<(), String>, Vec<Event>) {
+    let mut events = vec![];
+    let r = panic::catch_unwind(AssertUnwindSafe(|| {
+        if f.due > 0 && PANIC_NEXT.swap(false, Ordering::Relaxed) {
+            panic!("DMS.DevPanic");
+        }
+        f.compute(&mut events)
+    }));
+    (r.unwrap_or_else(|p| Err(format!("panic: {}", panic_text(&*p)))), events)
+}
+
+/// [`compute`] for every agent whose `begin` went well, on up to `threads` threads (this one too); their results in
+/// the agents' order.
+fn compute_all(followers: &mut [Follower], ok: &[bool], threads: usize) -> Vec<(Result<(), String>, Vec<Event>)> {
+    let busy = followers.iter().zip(ok).filter(|(f, ok)| **ok && f.due > 0).count();
+    let run = |f: &mut Follower, ok: bool| if ok { compute(f) } else { (Ok(()), vec![]) };
+    if busy < 2 || threads < 2 {
+        return followers.iter_mut().zip(ok).map(|(f, &ok)| run(f, ok)).collect();
+    }
+    let chunk = followers.len().div_ceil(threads.min(busy));
+    let mut out: Vec<(Result<(), String>, Vec<Event>)> = Vec::with_capacity(followers.len());
+    std::thread::scope(|s| {
+        let mut parts = followers.chunks_mut(chunk).zip(ok.chunks(chunk));
+        let mine = parts.next();
+        let handles: Vec<_> = parts
+            .map(|(fs, oks)| {
+                let n = fs.len();
+                let job = move || fs.iter_mut().zip(oks).map(|(f, &ok)| run(f, ok)).collect::<Vec<_>>();
+                (n, std::thread::Builder::new().stack_size(STACK).spawn_scoped(s, job).map_err(|e| e.to_string()))
+            })
+            .collect();
+        if let Some((fs, oks)) = mine {
+            out.extend(fs.iter_mut().zip(oks).map(|(f, &ok)| run(f, ok)));
+        }
+        for (n, h) in handles {
+            // `compute` catches its panics; no thread for them, those agents come off (their results stay in order).
+            match h.and_then(|h| h.join().map_err(|p| panic_text(&*p))) {
+                Ok(r) => out.extend(r),
+                Err(e) => out.extend(std::iter::repeat_with(|| (Err(format!("no thread: {e}")), vec![])).take(n)),
+            }
+        }
+    });
+    out
+}
+
+unsafe fn step(env: *mut IPhysicsEnvironment, timestep: f32) {
     let Some(nm) = vphysics_nm::get() else { return };
     let mut guard = state();
     let state = &mut *guard;
+    state.calls += 1;
     if state.env != env {
+        state.foreign += 1;
         return;
     }
     state.drives.retain_mut(|d| {
@@ -240,10 +367,23 @@ unsafe extern "C" fn on_step(env: *mut IPhysicsEnvironment, timestep: f32, _cont
     let started = std::time::Instant::now();
     let (g, mode) = (state.g_src, state.mode);
     let mut failed = vec![];
+    let mut ok = Vec::with_capacity(state.followers.len());
     for f in &mut state.followers {
         // SAFETY: agents are unfollowed before their ragdolls go.
-        if let Err(e) = unsafe { f.tick(&nm, timestep, g, mode, &mut state.events) } {
+        let r = unsafe { f.begin(&nm, timestep, &mut state.events) };
+        ok.push(r.is_ok());
+        if let Err(e) = r {
             failed.push((f.id, e));
+        }
+    }
+    let results = compute_all(&mut state.followers, &ok, threads(state.threads));
+    for (f, (r, events)) in state.followers.iter_mut().zip(results) {
+        state.events.extend(events);
+        match r {
+            // SAFETY: as above.
+            Ok(()) if !failed.iter().any(|(id, _)| *id == f.id) => unsafe { f.finish(&nm, g, mode) },
+            Ok(()) => {}
+            Err(e) => failed.push((f.id, e)),
         }
         if f.script.as_ref().is_some_and(|s| s.done) {
             let s = f.script.take().expect("a done script");

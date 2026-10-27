@@ -9,7 +9,8 @@ if not util.IsBinaryModuleInstalled("dms") then
 	return
 end
 
-require("dms")
+-- Once a Lua state: this file runs again on lua refresh, with the module and its agents kept (docs/adr/0021).
+if not DMS then require("dms") end
 
 -- docs/adr/0005: without IPhysicsNM nothing runs, superadmins are told why.
 if not DMS.Available() then
@@ -50,6 +51,7 @@ include("dms/follow.lua")
 include("dms/world.lua")
 include("dms/reactions.lua")
 include("dms/api.lua")
+include("dms/lifecycle.lua")
 include("dms/tuning.lua")
 include("dms/overlay.lua")
 include("dms/bench_scene.lua")

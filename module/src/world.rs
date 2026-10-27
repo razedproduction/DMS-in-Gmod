@@ -142,8 +142,8 @@ struct Map {
     mesh: Arc<MapMesh>,
     /// The surface row of each material (`DMS.MapSurfaces`), CONCRETE's until then.
     rows: Vec<u8>,
-    /// NM's worlds made of it, by the origin of NM's frame (mm).
-    worlds: Vec<([i32; 3], Arc<Collision>)>,
+    /// NM's worlds made of it, by the origin of NM's frame (mm) and their crop's centre (m).
+    worlds: Vec<([i32; 5], Arc<Collision>)>,
 }
 
 /// The maps read this session, by name: a map comes back with `changelevel`, and its world needn't be read again.
@@ -318,10 +318,30 @@ pub fn parse(name: &str, b: &[u8]) -> Result<MapMesh, String> {
     Ok(MapMesh { name: name.to_string(), faces: out_faces, materials: names, brush_faces: nfaces, displacements: ndisps })
 }
 
+/// An agent's world is the map round him (docs/adr/0021): the faces within this (m, along NM's x and y) of the
+/// crop's centre, which is on an 8 m grid of NM's frame; it moves with him once he's half that from it. NM looks a
+/// few metres round the body; the whole map is ~175 ms and ~50 MB a world.
+pub const CROP: f32 = 32.0;
+const CROP_GRID: f32 = 8.0;
+
+/// The crop's centre (m, NM's frame) for a body at `at` (the game's frame) in a frame at `origin`.
+pub fn crop_centre(at: Vec3, origin: Vec3) -> [i32; 2] {
+    let p = (at - origin) / CROP_GRID;
+    [(p.x.round() * CROP_GRID) as i32, (p.y.round() * CROP_GRID) as i32]
+}
+
 /// NM's triangles of the map in a frame at `origin` (m): each face fanned from its first corner, the ground's
 /// faces first cut into the Playroom floor's 1 m squares on that frame's grid (each square from its lowest x + y
-/// corner, as `world::floor_tris` makes them). Displacements' triangles stay as they are.
-pub fn triangles(mesh: &MapMesh, origin: Vec3) -> (Vec<[f32; 3]>, Vec<[u32; 3]>, Vec<u16>) {
+/// corner, as `world::floor_tris` makes them). Displacements' triangles stay as they are. With `crop`, only what's
+/// within [`CROP`] of it: the faces that reach in whole, the ground's squares in it (the same squares: its edges are
+/// on their grid; past `TILED` the coarse ones whole).
+pub fn triangles(mesh: &MapMesh, origin: Vec3, crop: Option<[i32; 2]>) -> (Vec<[f32; 3]>, Vec<[u32; 3]>, Vec<u16>) {
+    let bounds = crop.map(|c| {
+        let c = Vec3::new(c[0] as f32, c[1] as f32, 0.0);
+        (c - Vec3::splat(CROP), c + Vec3::splat(CROP))
+    });
+    // A crop's edge cuts the ground only where it's on the 1 m grid.
+    let fine = |b: f32| (-TILED..TILED).contains(&b);
     let (mut p, mut t, mut m) = (vec![], vec![], vec![]);
     let mut fan = |poly: &[Vec3], mat: u16| {
         let poly = clean(poly);
@@ -337,11 +357,26 @@ pub fn triangles(mesh: &MapMesh, origin: Vec3) -> (Vec<[f32; 3]>, Vec<[u32; 3]>,
     };
     for f in &mesh.faces {
         let local: Vec<Vec3> = f.points.iter().map(|&v| v - origin).collect();
+        let (mut lo, mut hi) = local.iter().fold((Vec3::INFINITY, Vec3::NEG_INFINITY), |(a, b), &v| (a.min(v), b.max(v)));
+        if let Some((clo, chi)) = bounds {
+            if hi.x < clo.x || lo.x > chi.x || hi.y < clo.y || lo.y > chi.y {
+                continue;
+            }
+            if f.ground {
+                for k in 0..2 {
+                    if fine(clo[k]) && lo[k] < clo[k] {
+                        lo[k] = clo[k];
+                    }
+                    if fine(chi[k]) && hi[k] > chi[k] {
+                        hi[k] = chi[k];
+                    }
+                }
+            }
+        }
         if !f.ground {
             fan(&local, f.material);
             continue;
         }
-        let (lo, hi) = local.iter().fold((Vec3::INFINITY, Vec3::NEG_INFINITY), |(a, b), &v| (a.min(v), b.max(v)));
         let (xs, ys) = (cuts(lo.x, hi.x), cuts(lo.y, hi.y));
         for x in xs.windows(2) {
             let column = clip(&clip(&local, 0, x[0], false), 0, x[1], true);
@@ -406,21 +441,23 @@ pub fn surface_row(prop: &str, rows: &[String], concrete: u8) -> u8 {
         .map_or(concrete, |r| r as u8)
 }
 
-/// NM's world for an agent whose frame starts at `origin` (m, the game's frame): the current map's, or none.
-pub fn collision(origin: Vec3) -> Option<Arc<Collision>> {
+/// NM's world for an agent whose frame starts at `origin` (m, the game's frame), cropped round `crop`
+/// ([`crop_centre`]): the current map's, or none.
+pub fn collision(origin: Vec3, crop: [i32; 2]) -> Option<Arc<Collision>> {
     let mut slot = MAP.lock().unwrap_or_else(|e| e.into_inner());
     let map = slot.as_mut()?;
-    let key = (origin * 1000.0).round().as_ivec3().to_array();
+    let o = (origin * 1000.0).round().as_ivec3();
+    let key = [o.x, o.y, o.z, crop[0], crop[1]];
     if let Some((_, w)) = map.worlds.iter().find(|(k, _)| *k == key) {
         return Some(w.clone());
     }
-    let (p, t, mats) = triangles(&map.mesh, origin);
+    let (p, t, mats) = triangles(&map.mesh, origin, Some(crop));
     let m: Vec<u8> = mats.iter().map(|&i| map.rows.get(i as usize).copied().unwrap_or(0)).collect();
     let mut c = Collision::default();
     c.add(&p, &t, &m);
     let c = Arc::new(c);
-    // The bench makes a world for each scenario's origin: only a few are kept.
-    if map.worlds.len() >= 4 {
+    // Agents keep their own; a few go on being kept for the next at the same place (the bench's scenarios).
+    if map.worlds.len() >= 8 {
         map.worlds.remove(0);
     }
     map.worlds.push((key, c.clone()));
@@ -535,6 +572,12 @@ unsafe fn map_surfaces_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String
     Ok(1)
 }
 
+/// Drops the maps read and the current one's worlds, as the module is unloaded (docs/adr/0021).
+pub fn unload() {
+    *MAP.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    *MAPS.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
 native!(map_unload => map_unload_impl);
 /// `DMS.MapUnload()`: no map world (new agents get a traced floor).
 unsafe fn map_unload_impl(_api: &Api, _l: *mut LuaState) -> Result<c_int, String> {
@@ -548,7 +591,7 @@ native!(map_ground => map_ground_impl);
 unsafe fn map_ground_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
     let p = Vec3::from_array(unsafe { api.check_vec3(l, 1)? });
     let len = unsafe { api.opt_number(l, 2, 10.0)? } as f32;
-    let w = collision(Vec3::ZERO).ok_or("no map loaded (DMS.MapLoad)")?;
+    let w = collision(Vec3::ZERO, crop_centre(p, Vec3::ZERO)).ok_or("no map loaded (DMS.MapLoad)")?;
     match w.ground_material(p, len) {
         Some((z, m)) => unsafe {
             (api.pushnumber)(l, f64::from(z));

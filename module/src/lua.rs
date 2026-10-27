@@ -104,19 +104,34 @@ fn load() -> Result<Api, String> {
 /// A native's body: the number of results, or an error raised in Lua as a string.
 pub type Native = unsafe fn(&Api, *mut LuaState) -> Result<c_int, String>;
 
-/// Runs `body`, turning its `Err` into a Lua error.
+/// Runs `body`, turning its `Err`, or a panic in it (docs/adr/0021: none crosses into Lua), into a Lua error.
 ///
 /// # Safety
 /// `l` is a live Lua state, called from its own thread inside a native call, so `lua_error` has a frame to
 /// unwind to.
 pub unsafe fn run(l: *mut LuaState, body: Native) -> c_int {
     let Ok(api) = api() else { return 0 };
-    let message = match unsafe { body(api, l) } {
-        Ok(n) => return n,
-        Err(message) => message,
-    };
+    // SAFETY: the caller's promise.
+    match unsafe { guarded(api, l, body) } {
+        Ok(n) => n,
+        Err(message) => unsafe { raise(api, l, message) },
+    }
+}
+
+/// `body` under `catch_unwind`, in a frame of its own: LuaJIT's errors unwind through native frames by SEH, and with
+/// `catch_unwind` in the frame that raises `lua_error` GMod crashed in `lua_shared` (docs/adr/0021), so [`raise`]
+/// never runs in this one. A Lua error inside `body` (a metamethod's) passes through it untouched.
+#[inline(never)]
+unsafe fn guarded(api: &Api, l: *mut LuaState, body: Native) -> Result<c_int, String> {
+    // SAFETY: the caller's promise.
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe { body(api, l) }))
+        .unwrap_or_else(|p| Err(format!("DMS internal error (panic: {})", crate::step::panic_text(&*p))))
+}
+
+/// `lua_error` with `message`: nothing that needs dropping is alive while it unwinds.
+#[inline(never)]
+unsafe fn raise(api: &Api, l: *mut LuaState, message: String) -> c_int {
     unsafe { (api.pushlstring)(l, message.as_ptr().cast(), message.len()) };
-    // Nothing that needs dropping may be alive while lua_error unwinds.
     drop(message);
     unsafe { (api.error)(l) }
 }

@@ -26,8 +26,53 @@ pub const NATIVES: &[(&CStr, lua::CFunction)] = &[
     (c"FollowGravityOff", follow_gravity_off),
     (c"SetGravity", set_gravity),
     (c"FollowCost", follow_cost),
+    (c"FollowPark", follow_park),
+    (c"FollowStats", follow_stats),
+    (c"SetThreads", set_threads),
     (c"EnvTimestep", env_timestep),
 ];
+
+native!(follow_park => follow_park_impl);
+/// `DMS.FollowPark(id, on[, on_motion])`: LOD (docs/adr/0021): NM off the agent's bodies (no steps, drives or
+/// armature: an ordinary ragdoll), the agent and its room kept, or back on them. With `on_motion` it comes back by
+/// itself once a part moves (the `unparked` event). False for no such agent.
+unsafe fn follow_park_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
+    let id = unsafe { api.check_number(l, 1)? } as u32;
+    let (on, on_motion) = unsafe { ((api.toboolean)(l, 2) != 0, (api.toboolean)(l, 3) != 0) };
+    unsafe { (api.pushboolean)(l, step::park(id, on, on_motion).into()) };
+    Ok(1)
+}
+
+native!(follow_stats => follow_stats_impl);
+/// `DMS.FollowStats()`: `{ms, threads, calls, foreign, agents = {[id] = ms}}`: NM's time a Source step on the main
+/// thread (smoothed), the threads the agents step on, the step callback's calls and those from another environment
+/// (none: it's set on the server's only), and each agent's NM step (ms, smoothed; 0 parked).
+unsafe fn follow_stats_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
+    let (threads, calls, foreign) = step::stats();
+    let costs: Vec<(u32, f64)> = step::ids().into_iter().filter_map(|id| step::with(id, |f| (id, if f.parked.is_some() { 0.0 } else { f.cost }))).collect();
+    unsafe {
+        (api.createtable)(l, 0, 5);
+        api.set_number(l, c"ms", step::cost_ms());
+        api.set_number(l, c"threads", threads as f64);
+        api.set_number(l, c"calls", calls as f64);
+        api.set_number(l, c"foreign", foreign as f64);
+        (api.createtable)(l, 0, costs.len() as c_int);
+        for (id, ms) in costs {
+            (api.pushnumber)(l, ms);
+            (api.rawseti)(l, -2, id as c_int);
+        }
+        (api.setfield)(l, -2, c"agents".as_ptr());
+    }
+    Ok(1)
+}
+
+native!(set_threads => set_threads_impl);
+/// `DMS.SetThreads(n)`: the threads the agents step on (0: the CPU's cores less one; at most 16).
+unsafe fn set_threads_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
+    let n = unsafe { api.check_number(l, 1)? };
+    step::set_threads(n.max(0.0) as usize);
+    Ok(0)
+}
 
 native!(env_timestep => env_timestep_impl);
 /// `DMS.EnvTimestep(physobj[, t])`: the physics step (s) of the object's environment (the game sets 0.015 whatever
@@ -98,9 +143,21 @@ pub unsafe fn start(objects: Vec<*mut IPhysicsObject>, yaw: f32, floor: Vec3, ro
     // NM's frame starts on the floor under him, as the Playroom's room does under its Homer: its world is the map's
     // (M5), its floor's squares round him; without a map, the Playroom's floor (its room's on the bench, with the pool).
     let origin = floor;
-    let world = world::collision(origin).unwrap_or_else(|| Arc::new(data::floor_collision(&d, [0.0; 3], room)));
+    // SAFETY: a PhysObj of the ragdoll, alive for this call.
+    let pelvis = unsafe { nm.body_state(objects[0]) }.map_or(origin, |s| Vec3::from_array(s.position));
+    let (world, crop) = world_at(&d, origin, room, pelvis);
     // SAFETY: the caller's promise.
-    unsafe { step::follow(|nm, id| Follower::new(nm, id, d.clone(), world, objects, joints, origin, yaw)) }
+    unsafe { step::follow(|nm, id| Follower::new(nm, id, d.clone(), (world, crop), objects, joints, origin, yaw, room)) }
+}
+
+/// NM's world for a frame at `origin` and a body at `at` (the game's frame): the map's round him and its crop's
+/// centre (docs/adr/0021), or without a map the Playroom's floor (with its room's pool for `room`).
+pub fn world_at(d: &data::Data, origin: Vec3, room: bool, at: Vec3) -> (Arc<delirium::collision::Collision>, Option<[i32; 2]>) {
+    let crop = world::crop_centre(at, origin);
+    match world::collision(origin, crop) {
+        Some(w) => (w, Some(crop)),
+        None => (Arc::new(data::floor_collision(d, [0.0; 3], room)), None),
+    }
 }
 
 native!(follow => follow_impl);
@@ -158,8 +215,9 @@ unsafe fn follow_list_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String>
 }
 
 native!(follow_state => follow_state_impl);
-/// `DMS.FollowState(id)`: `{steps, awake, asleep, balancing, fallen, compensation, pelvis, head, com, com_v}` (m,
-/// the game's frame; NM's view after its last step), nil for no such agent.
+/// `DMS.FollowState(id)`: `{steps, parked, cost, origin, awake, asleep, balancing, fallen, compensation, pelvis, head,
+/// com, com_v}` (m, the game's frame; NM's view after its last step; `cost` its NM step, ms; `origin` where NM's
+/// frame starts), nil for no such agent.
 unsafe fn follow_state_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
     let id = unsafe { api.check_number(l, 1)? } as u32;
     let done = step::with(id, |f| unsafe {
@@ -167,8 +225,11 @@ unsafe fn follow_state_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String
         let o = f.origin();
         let frames: Vec<Transform> = d.frames().collect();
         let (com, v) = d.com();
-        (api.createtable)(l, 0, 10);
+        (api.createtable)(l, 0, 13);
         api.set_number(l, c"steps", f.steps as f64);
+        api.set_bool(l, c"parked", f.parked.is_some());
+        api.set_number(l, c"cost", f.cost);
+        api.set_vector(l, c"origin", &o.to_array());
         api.set_bool(l, c"awake", d.awake());
         api.set_bool(l, c"asleep", f.asleep());
         api.set_bool(l, c"balancing", f.agent.balancing());

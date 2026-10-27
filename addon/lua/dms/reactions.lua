@@ -51,6 +51,8 @@ local function dir(d) return string.format("%.4f,%.4f,%.4f", d.x, d.y, d.z) end
 -- A reaction on a Homer with NM (`DMS.FollowReact`'s line). True if it went.
 function DMS_React(ent, line)
 	if not IsValid(ent) or not ent.DMS_Agent then return false, "no NM on it" end
+	-- Parked far away or lying still (lifecycle.lua): NM back on him first.
+	DMS_Wake(ent)
 	local ok, res = pcall(DMS.FollowReact, ent.DMS_Agent, line)
 	if not ok then return false, res end
 	return res
@@ -249,7 +251,12 @@ function DMS_Unfreeze(ent)
 end
 
 local H = DMS_FollowHandlers
-H.freeze = function(ent, parts) freeze(ent, parts) end
+H.freeze = function(ent, parts, e)
+	-- The clip was given up before Lua heard of it (the player took him, lifecycle.lua).
+	local r = DMS.FollowRoom(e.id)
+	if r and not r.rising then return end
+	freeze(ent, parts)
+end
 H.unfreeze = function(ent, _, e)
 	DMS_Unfreeze(ent)
 	DMS.FollowRiseDone(e.id)

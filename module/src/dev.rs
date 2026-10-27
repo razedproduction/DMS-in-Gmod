@@ -485,7 +485,23 @@ pub const NATIVES: &[(&CStr, lua::CFunction)] = &[
     (c"DevPort", dev_port),
     (c"DevThink", dev_think),
     (c"DevReply", dev_reply),
+    (c"DevPanic", dev_panic),
 ];
+
+native!(dev_panic => dev_panic_impl);
+/// `DMS.DevPanic("native"|"step")`, only while the channel is on: a panic in this native, or in the next agent's
+/// step, to show none crosses into the game (docs/adr/0021): a Lua error, or that agent detached.
+unsafe fn dev_panic_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
+    if running().is_none() {
+        return Err("only with the dms-ctl channel on (dms_dev 1)".into());
+    }
+    match unsafe { api.check_string(l, 1)? }.as_str() {
+        "native" => panic!("DMS.DevPanic"),
+        "step" => crate::step::PANIC_NEXT.store(true, std::sync::atomic::Ordering::Relaxed),
+        w => return Err(format!("{w}: native or step")),
+    }
+    Ok(0)
+}
 
 native!(bench_follow => bench_follow_impl);
 /// `DMS.BenchFollow(parts, origin)`: the waiting FOLLOW scenario on Homer, whom Lua just spawned at the room's start

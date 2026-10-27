@@ -26,7 +26,7 @@ use delirium::prelude::*;
 use delirium::ragdoll::{GRAVITY, Obstacle, Ragdoll};
 
 use crate::data::Data;
-use crate::ffi::vphysics_nm::{IPhysicsConstraint, IPhysicsObject, Nm};
+use crate::ffi::vphysics_nm::{IPhysicsConstraint, IPhysicsObject, Nm, PhysicsNMBodyState};
 use crate::tuning;
 
 mod room;
@@ -53,6 +53,14 @@ const MAX_SPEED: f32 = 80.0;
 const MAX_SPIN: f32 = 300.0;
 /// How long `hybrid` takes to turn the compensation on or off (s, docs/adr/0007).
 const BLEND: f32 = 0.1;
+/// The pelvis further than this (m) from where its last state carried it, plus twice the way it went: it was
+/// teleported (`SetPos`), and NM's frame goes with it (docs/adr/0021).
+const TELEPORT: f32 = 1.0;
+/// A parked agent (docs/adr/0021) that wakes on motion: how long its bodies settle once NM is off them (s), and
+/// what of a part's speed (m/s) and spin (rad/s) wakes it then.
+const PARK_SETTLE: f32 = 1.0;
+const WAKE_SPEED: f32 = 0.5;
+const WAKE_SPIN: f32 = 2.0;
 
 /// How gravity's difference is made up (docs/adr/0007, `dms_gravity_mode`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -90,6 +98,14 @@ pub struct Event {
     pub kind: &'static str,
     pub text: String,
     pub value: f32,
+}
+
+/// LOD (docs/adr/0021): NM off the bodies (no steps, drives or armature), the agent and its room kept.
+#[derive(Clone, Copy, Debug)]
+pub struct Park {
+    /// It wakes by itself once a part moves (lying still), not only when Lua says (far from every player).
+    pub on_motion: bool,
+    settle: f32,
 }
 
 /// The Playroom's buttons that only send message lines (`Sim::lines`), the ones the bench presses.
@@ -262,6 +278,20 @@ pub struct Follower {
     face: (Vec3, Vec3),
     /// The facing he was given (rad, NM's frame): the Playroom's room facing, for its new agents.
     yaw: f32,
+    /// Without the map's world, the Playroom room's floor (with its pool for the bench): NM's world for a new origin.
+    room_floor: bool,
+    /// NM steps due this Source step, and the bodies' states for them, read on the main thread ([`Follower::begin`]).
+    pub due: u32,
+    snap: Vec<PhysicsNMBodyState>,
+    /// The armature each joint has in Box3D (NM's in `armature` is set on it in [`Follower::finish`]).
+    armature_set: Vec<f32>,
+    /// The pelvis' position and velocity (the game's frame) at the last NM step, for telling a teleport.
+    last_root: Option<(Vec3, Vec3)>,
+    pub parked: Option<Park>,
+    /// What one NM step of this agent costs (ms, smoothed).
+    pub cost: f64,
+    /// The centre of the map's crop NM's world is (m, NM's frame, `world::CROP`); none for the Playroom's floor.
+    crop: Option<[i32; 2]>,
 }
 
 // SAFETY: the pointers are only used on the game's main thread, where the physics and Lua both run.
@@ -276,11 +306,12 @@ impl Follower {
         nm: &Nm,
         id: u32,
         data: Arc<Data>,
-        world: Arc<Collision>,
+        (world, crop): (Arc<Collision>, Option<[i32; 2]>),
         objects: Vec<*mut IPhysicsObject>,
         joints: Vec<*mut IPhysicsConstraint>,
         origin: Vec3,
         yaw: f32,
+        room_floor: bool,
     ) -> Result<Follower, String> {
         if objects.len() != PARTS || joints.len() != PARTS {
             return Err(format!("{PARTS} parts and joints expected"));
@@ -347,6 +378,14 @@ impl Follower {
             said: vec![],
             face: (ahead, axis),
             yaw,
+            room_floor,
+            due: 0,
+            snap: vec![],
+            armature_set: vec![0.0; PARTS],
+            last_root: None,
+            parked: None,
+            cost: 0.0,
+            crop,
             data,
         })
     }
@@ -408,30 +447,163 @@ impl Follower {
         self.agent.doll.mode == 2 && self.agent.doll.asleep
     }
 
-    /// One Source step of `timestep` s: the NM steps it's due, then the drives for it.
+    /// A Source step of `timestep` s begins (on the main thread, docs/adr/0021): the NM steps it's due, and for them
+    /// the bodies' states from Box3D, the ragdoll's joints checked. Box3D doesn't move between them, so each of them
+    /// reads the same states. A parked agent that wakes on motion looks at its bodies instead.
     ///
     /// # Safety
-    /// The objects and joints are live.
-    pub unsafe fn tick(&mut self, nm: &Nm, timestep: f32, g_src: Vec3, mode: GravityMode, events: &mut Vec<Event>) -> Result<(), String> {
+    /// The objects are live; the joints were (Lua unfollows before the ragdoll goes).
+    pub unsafe fn begin(&mut self, nm: &Nm, timestep: f32, events: &mut Vec<Event>) -> Result<(), String> {
         self.timestep = timestep;
+        self.due = 0;
+        if let Some(p) = self.parked.as_mut() {
+            p.settle -= timestep;
+            if !p.on_motion || p.settle > 0.0 {
+                return Ok(());
+            }
+            unsafe { self.read(nm)? };
+            let moved = self.snap.iter().any(|s| {
+                Vec3::from_array(s.velocity).length() > WAKE_SPEED || Vec3::from_array(s.angular_velocity).length() > WAKE_SPIN
+            });
+            if !moved {
+                return Ok(());
+            }
+            self.unpark();
+            events.push(Event { id: self.id, kind: "unparked", text: "moved".into(), value: 0.0 });
+        }
         self.acc += f64::from(timestep);
-        let mut n = 0;
         while self.acc + 1e-9 >= DT {
             self.acc -= DT;
-            n += 1;
-            if n > MAX_STEPS {
+            if self.due == MAX_STEPS {
                 self.acc = 0.0;
                 break;
             }
-            unsafe { self.nm_step(nm, events)? };
+            self.due += 1;
         }
-        unsafe { self.apply(nm, timestep, g_src, mode) };
-        self.since += f64::from(timestep);
+        if self.due == 0 {
+            return Ok(());
+        }
+        unsafe { self.read(nm)? };
+        // A joint the ragdoll lost (`RemoveInternalConstraint`) mustn't be set again: NM comes off.
+        for (k, p) in self.data.body.parts.iter().enumerate() {
+            if let Some(q) = p.parent
+                // SAFETY: both are live objects of the ragdoll.
+                && unsafe { nm.find_constraint(self.objects[q], self.objects[k]) } != self.joints[k]
+            {
+                return Err(format!("{}'s joint is gone", p.name));
+            }
+        }
         Ok(())
     }
 
-    /// One NM step (the Playroom's `tick`, with the body's state from Box3D).
-    unsafe fn nm_step(&mut self, nm: &Nm, events: &mut Vec<Event>) -> Result<(), String> {
+    /// Every part's state from Box3D into `snap`.
+    unsafe fn read(&mut self, nm: &Nm) -> Result<(), String> {
+        self.snap.clear();
+        for &o in &self.objects {
+            // SAFETY: a live object (the caller's promise).
+            self.snap.push(unsafe { nm.body_state(o) }.ok_or("GetBodyState failed")?);
+        }
+        Ok(())
+    }
+
+    /// The NM steps [`Follower::begin`] found due, on the states it read: no `IPhysicsNM`, no game, so agents can
+    /// run on any thread, each on its own (docs/adr/0021). Its cost goes into `cost`.
+    pub fn compute(&mut self, events: &mut Vec<Event>) -> Result<(), String> {
+        if self.due == 0 {
+            return Ok(());
+        }
+        let started = std::time::Instant::now();
+        for _ in 0..self.due {
+            self.nm_step(events)?;
+        }
+        let ms = started.elapsed().as_secs_f64() * 1000.0 / f64::from(self.due);
+        self.cost += (ms - self.cost) * 0.05;
+        Ok(())
+    }
+
+    /// The Source step's end (main thread): NM's armature on the joints, then the drives for the step.
+    ///
+    /// # Safety
+    /// The objects and joints are live.
+    pub unsafe fn finish(&mut self, nm: &Nm, g_src: Vec3, mode: GravityMode) {
+        if self.parked.is_some() {
+            return;
+        }
+        for k in 1..PARTS {
+            if self.armature[k] != self.armature_set[k] {
+                self.armature_set[k] = self.armature[k];
+                // SAFETY: a live constraint of the ragdoll (checked in `begin`).
+                unsafe { nm.set_joint_armature(self.joints[k], self.armature[k]) };
+            }
+        }
+        unsafe { self.apply(nm, self.timestep, g_src, mode) };
+        self.since += f64::from(self.timestep);
+    }
+
+    /// LOD (docs/adr/0021): NM off the bodies, as `release`, its agent and room kept for [`Follower::unpark`].
+    ///
+    /// # Safety
+    /// The joints are live.
+    pub unsafe fn park(&mut self, nm: &Nm, on_motion: bool) {
+        unsafe { self.release(nm) };
+        self.armature_set.fill(0.0);
+        self.kicks.clear();
+        self.parked = Some(Park { on_motion, settle: PARK_SETTLE });
+    }
+
+    /// NM back on the bodies as they are now: its next Source step runs a step, nothing carried over from before.
+    pub fn unpark(&mut self) {
+        if self.parked.take().is_none() {
+            return;
+        }
+        self.acc = DT;
+        self.since = 0.0;
+        self.last_root = None;
+        (self.predicted, self.before) = (vec![], vec![]);
+    }
+
+    /// The get-up clip given up (the player took him off it): NM takes the bodies as they are, a new agent on them
+    /// balancing, as at the clip's end. False if he wasn't on one.
+    pub fn rise_cancel(&mut self) -> bool {
+        if self.room.rise.is_none() && !self.frozen && !self.freeze {
+            return false;
+        }
+        self.room.rise = None;
+        (self.freeze, self.unfreeze, self.frozen) = (false, false, false);
+        self.respawn = Some(vec!["bodyBalance start=true".into()]);
+        true
+    }
+
+    /// The pelvis jumped away from where its last state carried it: the game teleported him. NM's frame (and its
+    /// world) goes with him, so NM's agent sees no jump (docs/adr/0021). Not on a scenario's agent.
+    fn follow_teleport(&mut self, events: &mut Vec<Event>) {
+        let Some(s) = self.snap.first() else { return };
+        let (x, v) = (Vec3::from_array(s.position), Vec3::from_array(s.velocity));
+        let last = self.last_root.replace((x, v));
+        let Some((x0, v0)) = last.filter(|_| !self.scripted()) else { return };
+        let way = v0 * self.since as f32;
+        let jump = x - (x0 + way);
+        if !(jump.length() > TELEPORT + 2.0 * way.length()) {
+            return;
+        }
+        self.origin += jump;
+        (self.world, self.crop) = crate::agents::world_at(&self.data, self.origin, self.room_floor, x);
+        (self.predicted, self.before) = (vec![], vec![]);
+        events.push(Event { id: self.id, kind: "teleported", text: format!("{:.2} m", jump.length()), value: jump.length() });
+    }
+
+    /// The map's crop moves with him once he's half [`crate::world::CROP`] from its centre (docs/adr/0021).
+    fn keep_world(&mut self) {
+        let (Some(c), Some(s)) = (self.crop, self.snap.first()) else { return };
+        let p = Vec3::from_array(s.position) - self.origin;
+        if (p.x - c[0] as f32).abs().max((p.y - c[1] as f32).abs()) <= crate::world::CROP / 2.0 {
+            return;
+        }
+        (self.world, self.crop) = crate::agents::world_at(&self.data, self.origin, self.room_floor, Vec3::from_array(s.position));
+    }
+
+    /// One NM step (the Playroom's `tick`, with the body's state from Box3D, as `begin` read it).
+    fn nm_step(&mut self, events: &mut Vec<Event>) -> Result<(), String> {
         let dt = DT as f32;
         if !self.scripted() {
             self.room.set = settings();
@@ -469,27 +641,29 @@ impl Follower {
             }
             self.steps += 1;
             self.drain_said(events);
+            // Lua sets the bodies on the clip each tick: no teleport.
+            self.last_root = None;
             return Ok(());
         }
+        self.follow_teleport(events);
+        self.keep_world();
         let (mode, asleep) = (self.agent.doll.mode, self.agent.doll.asleep);
         let mut moved = (0.0f32, 0.0f32, 0.0f32);
         if let Some(lines) = self.respawn.take() {
             // The Playroom's new agent on the get-up's last pose (`Agent::new(.., Quat::IDENTITY, 0.3)`: its room's
             // facing, here the one he was given), its messages' state new too.
-            let mut frames = Vec::with_capacity(PARTS);
-            for &o in &self.objects {
-                // SAFETY: a live object (the caller's promise).
-                let s = unsafe { nm.body_state(o) }.ok_or("GetBodyState failed")?;
-                frames.push(Transform::from_translation(Vec3::from_array(s.position) - self.origin).with_rotation(Quat::from_array(s.rotation).normalize()));
-            }
+            let frames: Vec<Transform> = self
+                .snap
+                .iter()
+                .map(|s| Transform::from_translation(Vec3::from_array(s.position) - self.origin).with_rotation(Quat::from_array(s.rotation).normalize()))
+                .collect();
             self.agent = Agent::new(&self.data.homer, Ragdoll::new(&self.data.homer, &frames, Vec3::ZERO), Quat::from_rotation_z(self.yaw), SEED);
             self.msgs = msg::State::default();
             (self.predicted, self.before) = (vec![], vec![]);
             self.queued.extend(lines);
         }
-        for (k, &o) in self.objects.iter().enumerate() {
-            // SAFETY: a live object (the caller's promise).
-            let s = unsafe { nm.body_state(o) }.ok_or("GetBodyState failed")?;
+        for k in 0..PARTS {
+            let s = self.snap[k];
             let (x, q) = (Vec3::from_array(s.position) - self.origin, Quat::from_array(s.rotation));
             let (v, w) = (Vec3::from_array(s.velocity), Vec3::from_array(s.angular_velocity));
             if !(x.is_finite() && q.is_finite() && v.is_finite() && w.is_finite()) || q.length_squared() < 0.5 {
@@ -589,11 +763,8 @@ impl Follower {
             if !(a.is_finite() && a >= 0.0) {
                 return Err(format!("joint {k}'s armature isn't finite"));
             }
-            if a != self.armature[k] {
-                self.armature[k] = a;
-                // SAFETY: a live constraint of the ragdoll.
-                unsafe { nm.set_joint_armature(self.joints[k], a) };
-            }
+            // Set on the joint in `finish`.
+            self.armature[k] = a;
         }
         if self.asleep() != self.bodies_asleep {
             self.bodies_asleep = self.asleep();
@@ -973,6 +1144,8 @@ impl Follower {
             ("dead", self.room.dead.to_string()),
             ("rising", self.room.rise.is_some().to_string()),
             ("frozen", self.frozen.to_string()),
+            ("parked", self.parked.is_some().to_string()),
+            ("cost_ms", format!("{:.4}", self.cost)),
             ("burning", json::num(self.room.burning.max(0.0))),
             ("shock", json::num(self.room.shock.max(0.0))),
             ("getup", json::string(GETUP_MODES[self.room.set.getup as usize % 4])),

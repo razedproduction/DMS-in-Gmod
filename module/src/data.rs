@@ -44,6 +44,11 @@ pub fn get() -> Option<Arc<Data>> {
     DATA.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
+/// Drops the data: GMod unloads the module with each map, and a static's heap isn't freed with it (docs/adr/0021).
+pub fn unload() {
+    *DATA.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
 /// What to tell someone who hasn't set the game's folder.
 pub fn how_to() -> String {
     "set dms_game_dir to your GTA IV folder (PC: the one with GTAIV.exe and pc\\; Xbox 360: the one with \
