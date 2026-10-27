@@ -80,13 +80,13 @@ function Controller:Send(msg, params)
 	return DMS_Send(self.ent, line)
 end
 
--- Where NM's frame starts (m, the game's frame): its messages' points are from there.
+-- Where NM's frame starts (m, the game's frame): its messages' points are from there. It moves with him when the
+-- game teleports him (docs/adr/0021).
 function Controller:Origin()
-	if not self.ent.DMS_Origin then
-		local s = self.ent.DMS_Spawn
-		self.ent.DMS_Origin = s and s.pos * M or Vector()
-	end
-	return self.ent.DMS_Origin
+	local s = DMS.FollowState(self.ent.DMS_Agent)
+	if s then return Vector(s.origin.x, s.origin.y, s.origin.z) end
+	local spawn = self.ent.DMS_Spawn
+	return spawn and spawn.pos * M or Vector()
 end
 
 -- A reaction of the Playroom's (`DMS.FollowReact`'s line, points in the game's frame, m; dms_react).

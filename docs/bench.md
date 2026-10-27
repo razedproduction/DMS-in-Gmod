@@ -95,6 +95,11 @@ Playroom и без тюнинга. Не умеет (пишет `# dms: not run o
 `--lead` — прежний LEAD-агент SDK на полу Playroom (как `dms_selftest`): его записи совпадают с Playroom до трёх
 знаков, кроме `push` (камера), `catchfall` и `shot`.
 
+`DMS.FollowStats()` — стоимость шага NM на главном потоке, потоки, вызовы callback'а (и с чужого окружения), шаг
+каждого агента; `DMS.DevPanic("native"|"step")` — проверка, что паника не роняет игру (ADR 0021). После
+`changelevel` конвары стенда (`dms_dev`, токен) сбрасываются: канал включают заново через RCON
+(`dms_dev_token <из .bench\server.txt>`, `dms_dev 1`).
+
 `server.ps1 start -Tickrate 60` — тикрейт сервера 60; шаг физики при этом остаётся 0.015 с (его ставит игра),
 `DMS.EnvTimestep(physobj[, t])` читает и меняет его (только для опытов).
 

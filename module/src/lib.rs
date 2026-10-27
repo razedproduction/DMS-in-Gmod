@@ -75,6 +75,12 @@ fn acquire_message() -> String {
 /// Called by GMod with its live server Lua state.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gmod13_open(l: *mut LuaState) -> c_int {
+    // A panic here would abort the game (docs/adr/0021): the module stays inert instead.
+    // SAFETY: the caller's promise.
+    std::panic::catch_unwind(|| unsafe { open(l) }).unwrap_or(0)
+}
+
+unsafe fn open(l: *mut LuaState) -> c_int {
     // Without lua_shared there's no way to report anything: the module just stays inert.
     let Ok(api) = lua::api() else { return 0 };
     let nm_message = acquire_message();
@@ -103,9 +109,18 @@ pub unsafe extern "C" fn gmod13_open(l: *mut LuaState) -> c_int {
 /// Called by GMod with the Lua state given to `gmod13_open`, as it shuts it down.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gmod13_close(l: *mut LuaState) -> c_int {
-    dev::stop();
-    step::shutdown();
+    // Each part on its own: the step callback must be off before the module goes, whatever else fails.
+    let _ = std::panic::catch_unwind(dev::stop);
+    let _ = std::panic::catch_unwind(step::shutdown);
     vphysics_nm::release();
+    // GMod unloads the module with each map, and what the statics hold isn't freed with it (docs/adr/0021): ~65 MB
+    // a map with agents (NM's data, the map read, its worlds).
+    let _ = std::panic::catch_unwind(|| {
+        data::unload();
+        world::unload();
+        tuning::unload();
+        *delirium::ragdoll::SURFACES.write().unwrap_or_else(|e| e.into_inner()) = Vec::new();
+    });
     if let Ok(api) = lua::api() {
         unsafe {
             (api.pushnil)(l);

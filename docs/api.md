@@ -38,9 +38,9 @@ dms.Detach(rag)                    -- обычный ragdoll
 | `c:Balance()`, `c:CatchFall()`, `c:Relax()`, `c:Stop()` | кнопки `balance`, `catchfall`, `relax`, `STOP all` |
 | `c:Flinch([from])` | `upperBodyFlinch` от точки или кнопка `flinch` |
 | `c:Kill()`, `c:SetHealth(h)` | здоровье 0 (смерть: `stopAllBehaviours` + `bodyRelax`) / любое |
-| `c:GetState()` | `{steps, awake, asleep, balancing, fallen, pelvis, head, com, com_v, health, dead, rising, burning, shock, getup}` (м, таблицы `{x, y, z}`) |
+| `c:GetState()` | `{steps, parked, cost, origin, awake, asleep, balancing, fallen, pelvis, head, com, com_v, health, dead, rising, burning, shock, getup}` (м, таблицы `{x, y, z}`; `parked` — NM снят LOD, `cost` — шаг NM, мс) |
 | `c:GetParam(msg, param)` | описание параметра сообщения |
-| `c:Origin()` | начало кадра NM (м, кадр игры) |
+| `c:Origin()` | начало кадра NM (м, кадр игры; сдвигается при телепорте) |
 
 ## Хуки
 
@@ -52,6 +52,28 @@ dms.Detach(rag)                    -- обычный ragdoll
 | `DMS_Feedback` | `ent, name, slot, value` | feedback NM (после каждого шага NM) |
 | `DMS_Died` | `ent` | здоровье 0: Homer обмяк |
 | `DMS_Reaction` | `ent, text` | строка журнала слоя комнаты Playroom (`room  shot (pistol) at part 9 …`) |
+| `DMS_Teleported` | `ent, metres` | игра переставила тела (`PhysObj:SetPos`): кадр NM и его мир сдвинулись вместе с ним |
+
+## Жизненный цикл (M7, ADR 0021)
+
+| Событие | Что делает DMS |
+|---|---|
+| удаление, `undo`, `gmod_admin_cleanup` | `OnRemove` снимает агента до того, как уйдут тела |
+| смена карты, выход | хук `ShutDown` и `gmod13_close`: агенты и step-callback сняты до окружения физики |
+| перезапуск Lua (автообновление, `lua_openscript`) | модуль и агенты сохраняются (`require` — один раз на состояние Lua) |
+| дубликатор, сохранение/загрузка (`gm_save`) | поля DMS в копию не попадают (`PreEntityCopy`); копия привязывается и получает NM, если он был на оригинале (или с `dms_autoattach`) |
+| заморозка части (физган, инструмент) | NM паркуется, пока часть заморожена; заморозка клипа вставания — своя |
+| подбор физганом/гравипушкой во время клипа вставания | клип прерывается, тела размораживаются, новый агент на них балансирует |
+| телепорт тел | кадр NM и вырезка мира переезжают, агент и его состояние не сбрасываются |
+| сварка, верёвки | NM остаётся (внешние силы, как захват) |
+| часть сустава потеряна (`RemoveInternalConstraint`) | NM снимается (`DMS_Detached`, «joint is gone») |
+| паника в модуле | натив — Lua-ошибка; шаг агента — снимается только он (`DMS_Detached`, `panic: …`) |
+
+LOD: дальше `dms_lod_distance` (3000 юнитов, 0 — выкл.) от всех игроков Homer получает кнопку `relax`, через 1 с NM
+паркуется (без шагов, drives и armature — обычный ragdoll; агент, здоровье, поведение хранятся) и возвращается, когда
+игрок рядом; лежащий без движения `dms_lod_still` с (5, 0 — выкл.) — паркуется до первого движения тел, реакции или
+сообщения. Лимит — `dms_max_agents` (8): лишние Homer остаются обычными ragdoll. Агенты считаются на `dms_threads`
+потоках (0 — ядра CPU минус одно).
 
 ## Реакции (`DMS.FollowReact(id, line)`, `dms_react`)
 
@@ -108,7 +130,7 @@ dms.Detach(rag)                    -- обычный ragdoll
 | `dms_detach_all` | NM со всех Homer |
 | `dms_send <строка>` | сообщение NM Homer под прицелом (с консоли сервера — всем) |
 | `dms_react <реакция> [key=value …]` | реакция Homer под прицелом; без `at=` — точка прицела |
-| `dms_status`, `dms_tuning_status` | агенты, тюнинг |
+| `dms_status`, `dms_tuning_status` | агенты (стоимость шага NM, потоки, LOD), тюнинг |
 | `dms_react_log 1` | печатать журнал слоя комнаты |
 
 ## Клиент

@@ -21,6 +21,11 @@ struct State {
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
 
+/// Drops the profile, as the module is unloaded (docs/adr/0021).
+pub fn unload() {
+    *STATE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
 fn with<R>(f: impl FnOnce(&mut State) -> R) -> R {
     let mut s = STATE.lock().unwrap_or_else(|e| e.into_inner());
     f(s.get_or_insert_with(Default::default))

@@ -142,6 +142,6 @@ end
 hook.Add("Tick", "DMS_Obstacles", function()
 	for id, ent in pairs(DMS_Agents or {}) do
 		local s = IsValid(ent) and DMS.FollowState(id)
-		if s then DMS.FollowObstacles(id, obstaclesNear(ent, Vector(s.com.x, s.com.y, s.com.z) / METRES_PER_UNIT)) end
+		if s and not s.parked then DMS.FollowObstacles(id, obstaclesNear(ent, Vector(s.com.x, s.com.y, s.com.z) / METRES_PER_UNIT)) end
 	end
 end)

@@ -17,6 +17,7 @@ pub const NATIVES: &[(&CStr, crate::lua::CFunction)] = &[
     (c"FollowReact", follow_react),
     (c"FollowPose", follow_pose),
     (c"FollowRiseDone", follow_rise_done),
+    (c"FollowRiseCancel", follow_rise_cancel),
     (c"FollowRoom", follow_room),
     (c"FollowOverlay", follow_overlay),
     (c"SetReactions", set_reactions),
@@ -166,6 +167,15 @@ native!(follow_rise_done => follow_rise_done_impl);
 unsafe fn follow_rise_done_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
     let id = unsafe { api.check_number(l, 1)? } as u32;
     unsafe { (api.pushboolean)(l, step::with(id, |f| f.rise_done()).is_some().into()) };
+    Ok(1)
+}
+
+native!(follow_rise_cancel => follow_rise_cancel_impl);
+/// `DMS.FollowRiseCancel(id)`: the get-up clip given up (Lua let the bodies go before its end, docs/adr/0021): a new
+/// agent takes them as they are, balancing. False if he wasn't on a clip (or no such agent).
+unsafe fn follow_rise_cancel_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
+    let id = unsafe { api.check_number(l, 1)? } as u32;
+    unsafe { (api.pushboolean)(l, step::with(id, |f| f.rise_cancel()).unwrap_or(false).into()) };
     Ok(1)
 }
 

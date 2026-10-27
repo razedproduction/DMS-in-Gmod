@@ -66,6 +66,8 @@ function DMS_BindRagdoll(ent, floor, yaw)
 	end
 	ent.DMS_Spawn = { pos = floor, yaw = yaw or ent:GetAngles().y }
 	ent.DMS_Bound = true
+	-- The duplicator and saves copy him without DMS's fields (lifecycle.lua, docs/adr/0021).
+	ent.PreEntityCopy, ent.PostEntityCopy = DMS_PreCopy, DMS_PostCopy
 	return true
 end
 
