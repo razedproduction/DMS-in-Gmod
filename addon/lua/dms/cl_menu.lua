@@ -236,6 +236,9 @@ local function build(panel)
 	panels.profile = prof
 	on.OnChange = function(_, v) request({ kind = "use", name = editing.name, on = v }) end
 	prof.OnSelect = function(_, _, name)
+		-- refresh() picks the active one as it fills the list: that's not the player's choice (it looped: the server
+		-- answered with the catalogue, which refilled the list, and its profile wiped what was being edited).
+		if panels.filling then return end
 		request({ kind = "profile", name = name })
 		request({ kind = "use", name = name, on = GetConVar("dms_tuning"):GetBool() })
 	end
@@ -285,9 +288,15 @@ end
 local function refresh()
 	if not catalogue or not IsValid(panels.behaviours) then return end
 	panels.behaviours:Clear()
-	for _, name in ipairs(catalogue.messages) do panels.behaviours:AddLine(name) end
+	for _, name in ipairs(catalogue.messages) do
+		local line = panels.behaviours:AddLine(name)
+		-- The one being edited stays picked.
+		if name == panels.msg then panels.behaviours:SelectItem(line) end
+	end
+	panels.filling = true
 	panels.profile:Clear()
 	for _, n in ipairs(catalogue.profiles) do panels.profile:AddChoice(n, nil, n == catalogue.profile) end
+	panels.filling = false
 	fillTaskParams(panels.tp)
 	if panels.msg then fillParams(panels.params, panels.msg) end
 end
