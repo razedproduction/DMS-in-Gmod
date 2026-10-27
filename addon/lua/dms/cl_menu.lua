@@ -1,12 +1,28 @@
--- The spawn menu's "DMS" tab (ROADMAP M6, docs/adr/0009): Homer, the Playroom's reactions and switches, and the
--- player's tuning of NM's behaviours. Everything that changes the server goes through net messages (tuning.lua) and
--- only works for superadmins. The behaviours and their params come from NM itself (`nm_message_*`), so new ones
--- appear without changes here; params the port takes but doesn't use are marked.
+-- The DMS window (docs/adr/0022): its own frame over the game with Homer, the Playroom's reactions and switches, the
+-- player's tuning of NM's behaviours (docs/adr/0009) and the agents' limits (docs/adr/0021). `dms_menu` opens it, and
+-- so do a key (dms_menu_key), the context menu's icon and the spawn menu's "Utilities -> DMS". Tabs on the left; what's
+-- under the cursor is explained on the right. Everything that changes the server goes through net messages
+-- (tuning.lua) and only works for superadmins. The behaviours and their params come from NM itself (`nm_message_*`),
+-- so new ones appear without changes here; params the port takes but doesn't use are marked.
+
+local menuKey = CreateClientConVar("dms_menu_key", "0", true, false, "A key that opens and closes the DMS window (0: none)")
 
 local catalogue
 local paramsOf = {} -- message -> its params, as the server sent them
+local asked = {} -- messages whose params are on their way
 local editing = { name = "Playroom", profile = { messages = {}, taskparams = {} } }
-local panels = {}
+local ui = {} -- the open window's panels and setters; a new one with each window
+local lastTab, lastMsg = "Homer", nil
+-- While above 0 the window fills its own widgets: their callbacks aren't the player's (a profile picked as the list
+-- filled looped with the server and wiped the edits).
+local filling = 0
+
+local function quietly(f)
+	filling = filling + 1
+	local ok, err = pcall(f)
+	filling = filling - 1
+	if not ok then ErrorNoHaltWithStack(err) end
+end
 
 local function request(t)
 	local s = util.Compress(util.TableToJSON(t))
@@ -14,6 +30,12 @@ local function request(t)
 	net.WriteUInt(#s, 32)
 	net.WriteData(s, #s)
 	net.SendToServer()
+end
+
+-- A server convar (tuning.lua's SWITCHES); sliders send theirs once they stop moving.
+local function switch(name, value, later)
+	if not later then return request({ kind = "switch", name = name, value = value }) end
+	timer.Create("DMS_Switch_" .. name, 0.3, 1, function() request({ kind = "switch", name = name, value = value }) end)
 end
 
 -- The Homer the player looks at, for trying things out.
@@ -69,112 +91,213 @@ local function vecText(v)
 	return tostring(v or "")
 end
 
--- One behaviour's params: a slider, a checkbox or a text box each, its doc as the tooltip.
-local function fillParams(list, msg)
-	list:Clear()
-	-- A behaviour's params come from the server the first time it's picked.
-	local entry = paramsOf[msg] and { params = paramsOf[msg] }
-	if not entry then
-		local l = list:Add("DLabel")
-		l:Dock(TOP)
-		l:SetDark(true)
-		l:SetText(msg .. ": loading...")
-		return request({ kind = "params", name = msg })
+-- The look: dark glass over the blurred game, one warm accent.
+local C = {
+	bg = Color(18, 20, 24, 235),
+	pane = Color(255, 255, 255, 8),
+	hover = Color(255, 255, 255, 22),
+	line = Color(255, 255, 255, 36),
+	accent = Color(255, 196, 70),
+	text = Color(232, 234, 238),
+	dim = Color(150, 156, 166),
+	bad = Color(255, 120, 90),
+}
+surface.CreateFont("DMS_Title", { font = "Roboto", size = 22, weight = 700, extended = true })
+surface.CreateFont("DMS_Head", { font = "Roboto", size = 17, weight = 700, extended = true })
+surface.CreateFont("DMS_Text", { font = "Roboto", size = 15, weight = 500, extended = true })
+
+local function paintPane(_, w, h)
+	surface.SetDrawColor(C.pane)
+	surface.DrawRect(0, 0, w, h)
+	surface.SetDrawColor(C.line)
+	surface.DrawOutlinedRect(0, 0, w, h)
+end
+
+local function styleScroll(sp)
+	local bar = sp:GetVBar()
+	bar:SetWide(8)
+	bar:SetHideButtons(true)
+	bar.Paint = nil
+	bar.btnGrip.Paint = function(_, w, h) draw.RoundedBox(4, 1, 0, w - 2, h, C.line) end
+	return sp
+end
+
+-- What the help pane says while the cursor is over `p` (or anything inside it); `text` may be a function.
+local function help(p, title, text)
+	p.dmsHelp = { title, text or "" }
+	return p
+end
+
+local function heading(parent, text)
+	local l = parent:Add("DLabel")
+	l:Dock(TOP)
+	l:DockMargin(0, 10, 0, 4)
+	l:SetFont("DMS_Head")
+	l:SetTextColor(C.accent)
+	l:SetText(text)
+	l:SizeToContentsY(6)
+	l.Paint = function(_, w, h)
+		surface.SetDrawColor(C.line)
+		surface.DrawLine(0, h - 1, w, h - 1)
 	end
-	local head = list:Add("DLabel")
-	head:Dock(TOP)
-	head:SetText(msg .. ": " .. #entry.params .. " params (* the port takes it but doesn't use it)")
-	head:SetDark(true)
-	for _, p in ipairs(entry.params) do
-		local row = list:Add("DPanel")
-		row:Dock(TOP)
-		row:SetTall(24)
-		row:DockMargin(0, 1, 0, 1)
-		row:SetTooltip(p.doc ~= "" and p.doc or p.name)
-		local label = (p.used and "" or "* ") .. p.name
-		local cur = value(msg, p)
-		local reset = vgui.Create("DButton", row)
-		reset:Dock(RIGHT)
-		reset:SetWide(22)
-		reset:SetText("↺")
-		reset:SetTooltip("Back to the Playroom's default")
-		if p.kind == "bool" then
-			local c = vgui.Create("DCheckBoxLabel", row)
-			c:Dock(FILL)
-			c:SetText(label)
-			c:SetDark(true)
-			c:SetChecked(cur ~= nil and (cur == "true" or cur == "1") or (tonumber(p.default) or 0) ~= 0)
-			c.OnChange = function(_, v) setValue(msg, p.name, v and "true" or "false") end
-			reset.DoClick = function() setValue(msg, p.name, nil) fillParams(list, msg) end
-		elseif p.kind == "float" or p.kind == "int" then
-			local lo, hi = range(p)
-			local s = vgui.Create("DNumSlider", row)
-			s:Dock(FILL)
-			s:SetText(label)
-			s:SetDark(true)
-			s:SetMinMax(lo, hi)
-			s:SetDecimals(p.kind == "int" and 0 or 3)
-			s:SetValue(tonumber(cur) or tonumber(p.default) or 0)
-			s.OnValueChanged = function(_, v)
-				setValue(msg, p.name, p.kind == "int" and tostring(math.Round(v)) or string.format("%.4g", v))
-			end
-			reset.DoClick = function() setValue(msg, p.name, nil) fillParams(list, msg) end
-		else
-			local l = vgui.Create("DLabel", row)
-			l:Dock(LEFT)
-			l:SetWide(170)
-			l:SetText(label)
-			l:SetDark(true)
-			local t = vgui.Create("DTextEntry", row)
-			t:Dock(FILL)
-			t:SetValue(cur or vecText(p.default))
-			t.OnEnter = function(self)
-				local v = self:GetValue():gsub("%s", "")
-				setValue(msg, p.name, v ~= "" and v or nil)
-			end
-			t.OnLoseFocus = t.OnEnter
-			reset.DoClick = function() setValue(msg, p.name, nil) fillParams(list, msg) end
-		end
+	return l
+end
+
+local function note(parent, text, color)
+	local l = parent:Add("DLabel")
+	l:Dock(TOP)
+	l:DockMargin(0, 2, 0, 2)
+	l:SetFont("DMS_Text")
+	l:SetTextColor(color or C.dim)
+	l:SetWrap(true)
+	l:SetAutoStretchVertical(true)
+	l:SetText(text)
+	return l
+end
+
+local function paintButton(self, w, h)
+	local on = self:IsEnabled() and (self:IsHovered() or self.Depressed or self.dmsActive)
+	surface.SetDrawColor(on and C.hover or C.pane)
+	surface.DrawRect(0, 0, w, h)
+	surface.SetDrawColor(self.dmsActive and C.accent or C.line)
+	surface.DrawOutlinedRect(0, 0, w, h)
+end
+
+local function button(parent, text, helpText, fn)
+	local b = parent:Add("DButton")
+	b:SetTall(26)
+	b:SetFont("DMS_Text")
+	b:SetTextColor(C.text)
+	b:SetText(text)
+	b.Paint = paintButton
+	b.DoClick = function() fn() end
+	if helpText then help(b, text, helpText) end
+	return b
+end
+
+local function check(parent, text, helpText, onChange)
+	local c = parent:Add("DCheckBoxLabel")
+	c:Dock(TOP)
+	c:DockMargin(0, 3, 0, 3)
+	c:SetFont("DMS_Text")
+	c:SetTextColor(C.text)
+	c:SetText(text)
+	if onChange then c.OnChange = function(_, v) if filling == 0 then onChange(v) end end end
+	help(c, text, helpText)
+	return c
+end
+
+local function slider(parent, text, helpText, lo, hi, decimals, onChange)
+	local s = parent:Add("DNumSlider")
+	s:Dock(TOP)
+	s:SetTall(26)
+	s:SetText(text)
+	s:SetMinMax(lo, hi)
+	s:SetDecimals(decimals)
+	s.Label:SetFont("DMS_Text")
+	s.Label:SetTextColor(C.text)
+	s.TextArea:SetTextColor(C.text)
+	s.OnValueChanged = function(_, v) if filling == 0 then onChange(v) end end
+	help(s, text, helpText)
+	return s
+end
+
+local function label(parent, text, wide)
+	local l = parent:Add("DLabel")
+	l:Dock(LEFT)
+	l:SetWide(wide)
+	l:SetFont("DMS_Text")
+	l:SetTextColor(C.text)
+	l:SetText(text)
+	return l
+end
+
+local function row(parent, tall)
+	local r = parent:Add("DPanel")
+	r:Dock(TOP)
+	r:DockMargin(0, 3, 0, 3)
+	r:SetTall(tall or 26)
+	r.Paint = nil
+	return r
+end
+
+local function combo(parent, text, helpText, choices, onSelect)
+	local r = row(parent, 24)
+	label(r, text, 160)
+	local cb = r:Add("DComboBox")
+	cb:Dock(LEFT)
+	cb:SetWide(240)
+	cb:SetSortItems(false)
+	for i, n in ipairs(choices) do cb:AddChoice(n, i - 1) end
+	cb.OnSelect = function(_, _, _, v) if filling == 0 then onSelect(v) end end
+	help(r, text, helpText)
+	return cb
+end
+
+local function page(parent)
+	local sp = styleScroll(parent:Add("DScrollPanel"))
+	sp:Dock(FILL)
+	sp:GetCanvas():DockPadding(4, 0, 12, 8)
+	return sp
+end
+
+-- The server's convars in the window: their help texts and values come from the catalogue and the switches' replies.
+local function switchHelp(name)
+	return function()
+		local s = catalogue and catalogue.switches and catalogue.switches[name]
+		return (s and s.help or "(the server hasn't answered yet)") .. "\n\ndms_" .. name
 	end
 end
 
--- The game's taskparams sets (the tasks' tuning), editable value by value.
-local function fillTaskParams(list)
-	list:Clear()
-	local tp = catalogue.taskparams or {}
-	if next(tp) == nil then
-		local l = list:Add("DLabel")
-		l:Dock(TOP)
-		l:SetDark(true)
-		l:SetWrap(true)
-		l:SetAutoStretchVertical(true)
-		l:SetText("This game has no taskparams.txt (the PC version): NM's tasks run their defaults, nothing to tune here.")
-		return
-	end
-	for task, sets in SortedPairs(tp) do
-		local cat = list:Add("DCollapsibleCategory")
-		cat:Dock(TOP)
-		cat:SetLabel(task)
-		cat:SetExpanded(false)
-		local inner = vgui.Create("DListLayout")
-		cat:SetContents(inner)
-		for set, params in SortedPairs(sets) do
-			for p, v in SortedPairs(params) do
-				local key = task .. " " .. set .. " " .. p
-				local s = vgui.Create("DNumSlider")
-				s:SetText(set .. " " .. p)
-				s:SetDark(true)
-				local m = math.max(math.abs(v) * 4, 1)
-				s:SetMinMax(math.min(v - m, 0), v + m)
-				s:SetDecimals(3)
-				s:SetValue(editing.profile.taskparams[key] or v)
-				s.OnValueChanged = function(_, x)
-					editing.profile.taskparams[key] = math.abs(x - v) > 1e-6 and x or nil
-				end
-				inner:Add(s)
-			end
+local function bindSwitch(name, set) ui.switch[name] = set end
+
+local function applySwitches(values)
+	if not values or not ui.switch then return end
+	quietly(function()
+		for name, set in pairs(ui.switch) do
+			local s = values[name]
+			if s then set(s.value) end
 		end
+	end)
+end
+
+-- Tabs ----------------------------------------------------------------------------------------------------------
+
+local function homerTab(p)
+	heading(p, "Homer")
+	note(p, "Delirium on Homer (models/dms/homer.mdl). Changing the server needs superadmin.")
+	local r = row(p)
+	local spawn = button(r, "Spawn Homer", "A Homer in front of you with NM on him, balancing.\n\ndms_homer", function() RunConsoleCommand("dms_homer") end)
+	spawn:Dock(LEFT)
+	spawn:SetWide(180)
+	local off = button(r, "NM off every Homer", "Takes NM off every Homer: they become ordinary ragdolls.\n\ndms_detach_all", function() RunConsoleCommand("dms_detach_all") end)
+	off:Dock(LEFT)
+	off:DockMargin(6, 0, 0, 0)
+	off:SetWide(180)
+	local auto = check(p, "NM on Homers spawned from the spawn menu", switchHelp("autoattach"), function(v) switch("autoattach", v and 1 or 0) end)
+	bindSwitch("autoattach", function(v) auto:SetChecked(tonumber(v) ~= 0) end)
+
+	heading(p, "What you see (this client)")
+	for _, c in ipairs({
+		{ "Eyes", "dms_eyes", "Homer's eyes, the Playroom's." },
+		{ "Eyebrows", "dms_brows", "Homer's eyebrows, the Playroom's." },
+		{ "Skeleton", "dms_skeleton", "The Playroom's skeleton drawn over Homer." },
+		{ "Debug overlay", "dms_overlay", "NM's capsules, drives and centre of mass over Homer (superadmins)." },
+	}) do
+		check(p, c[1], c[3] .. "\n\n" .. c[2]):SetConVar(c[2])
 	end
+	local col = combo(p, "Colours", switchHelp("pedcol"),
+		{ "Red & blue", "All blue", "All red", "Solid blue", "Opaque red & blue" }, function(v) switch("pedcol", v) end)
+	bindSwitch("pedcol", function(v) col:ChooseOptionID((tonumber(v) or 0) + 1) end)
+
+	heading(p, "This window")
+	local k = row(p)
+	label(k, "Key", 160)
+	local bind = k:Add("DBinder")
+	bind:Dock(LEFT)
+	bind:SetWide(140)
+	bind:SetConVar("dms_menu_key")
+	help(k, "Key", "A key that opens and closes this window (right-click the button to clear it). The console command dms_menu does the same, as does the DMS icon in the context menu (hold C).\n\ndms_menu_key")
 end
 
 -- What the Playroom does on each reaction (module/src/follow/room.rs), with a button to try it on the Homer looked at.
@@ -193,113 +316,497 @@ local REACTIONS = {
 	{ "Health back", "health value=200", "health 200, alive" },
 }
 
-local function build(panel)
-	panel:ClearControls()
-	panels.root = panel
-	panel:Help("Delirium on Homer (models/dms/homer.mdl). Changing anything here needs superadmin.")
-	panel:Button("Spawn Homer", "dms_homer")
-	panel:Button("NM off every Homer", "dms_detach_all")
-	panel:CheckBox("Eyes", "dms_eyes")
-	panel:CheckBox("Eyebrows", "dms_brows")
-	panel:CheckBox("Skeleton", "dms_skeleton")
-	panel:CheckBox("Debug overlay: NM's capsules, drives, centre of mass", "dms_overlay")
-	local col = panel:ComboBox("Colours", "dms_pedcol")
-	for i, n in ipairs({ "Red & blue", "All blue", "All red", "Solid blue", "Opaque red & blue" }) do col:AddChoice(n, i - 1) end
-	col.OnSelect = function(_, _, _, v) request({ kind = "switch", name = "pedcol", value = v }) end
+-- dms_extra_pick's bits, in order.
+local EXTRAS = {
+	"Windmill", "Curl up before getting up", "Curl up when shot at lying", "Look at who hit him", "Tumble off a ledge",
+	"smartFall when dropped", "Dodge from above", "Brace on a wall",
+}
 
-	panel:Help("The Playroom's reactions (its defaults are the Playroom's; golden runs ignore these):")
-	local switches = {
-		{ "tasks", "NM -> animation as the game's tasks end" }, { "look", "Looks at what's thrown at him" },
-		{ "avoid", "Flinches from what's thrown at him" }, { "fire_reaction", "OnFire when he burns" },
-		{ "dive_shot", "Shot at again, he dives" }, { "extra_reactions", "Additional reactions" },
-		{ "weak", "Weaker weapon sets" }, { "god", "Infinite health" },
-	}
-	for _, s in ipairs(switches) do
-		local c = panel:CheckBox(s[2], "dms_" .. s[1])
-		c.OnChange = function(_, v) request({ kind = "switch", name = s[1], value = v and 1 or 0 }) end
+local function reactionsTab(p)
+	heading(p, "The Playroom's switches")
+	note(p, "Their defaults are the Playroom's; golden runs ignore them.")
+	local function toggle(name, text)
+		local c = check(p, text, switchHelp(name), function(v) switch(name, v and 1 or 0) end)
+		bindSwitch(name, function(v) c:SetChecked(tonumber(v) ~= 0) end)
+		return c
 	end
-	local gu = panel:ComboBox("Get-up", "dms_getup")
-	for i, n in ipairs({ "Animation (the game's clip)", "Muscles", "Off", "Learned (not ported)" }) do gu:AddChoice(n, i - 1) end
-	gu.OnSelect = function(_, _, _, v) request({ kind = "switch", name = "getup", value = v }) end
+	toggle("tasks", "NM -> animation as the game's tasks end")
+	toggle("look", "Looks at what's thrown at him")
+	toggle("avoid", "Flinches from what's thrown at him")
+	toggle("fire_reaction", "OnFire when he burns")
+	toggle("dive_shot", "Shot at again, he dives")
+	local gap = slider(p, "Seconds between dives", switchHelp("dodge_gap"), 0, 10, 1, function(v) switch("dodge_gap", string.format("%.1f", v), true) end)
+	bindSwitch("dodge_gap", function(v) gap:SetValue(tonumber(v) or 3) end)
+	toggle("weak", "Weaker weapon sets")
+	toggle("god", "Infinite health")
+	local gu = combo(p, "Get-up", switchHelp("getup"),
+		{ "Animation (the game's clip)", "Muscles", "Off", "Learned (not ported)" }, function(v) switch("getup", v) end)
+	bindSwitch("getup", function(v) gu:ChooseOptionID((tonumber(v) or 0) + 1) end)
 
-	panel:Help("Try a reaction on the Homer you look at:")
+	heading(p, "Additional reactions")
+	toggle("extra_reactions", "Additional reactions on")
+	local bits = {}
+	local function pick()
+		local n = 0
+		for i, c in ipairs(bits) do if c:GetChecked() then n = n + 2 ^ (i - 1) end end
+		switch("extra_pick", n)
+	end
+	for i, text in ipairs(EXTRAS) do
+		local c = check(p, text, switchHelp("extra_pick"), pick)
+		c:DockMargin(18, 2, 0, 2)
+		bits[i] = c
+	end
+	bindSwitch("extra_pick", function(v)
+		local n = tonumber(v) or 0
+		for i, c in ipairs(bits) do c:SetChecked(bit.band(n, 2 ^ (i - 1)) ~= 0) end
+	end)
+
+	heading(p, "Try a reaction on the Homer you look at")
+	local grid = p:Add("DIconLayout")
+	grid:Dock(TOP)
+	grid:SetSpaceX(6)
+	grid:SetSpaceY(6)
 	for _, r in ipairs(REACTIONS) do
-		local b = panel:Button(r[1])
-		b:SetTooltip(r[3])
-		b.DoClick = function() react(r[2]) end
+		button(grid, r[1], r[3] .. "\n\ndms_react " .. r[2], function() react(r[2]) end):SetSize(150, 26)
 	end
+end
 
-	panel:Help("Tuning (docs/adr/0009): only through NM's own inputs, off = the Playroom's.")
-	local on = panel:CheckBox("Tuning on", "dms_tuning")
-	local prof = vgui.Create("DComboBox")
-	panel:AddItem(prof)
-	panels.profile = prof
-	on.OnChange = function(_, v) request({ kind = "use", name = editing.name, on = v }) end
-	prof.OnSelect = function(_, _, name)
-		-- refresh() picks the active one as it fills the list: that's not the player's choice (it looped: the server
-		-- answered with the catalogue, which refilled the list, and its profile wiped what was being edited).
-		if panels.filling then return end
-		request({ kind = "profile", name = name })
-		request({ kind = "use", name = name, on = GetConVar("dms_tuning"):GetBool() })
+local function performanceTab(p)
+	heading(p, "Agents (docs/adr/0021)")
+	note(p, "How many Homers NM drives and when it lets them go. The server's; superadmins only.")
+	local function num(name, text, lo, hi, decimals)
+		local s = slider(p, text, switchHelp(name), lo, hi, decimals, function(v)
+			switch(name, decimals == 0 and math.Round(v) or string.format("%." .. decimals .. "f", v), true)
+		end)
+		bindSwitch(name, function(v) s:SetValue(tonumber(v) or 0) end)
 	end
-	local nameEntry = vgui.Create("DTextEntry")
-	nameEntry:SetPlaceholderText("profile name")
-	panel:AddItem(nameEntry)
-	local save = panel:Button("Save profile")
-	save.DoClick = function()
+	num("max_agents", "Homers with NM at most", 0, 32, 0)
+	num("threads", "Threads (0: auto)", 0, 16, 0)
+	num("lod_distance", "LOD distance (units)", 0, 10000, 0)
+	num("lod_still", "Still for (s)", 0, 30, 1)
+end
+
+-- One behaviour's params: a slider, a checkbox or a text box each, its doc in the help pane and the tooltip.
+local function fillParams()
+	local list, msg = ui.params, ui.msg
+	if not IsValid(list) then return end
+	list:Clear()
+	if not msg then return ui.paramsHead:SetText("Pick a behaviour on the left") end
+	local ps = paramsOf[msg]
+	if not ps then
+		-- A behaviour's params come from the server the first time it's picked.
+		ui.paramsHead:SetText(msg .. ": loading...")
+		if not asked[msg] then
+			asked[msg] = true
+			request({ kind = "params", name = msg })
+		end
+		return
+	end
+	local unused = 0
+	for _, p in ipairs(ps) do if not p.used then unused = unused + 1 end end
+	ui.paramsHead:SetText(string.format("%s: %d params%s", msg, #ps, unused > 0 and string.format(", %d the port doesn't use (*)", unused) or ""))
+	quietly(function()
+		for _, p in ipairs(ps) do
+			local r = list:Add("DPanel")
+			r:Dock(TOP)
+			r:SetTall(26)
+			r:DockMargin(0, 1, 0, 1)
+			r.param = p
+			-- A mark on the edited ones.
+			r.Paint = function(_, _, h)
+				if value(msg, p) == nil then return end
+				surface.SetDrawColor(C.accent)
+				surface.DrawRect(0, 3, 2, h - 6)
+			end
+			help(r, p.name, (p.doc ~= "" and p.doc or "(no description)")
+				.. "\n\nKind: " .. p.kind .. "; the Playroom's: " .. vecText(p.default)
+				.. (p.used and "" or "\n\n* The port takes it but doesn't use it: changing it does nothing."))
+			r:SetTooltip(p.doc ~= "" and p.doc or p.name)
+			local text = (p.used and "" or "* ") .. p.name
+			local color = p.used and C.text or C.dim
+			local cur = value(msg, p)
+			local reset = r:Add("DImageButton")
+			reset:Dock(RIGHT)
+			reset:DockMargin(4, 5, 0, 5)
+			reset:SetWide(16)
+			reset:SetImage("icon16/arrow_undo.png")
+			reset:SetTooltip("Back to the Playroom's value")
+			reset.DoClick = function() setValue(msg, p.name, nil) fillParams() end
+			if p.kind == "bool" then
+				local c = r:Add("DCheckBoxLabel")
+				c:Dock(FILL)
+				c:DockMargin(6, 5, 0, 0)
+				c:SetFont("DMS_Text")
+				c:SetTextColor(color)
+				c:SetText(text)
+				c:SetChecked(cur ~= nil and (cur == "true" or cur == "1") or (tonumber(p.default) or 0) ~= 0)
+				c.OnChange = function(_, v) if filling == 0 then setValue(msg, p.name, v and "true" or "false") end end
+				r.input = c
+			elseif p.kind == "float" or p.kind == "int" then
+				local lo, hi = range(p)
+				local s = r:Add("DNumSlider")
+				s:Dock(FILL)
+				s:DockMargin(6, 0, 0, 0)
+				s:SetText(text)
+				s.Label:SetFont("DMS_Text")
+				s.Label:SetTextColor(color)
+				s.TextArea:SetTextColor(C.text)
+				s:SetMinMax(lo, hi)
+				s:SetDecimals(p.kind == "int" and 0 or 3)
+				s:SetValue(tonumber(cur) or tonumber(p.default) or 0)
+				s.OnValueChanged = function(_, v)
+					if filling > 0 then return end
+					setValue(msg, p.name, p.kind == "int" and tostring(math.Round(v)) or string.format("%.4g", v))
+				end
+				r.input = s
+			else
+				label(r, text, 200):SetTextColor(color)
+				local t = r:Add("DTextEntry")
+				t:Dock(FILL)
+				t:DockMargin(0, 2, 0, 2)
+				t:SetValue(cur or vecText(p.default))
+				t.OnEnter = function(self)
+					local v = self:GetValue():gsub("%s", "")
+					setValue(msg, p.name, v ~= "" and v or nil)
+				end
+				t.OnLoseFocus = t.OnEnter
+				r.input = t
+			end
+		end
+	end)
+end
+
+local function pick(msg)
+	ui.msg, lastMsg = msg, msg
+	fillParams()
+end
+
+-- NM's behaviours, those matching the search. Which one is picked is drawn, not selected, so refilling the list
+-- never picks anything.
+local function fillBehaviours()
+	local list = ui.behaviours
+	if not IsValid(list) or not catalogue then return end
+	list:Clear()
+	local find = ui.search:GetValue():lower()
+	for _, name in ipairs(catalogue.messages or {}) do
+		if find == "" or name:lower():find(find, 1, true) then
+			local b = list:Add("DButton")
+			b:Dock(TOP)
+			b:SetTall(22)
+			b:DockMargin(0, 0, 0, 1)
+			b:SetFont("DMS_Text")
+			b:SetContentAlignment(4)
+			b:SetTextInset(10, 0)
+			b:SetText(name)
+			b:SetTextColor(C.text)
+			b.Paint = function(self, w, h)
+				local picked = ui.msg == name
+				self:SetTextColor(picked and C.accent or C.text)
+				if picked or self:IsHovered() then
+					surface.SetDrawColor(C.hover)
+					surface.DrawRect(0, 0, w, h)
+				end
+				if editing.profile.messages[name] then
+					surface.SetDrawColor(C.accent)
+					surface.DrawRect(2, 6, 3, h - 12)
+				end
+			end
+			help(b, name, "NM's behaviour (or message): its params on the right. A mark on the left: the profile changes some of them.")
+			b.DoClick = function() pick(name) end
+		end
+	end
+end
+
+local function tuningTab(p)
+	local top = p:Add("DPanel")
+	top:Dock(TOP)
+	top:SetTall(100)
+	top.Paint = nil
+	heading(top, "Tuning (docs/adr/0009)")
+	ui.on = check(top, "Tuning on", "Only through NM's own inputs: the profile's values are added to the messages that start a behaviour or change its params, and its taskparams go over the game's. Off: the Playroom's, as golden runs always are.\n\ndms_tuning",
+		function(v) request({ kind = "use", name = editing.name, on = v }) end)
+
+	local r = row(top)
+	local prof = r:Add("DComboBox")
+	prof:Dock(LEFT)
+	prof:SetWide(170)
+	prof:SetSortItems(false)
+	help(prof, "Profile", "The profile in use. A profile holds only what differs from the Playroom: data/dms/profiles/<name>.json on the server.\n\ndms_tuning_profile")
+	prof.OnSelect = function(_, _, name)
+		if filling > 0 then return end
+		request({ kind = "profile", name = name })
+		request({ kind = "use", name = name, on = ui.on:GetChecked() })
+	end
+	ui.profile = prof
+	local nameEntry = r:Add("DTextEntry")
+	nameEntry:Dock(LEFT)
+	nameEntry:DockMargin(6, 0, 0, 0)
+	nameEntry:SetWide(150)
+	nameEntry:SetPlaceholderText("save as...")
+	help(nameEntry, "Profile name", "Save writes the values edited here under this name (empty: the profile being edited). The Playroom profile can't be changed.")
+	local function rowButton(text, helpText, fn)
+		local b = button(r, text, helpText, fn)
+		b:Dock(LEFT)
+		b:DockMargin(6, 0, 0, 0)
+		b:SetWide(84)
+	end
+	rowButton("Save", "Saves the edited values (behaviours' params and taskparams) and makes this the profile in use.", function()
 		local name = nameEntry:GetValue() ~= "" and nameEntry:GetValue() or editing.name
 		if name == "Playroom" then return notification.AddLegacy("DMS: the Playroom profile can't be changed: give a name", NOTIFY_ERROR, 4) end
 		editing.name = name
 		request({ kind = "save", name = name, profile = editing.profile })
-	end
-	panel:Button("Delete profile").DoClick = function() request({ kind = "delete", name = editing.name }) end
-	panel:Button("Reset to Playroom").DoClick = function()
+	end)
+	rowButton("Delete", "Deletes the profile being edited from the server.", function()
+		if editing.name == "Playroom" then return end
+		local name = editing.name
+		Derma_Query("Delete the profile " .. name .. "?", "DMS", "Delete", function() request({ kind = "delete", name = name }) end, "Cancel")
+	end)
+	rowButton("Playroom", "Back to the Playroom: tuning off, the Playroom's profile; what was edited here and not saved is dropped.", function()
 		editing = { name = "Playroom", profile = { messages = {}, taskparams = {} } }
 		request({ kind = "reset" })
-	end
+	end)
 
-	local behaviours = vgui.Create("DListView")
-	behaviours:SetTall(180)
-	behaviours:AddColumn("Behaviour (NM's messages)")
-	behaviours:SetMultiSelect(false)
-	panel:AddItem(behaviours)
-	panels.behaviours = behaviours
-	local params = vgui.Create("DScrollPanel")
-	params:SetTall(320)
-	panel:AddItem(params)
-	panels.params = params
-	behaviours.OnRowSelected = function(_, _, row) panels.msg = row:GetColumnText(1) fillParams(params, panels.msg) end
-	local try = panel:Button("Start it on Homer (with these values)")
-	try:SetTooltip("Sends `<behaviour> start=true` plus the edited values to the Homer you look at")
-	try.DoClick = function()
-		if not panels.msg then return end
-		local kv = { panels.msg, "start=true" }
-		for k, v in SortedPairs(editing.profile.messages[panels.msg] or {}) do kv[#kv + 1] = k .. "=" .. v end
+	local split = p:Add("DPanel")
+	split:Dock(FILL)
+	split:DockMargin(0, 6, 0, 0)
+	split.Paint = nil
+	local left = split:Add("DPanel")
+	left:Dock(LEFT)
+	left:SetWide(230)
+	left:DockPadding(4, 4, 4, 4)
+	left.Paint = paintPane
+	ui.search = left:Add("DTextEntry")
+	ui.search:Dock(TOP)
+	ui.search:SetPlaceholderText("find a behaviour")
+	ui.search.OnChange = fillBehaviours
+	ui.behaviours = styleScroll(left:Add("DScrollPanel"))
+	ui.behaviours:Dock(FILL)
+	ui.behaviours:DockMargin(0, 4, 0, 0)
+
+	local right = split:Add("DPanel")
+	right:Dock(FILL)
+	right:DockMargin(6, 0, 0, 0)
+	right:DockPadding(8, 4, 4, 4)
+	right.Paint = paintPane
+	ui.paramsHead = right:Add("DLabel")
+	ui.paramsHead:Dock(TOP)
+	ui.paramsHead:SetTall(24)
+	ui.paramsHead:SetFont("DMS_Head")
+	ui.paramsHead:SetTextColor(C.text)
+	local try = button(right, "Start it on Homer (with these values)", "Sends `<behaviour> start=true` and the edited values to the Homer you look at.", function()
+		if not ui.msg then return end
+		local kv = { ui.msg, "start=true" }
+		for k, v in SortedPairs(editing.profile.messages[ui.msg] or {}) do kv[#kv + 1] = k .. "=" .. v end
 		send(table.concat(kv, " "))
+	end)
+	try:Dock(BOTTOM)
+	try:DockMargin(0, 4, 0, 0)
+	ui.params = styleScroll(right:Add("DScrollPanel"))
+	ui.params:Dock(FILL)
+	ui.params:GetCanvas():DockPadding(0, 0, 8, 0)
+end
+
+-- The game's taskparams sets (the tasks' tuning), editable value by value.
+local function fillTaskParams()
+	local list = ui.tp
+	if not IsValid(list) or not catalogue then return end
+	list:Clear()
+	heading(list, "The game's taskparams")
+	local tp = catalogue.taskparams or {}
+	if next(tp) == nil then
+		note(list, "This game has no taskparams.txt (the PC version): NM's tasks run their defaults, nothing to tune here.", C.text)
+		return
 	end
-	panel:Help("The game's taskparams (the tasks' sets: shot, melee, explosion, fire, high fall, ...):")
-	local tp = vgui.Create("DScrollPanel")
-	tp:SetTall(260)
-	panel:AddItem(tp)
-	panels.tp = tp
-	request({ kind = "catalogue" })
+	note(list, "The tasks' sets (shot, melee, explosion, fire, high fall, ...); saved with the profile on the Tuning tab.")
+	quietly(function()
+		for task, sets in SortedPairs(tp) do
+			local cat = list:Add("DCollapsibleCategory")
+			cat:Dock(TOP)
+			cat:DockMargin(0, 2, 0, 2)
+			cat:SetLabel(task)
+			cat:SetExpanded(false)
+			local inner = vgui.Create("DListLayout")
+			inner:DockPadding(6, 2, 6, 4)
+			cat:SetContents(inner)
+			for set, params in SortedPairs(sets) do
+				for p, v in SortedPairs(params) do
+					local key = task .. " " .. set .. " " .. p
+					local s = vgui.Create("DNumSlider")
+					s:SetText(set .. " " .. p)
+					s.Label:SetTextColor(C.text)
+					s.TextArea:SetTextColor(C.text)
+					local m = math.max(math.abs(v) * 4, 1)
+					s:SetMinMax(math.min(v - m, 0), v + m)
+					s:SetDecimals(3)
+					s:SetValue(editing.profile.taskparams[key] or v)
+					s.OnValueChanged = function(_, x)
+						if filling > 0 then return end
+						editing.profile.taskparams[key] = math.abs(x - v) > 1e-6 and x or nil
+					end
+					help(s, key, "The game's value: " .. v)
+					inner:Add(s)
+				end
+			end
+		end
+	end)
 end
 
 local function refresh()
-	if not catalogue or not IsValid(panels.behaviours) then return end
-	panels.behaviours:Clear()
-	for _, name in ipairs(catalogue.messages) do
-		local line = panels.behaviours:AddLine(name)
-		-- The one being edited stays picked.
-		if name == panels.msg then panels.behaviours:SelectItem(line) end
-	end
-	panels.filling = true
-	panels.profile:Clear()
-	for _, n in ipairs(catalogue.profiles) do panels.profile:AddChoice(n, nil, n == catalogue.profile) end
-	panels.filling = false
-	fillTaskParams(panels.tp)
-	if panels.msg then fillParams(panels.params, panels.msg) end
+	if not catalogue or not IsValid(ui.frame) then return end
+	fillBehaviours()
+	quietly(function()
+		ui.on:SetChecked(catalogue.on and true or false)
+		ui.profile:Clear()
+		for _, n in ipairs(catalogue.profiles or {}) do ui.profile:AddChoice(n, nil, n == catalogue.profile) end
+	end)
+	applySwitches(catalogue.switches)
+	fillTaskParams()
+	fillParams()
 end
+
+-- The window -----------------------------------------------------------------------------------------------------
+
+local TABS = {
+	{ "Homer", "icon16/user.png", homerTab },
+	{ "Reactions", "icon16/lightning.png", reactionsTab },
+	{ "Tuning", "icon16/wrench.png", tuningTab, true },
+	{ "Task params", "icon16/table.png", function(p) ui.tp = p end },
+	{ "Performance", "icon16/server.png", performanceTab },
+}
+
+local DEFAULT_HELP = { "DMS", "Point at anything to see what it does.\n\nThe window: dms_menu, or a key from the Homer tab." }
+
+local function open()
+	if IsValid(ui.frame) then ui.frame:Remove() end
+	ui = { switch = {}, msg = lastMsg }
+	local f = vgui.Create("DFrame")
+	ui.frame = f
+	f:SetSize(math.min(ScrW() - 40, 1060), math.min(ScrH() - 40, 680))
+	f:Center()
+	f:SetTitle("")
+	f:SetSizable(true)
+	f:SetMinWidth(820)
+	f:SetMinHeight(480)
+	f.btnMaxim:SetVisible(false)
+	f.btnMinim:SetVisible(false)
+	f.btnClose.Paint = function(self, w, h)
+		local c = self:IsHovered() and C.bad or C.dim
+		surface.SetDrawColor(c)
+		surface.DrawLine(w / 2 - 5, h / 2 - 5, w / 2 + 5, h / 2 + 5)
+		surface.DrawLine(w / 2 + 5, h / 2 - 5, w / 2 - 5, h / 2 + 5)
+	end
+	f:DockPadding(10, 40, 10, 10)
+	f:MakePopup()
+	local opened = SysTime()
+	local admin = LocalPlayer():IsSuperAdmin()
+	f.Paint = function(_, w, h)
+		Derma_DrawBackgroundBlur(f, opened)
+		surface.SetDrawColor(C.bg)
+		surface.DrawRect(0, 0, w, h)
+		surface.SetDrawColor(C.line)
+		surface.DrawOutlinedRect(0, 0, w, h)
+		draw.SimpleText("DMS", "DMS_Title", 12, 8, C.accent)
+		draw.SimpleText(admin and "Delirium on Homer" or "Delirium on Homer  -  not a superadmin: the server's settings won't change",
+			"DMS_Text", 64, 13, admin and C.dim or C.bad)
+	end
+
+	local side = f:Add("DPanel")
+	side:Dock(LEFT)
+	side:SetWide(150)
+	side.Paint = nil
+	local helpPane = f:Add("DPanel")
+	helpPane:Dock(RIGHT)
+	helpPane:SetWide(250)
+	helpPane:DockMargin(8, 0, 0, 0)
+	helpPane:DockPadding(10, 8, 10, 8)
+	helpPane.Paint = paintPane
+	local helpTitle = helpPane:Add("DLabel")
+	helpTitle:Dock(TOP)
+	helpTitle:SetFont("DMS_Head")
+	helpTitle:SetTextColor(C.accent)
+	helpTitle:SetWrap(true)
+	helpTitle:SetAutoStretchVertical(true)
+	local helpText = helpPane:Add("DLabel")
+	helpText:Dock(TOP)
+	helpText:DockMargin(0, 6, 0, 0)
+	helpText:SetFont("DMS_Text")
+	helpText:SetTextColor(C.text)
+	helpText:SetWrap(true)
+	helpText:SetAutoStretchVertical(true)
+	local content = f:Add("DPanel")
+	content:Dock(FILL)
+	content:DockMargin(8, 0, 0, 0)
+	content.Paint = nil
+
+	local pages, buttons = {}, {}
+	local function show(name)
+		lastTab = name
+		for n, pg in pairs(pages) do pg:SetVisible(n == name) end
+		for n, b in pairs(buttons) do b.dmsActive = n == name end
+	end
+	for _, t in ipairs(TABS) do
+		local name = t[1]
+		local pg = content:Add("DPanel")
+		pg:Dock(FILL)
+		pg.Paint = nil
+		-- The tuning tab lays itself out; the others scroll.
+		t[3](t[4] and pg or page(pg))
+		pages[name] = pg
+		local b = button(side, name, nil, function() show(name) end)
+		b:Dock(TOP)
+		b:DockMargin(0, 0, 0, 4)
+		b:SetTall(32)
+		b:SetContentAlignment(4)
+		b:SetTextInset(32, 0)
+		local icon = b:Add("DImage")
+		icon:SetPos(9, 8)
+		icon:SetSize(16, 16)
+		icon:SetImage(t[2])
+		icon:SetMouseInputEnabled(false)
+		buttons[name] = b
+	end
+	show(pages[lastTab] and lastTab or "Homer")
+
+	-- The help pane follows the cursor (no tooltip's wait). Nothing here talks to the server.
+	local base, shown = f.Think, nil
+	f.Think = function(self)
+		base(self)
+		local h = vgui.GetHoveredPanel()
+		while IsValid(h) and not h.dmsHelp and h ~= self do h = h:GetParent() end
+		local d = IsValid(h) and h.dmsHelp or DEFAULT_HELP
+		if d ~= shown then
+			shown = d
+			helpTitle:SetText(d[1])
+			helpText:SetText(isfunction(d[2]) and d[2]() or d[2])
+		end
+	end
+	ui.pick, ui.show = pick, show
+	f.dms = ui
+	refresh()
+	request({ kind = "catalogue" })
+	return f
+end
+
+local function toggle()
+	if IsValid(ui.frame) then ui.frame:Close() else open() end
+end
+
+concommand.Add("dms_menu", toggle, nil, "Opens and closes the DMS window")
+DMS_MenuOpen = open
+
+-- dms_menu_key, pressed outside text boxes, the chat and the console, opens or closes the window.
+local keyWasDown = false
+hook.Add("Think", "DMS_MenuKey", function()
+	local k = menuKey:GetInt()
+	if k <= 0 then return end
+	local down = input.IsKeyDown(k)
+	if down and not keyWasDown and IsValid(LocalPlayer()) then
+		local focus = vgui.GetKeyboardFocus()
+		local typing = IsValid(focus) and focus:GetClassName() == "TextEntry" or LocalPlayer():IsTyping()
+		if not typing and not gui.IsGameUIVisible() and not gui.IsConsoleVisible() then toggle() end
+	end
+	keyWasDown = down
+end)
 
 -- Replies come in pieces (tuning.lua): put together by their id.
 local pieces = {}
@@ -315,12 +822,16 @@ net.Receive("dms_tuning", function()
 	if not r then return end
 	if r.kind == "params" then
 		paramsOf[r.data.name] = r.data.params or {}
-		if panels.msg == r.data.name and IsValid(panels.params) then fillParams(panels.params, panels.msg) end
+		asked[r.data.name] = nil
+		if ui.msg == r.data.name then fillParams() end
 	elseif r.kind == "catalogue" then
 		catalogue = r.data
 		if catalogue.error then notification.AddLegacy("DMS: " .. catalogue.error, NOTIFY_ERROR, 6) end
 		if editing.name ~= catalogue.profile then request({ kind = "profile", name = catalogue.profile }) end
 		refresh()
+	elseif r.kind == "switches" then
+		if catalogue then catalogue.switches = r.data end
+		applySwitches(r.data)
 	elseif r.kind == "profile" then
 		editing = { name = r.data.name, profile = r.data.profile }
 		editing.profile.messages = editing.profile.messages or {}
@@ -331,8 +842,23 @@ net.Receive("dms_tuning", function()
 	end
 end)
 
+-- The context menu's icon (hold C) and the spawn menu's entry open the window too.
+list.Set("DesktopWindows", "DMS", {
+	title = "DMS",
+	icon = "icon64/playermodel.png",
+	init = function(_, window)
+		window:Remove()
+		open()
+	end,
+})
+
 hook.Add("PopulateToolMenu", "DMS_Menu", function()
-	spawnmenu.AddToolMenuOption("Utilities", "DMS", "DMS_Homer", "Homer (Delirium)", "", "", build)
+	spawnmenu.AddToolMenuOption("Utilities", "DMS", "DMS_Homer", "Homer (Delirium)", "", "", function(panel)
+		panel:ClearControls()
+		panel:Help("DMS has its own window: Homer, the Playroom's reactions, tuning, the agents' limits.")
+		panel:Button("Open the DMS window", "dms_menu")
+		panel:Help("Console: dms_menu. A key for it: the window's Homer tab.")
+	end)
 end)
 
 hook.Add("AddToolMenuCategories", "DMS_Menu", function()

@@ -1,4 +1,4 @@
--- The clients' part (ROADMAP M6): Homer's face, skeleton and debug overlay, the spawn menu's DMS tab.
+-- The clients' part (ROADMAP M6): Homer's face, skeleton and debug overlay, the DMS window.
 AddCSLuaFile("autorun/client/dms_client.lua")
 AddCSLuaFile("dms/cl_face.lua")
 AddCSLuaFile("dms/cl_overlay.lua")

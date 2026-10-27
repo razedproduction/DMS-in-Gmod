@@ -64,6 +64,26 @@ cvars.AddChangeCallback("dms_tuning", DMS_TuningApply, "DMS_Tuning")
 cvars.AddChangeCallback("dms_tuning_profile", DMS_TuningApply, "DMS_Tuning")
 hook.Add("DMS_Attached", "DMS_Tuning", DMS_TuningApply)
 
+-- The server's convars the menu sets (`dms_<name>`): the Playroom's switches (reactions.lua), Homer's colours, NM on
+-- spawned Homers and the agents' limits (follow.lua, lifecycle.lua). Nothing else: dms_game_dir and dms_dev aren't
+-- the menu's.
+local SWITCHES = {
+	"tasks", "look", "avoid", "getup", "extra_reactions", "extra_pick", "fire_reaction", "dive_shot", "dodge_gap",
+	"weak", "god", "pedcol", "autoattach", "max_agents", "threads", "lod_distance", "lod_still",
+}
+local isSwitch = {}
+for _, s in ipairs(SWITCHES) do isSwitch[s] = true end
+
+-- Their values and help texts (the clients don't have the server's convars).
+local function switches()
+	local out = {}
+	for _, s in ipairs(SWITCHES) do
+		local cv = GetConVar("dms_" .. s)
+		if cv then out[s] = { value = cv:GetString(), help = cv:GetHelpText() } end
+	end
+	return out
+end
+
 -- What the menu needs: NM's behaviours and their params, the Playroom's reaction table, the profiles.
 local function catalogue()
 	-- The menu may open before any Homer: NM's data from the game as a spawn loads it (taskparams, weapons need it).
@@ -81,6 +101,7 @@ local function catalogue()
 		profiles = DMS_TuningList(),
 		profile = profileName:GetString(),
 		on = tuningOn:GetBool(),
+		switches = switches(),
 		error = why,
 	}
 end
@@ -128,20 +149,21 @@ net.Receive("dms_tuning", function(_, ply)
 		local name = clean(req.name)
 		if not name or name == PLAYROOM then return reply(ply, "error", "the Playroom profile can't be changed: save as another name") end
 		save(name, { messages = req.profile and req.profile.messages or {}, taskparams = req.profile and req.profile.taskparams or {} })
-		RunConsoleCommand("dms_tuning_profile", name)
-		DMS_TuningApply()
+		-- SetString, not RunConsoleCommand: that one acts next frame, after the catalogue below has gone out with the
+		-- old profile, and the menu then loaded the old one over what had just been saved.
+		profileName:SetString(name)
 	elseif k == "delete" then
 		local name = clean(req.name)
 		if not name or name == PLAYROOM then return end
 		file.Delete(path(name))
-		if profileName:GetString() == name then RunConsoleCommand("dms_tuning_profile", PLAYROOM) end
+		if profileName:GetString() == name then profileName:SetString(PLAYROOM) end
 	elseif k == "use" then
-		RunConsoleCommand("dms_tuning_profile", clean(req.name) or PLAYROOM)
-		RunConsoleCommand("dms_tuning", req.on and "1" or "0")
+		profileName:SetString(clean(req.name) or PLAYROOM)
+		tuningOn:SetBool(req.on and true or false)
 	elseif k == "reset" then
 		-- Back to the Playroom: tuning off, the Playroom's profile.
-		RunConsoleCommand("dms_tuning", "0")
-		RunConsoleCommand("dms_tuning_profile", PLAYROOM)
+		tuningOn:SetBool(false)
+		profileName:SetString(PLAYROOM)
 	elseif k == "react" then
 		-- A reaction or a message on the Homer the menu picked (live try-out).
 		local ent = Entity(tonumber(req.ent) or -1)
@@ -150,10 +172,14 @@ net.Receive("dms_tuning", function(_, ply)
 		end
 		return
 	elseif k == "switch" then
-		local cv = GetConVar("dms_" .. tostring(req.name))
-		if cv and req.name:match("^[%w_]+$") then RunConsoleCommand("dms_" .. req.name, tostring(req.value)) end
-		return
+		local cv = isSwitch[req.name] and GetConVar("dms_" .. req.name)
+		local v = tonumber(req.value)
+		if not cv or not v then return end
+		cv:SetString(tostring(v))
+		return reply(ply, "switches", switches())
 	end
+	-- The convars' callbacks miss a profile saved again under the same name.
+	DMS_TuningApply()
 	timer.Simple(0, function() if IsValid(ply) then reply(ply, "catalogue", catalogue()) end end)
 end)
 
