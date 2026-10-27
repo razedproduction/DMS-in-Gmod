@@ -366,6 +366,30 @@ concommand.Add("dms_send", function(ply, _, _, line)
 	end
 end)
 
+-- A reaction of the Playroom's on `ent` at a point `hit` from `from` (the game's frame, units): without at= or from= in
+-- `rest`, they're added as each reaction takes them (shot, blast 1 m from it, taser, melee from `from`, ...).
+-- `impulse` (N s) is the blow's, a car's or a thing's push, by default dms_react's. True, or false and why.
+function DMS_ReactAt(ent, kind, rest, hit, from, impulse)
+	local line = kind .. " " .. (rest or "")
+	if not line:find("at=") and not line:find("from=") then
+		local d = (hit - from):GetNormalized()
+		if kind == "shot" or kind == "taser" then
+			line = line .. string.format(" at=%s dir=%s", at(hit), dir(d))
+		elseif kind == "blast" then
+			line = line .. " at=" .. at(hit - d * 40)
+		elseif kind == "melee" then
+			line = line .. string.format(" at=%s impulse=%s head=%s", at(hit), at(d * ((impulse or 10) / M)), at(from))
+		elseif kind == "nearmiss" then
+			line = line .. string.format(" from=%s dir=%s", at(from), dir((hit + Vector(0, 0, 30) - from):GetNormalized()))
+		elseif kind == "thrown" then
+			line = line .. string.format(" from=%s vel=%s", at(from), at(d * (8 / M)))
+		elseif kind == "car" or kind == "prop" then
+			line = line .. string.format(" at=%s impulse=%s", at(hit), at(d * ((impulse or 400) / M)))
+		end
+	end
+	return DMS_React(ent, line)
+end
+
 -- dms_react <reaction> [key=value ...]: a reaction of the Playroom's on the Homer looked at (every Homer from the
 -- server console). Without at= the point looked at (shot, blast 1 m from it, taser, melee from the player).
 concommand.Add("dms_react", function(ply, _, args)
@@ -380,25 +404,9 @@ concommand.Add("dms_react", function(ply, _, args)
 	local targets = ent and { ent } or (IsValid(ply) and {} or DMS_Agents)
 	if not next(targets) then return say(ply, "[DMS] dms_react: look at a Homer with NM on him") end
 	for _, e in pairs(targets) do
-		local line = kind .. " " .. rest
 		local hit = tr and tr.HitPos or e:WorldSpaceCenter()
 		local from = IsValid(ply) and ply:EyePos() or (hit + Vector(0, -200, 0))
-		if not rest:find("at=") and not rest:find("from=") then
-			if kind == "shot" or kind == "taser" then
-				line = line .. string.format(" at=%s dir=%s", at(hit), dir((hit - from):GetNormalized()))
-			elseif kind == "blast" then
-				line = line .. " at=" .. at(hit + (from - hit):GetNormalized() * 40)
-			elseif kind == "melee" then
-				line = line .. string.format(" at=%s impulse=%s head=%s", at(hit), at((hit - from):GetNormalized() * (10 / M)), at(from))
-			elseif kind == "nearmiss" then
-				line = line .. string.format(" from=%s dir=%s", at(from), dir((hit + Vector(0, 0, 30) - from):GetNormalized()))
-			elseif kind == "thrown" then
-				line = line .. string.format(" from=%s vel=%s", at(from), at((hit - from):GetNormalized() * (8 / M)))
-			elseif kind == "car" or kind == "prop" then
-				line = line .. string.format(" at=%s impulse=%s", at(hit), at((hit - from):GetNormalized() * (400 / M)))
-			end
-		end
-		local ok, err = DMS_React(e, line)
+		local ok, err = DMS_ReactAt(e, kind, rest, hit, from)
 		if not ok then return say(ply, "[DMS] dms_react: " .. tostring(err)) end
 	end
 end)

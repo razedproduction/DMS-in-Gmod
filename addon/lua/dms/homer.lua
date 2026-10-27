@@ -96,23 +96,17 @@ function DMS_HomerReport(ent)
 	return table.concat(out, "\n")
 end
 
--- dms_homer: Homer standing in front of the player, facing him, NM on him (superadmins).
-concommand.Add("dms_homer", function(ply)
-	if IsValid(ply) and not ply:IsSuperAdmin() then return end
-	local pos, yaw
-	if IsValid(ply) then
-		local tr = util.TraceLine({ start = ply:EyePos(), endpos = ply:EyePos() + ply:GetAimVector() * 150,
-			filter = ply })
-		-- His feet on Box3D's floor: the trace's plane moved out by the fork's shell (docs/adr/0018).
-		local down = util.TraceLine({ start = tr.HitPos + Vector(0, 0, 8), endpos = tr.HitPos - Vector(0, 0, 400),
-			filter = ply })
-		pos = down.Hit and (DMS_FloorBelow(down.HitPos + Vector(0, 0, 1), ply) or down.HitPos) or down.HitPos
-		yaw = ply:EyeAngles().y + 180
-	else
-		pos, yaw = Vector(0, 0, 0), 0
-	end
+-- The floor under a point (units): Box3D's, the trace's plane moved out by the fork's shell (docs/adr/0018).
+function DMS_FloorAt(p, filter)
+	local down = util.TraceLine({ start = p + Vector(0, 0, 8), endpos = p - Vector(0, 0, 400), filter = filter })
+	return down.Hit and (DMS_FloorBelow(down.HitPos + Vector(0, 0, 1), filter) or down.HitPos) or down.HitPos
+end
+
+-- Homer standing at pos facing yaw for a player (undo, cleanup), NM on him balancing as the Playroom's "balance"
+-- button has it. The entity, or nil and why.
+function DMS_SpawnHomerFor(ply, pos, yaw, quiet)
 	local ent, why = DMS_SpawnHomer(pos, yaw)
-	if not ent then return say(ply, "[DMS] dms_homer: " .. why) end
+	if not ent then return nil, why end
 	if IsValid(ply) then
 		undo.Create("DMS Homer")
 		undo.AddEntity(ent)
@@ -122,7 +116,24 @@ concommand.Add("dms_homer", function(ply)
 	end
 	-- ROADMAP M4: NM drives him (FOLLOW), standing under bodyBalance as the Playroom's "balance" button has it.
 	local id, err = DMS_Follow(ent)
-	if not id then return say(ply, "[DMS] dms_homer: NM isn't on him: " .. tostring(err)) end
-	DMS_Send(ent, "bodyBalance start=true")
-	say(ply, string.format("[DMS] Homer at (%.1f, %.1f, %.1f), NM agent #%d, bodyBalance", pos.x, pos.y, pos.z, id))
+	if not id then return ent, "NM isn't on him: " .. tostring(err) end
+	if not quiet then DMS_Send(ent, "bodyBalance start=true") end
+	return ent
+end
+
+-- dms_homer: Homer standing in front of the player, facing him, NM on him (superadmins).
+concommand.Add("dms_homer", function(ply)
+	if IsValid(ply) and not ply:IsSuperAdmin() then return end
+	local pos, yaw
+	if IsValid(ply) then
+		local tr = util.TraceLine({ start = ply:EyePos(), endpos = ply:EyePos() + ply:GetAimVector() * 150,
+			filter = ply })
+		pos = DMS_FloorAt(tr.HitPos, ply)
+		yaw = ply:EyeAngles().y + 180
+	else
+		pos, yaw = Vector(0, 0, 0), 0
+	end
+	local ent, why = DMS_SpawnHomerFor(ply, pos, yaw)
+	if not ent or why then return say(ply, "[DMS] dms_homer: " .. tostring(why)) end
+	say(ply, string.format("[DMS] Homer at (%.1f, %.1f, %.1f), NM agent #%d, bodyBalance", pos.x, pos.y, pos.z, ent.DMS_Agent))
 end)

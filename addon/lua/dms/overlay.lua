@@ -80,13 +80,19 @@ hook.Add("Think", "DMS_Overlay", function()
 		if IsValid(ply) then to[#to + 1] = ply else watchers[ply] = nil end
 	end
 	for _, ent in pairs(DMS_Agents) do
-		local o = IsValid(ent) and DMS.FollowOverlay(ent.DMS_Agent)
+		-- The DMS tool's inspector shows one Homer's (DMS_OverlayOnly).
+		local rec = {}
+		for _, ply in ipairs(to) do
+			local only = ply.DMS_OverlayOnly
+			if not IsValid(only) or only == ent then rec[#rec + 1] = ply end
+		end
+		local o = #rec > 0 and IsValid(ent) and DMS.FollowOverlay(ent.DMS_Agent)
 		if o then
 			net.Start("dms_overlay", true)
 			net.WriteEntity(ent)
 			net.WriteUInt(#o, 16)
 			for _, x in ipairs(o) do net.WriteFloat(x) end
-			net.Send(to)
+			net.Send(rec)
 		end
 	end
 end)

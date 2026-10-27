@@ -122,6 +122,15 @@ LOD: дальше `dms_lod_distance` (3000 юнитов, 0 — выкл.) от �
 `dms_tuning_status` — активные значения. Меню — окно DMS (ADR 0022): `dms_menu`, клавиша из
 `dms_menu_key`, иконка DMS в контекстном меню (C) или «Утилиты → DMS → Homer (Delirium)».
 
+## Инструмент DMS (ADR 0023)
+
+Toolgun → вкладка Tools → «DMS». Режим (`dms_tool_mode`): `attach`, `react`, `behaviour`, `target`, `inspect`, `kick`,
+`throw`, `health`, `pin`; что делают ЛКМ/ПКМ/R — в подсказке инструмента и в ADR 0023. Опции: `dms_tool_reaction`,
+`dms_tool_weapon`, `dms_tool_damage`, `dms_tool_impulse`, `dms_tool_behaviour`, `dms_tool_target`
+(`look|point|lean|flinch|grab`), `dms_tool_speed`, `dms_tool_health`. Сервер: `dms_tool_everyone 0|1` (по умолчанию
+только суперадмины). Lua: `DMS_ReactAt(ent, kind, rest, hit, from, impulse)` — реакция Playroom в точке,
+`DMS_SpawnHomerFor(ply, pos, yaw)` — Homer для игрока с NM.
+
 ## Консоль
 
 | Команда | Что |
