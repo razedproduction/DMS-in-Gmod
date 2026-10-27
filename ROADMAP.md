@@ -486,7 +486,7 @@ a GitHub release, the Workshop) is the user's decision; the release notes are `d
 
 The goal: any humanoid ragdoll of the game — HL2's citizens, combine, players' models, NPCs' death ragdolls and models
 from the Workshop — gets Delirium the way Homer has it, keeping its own look. The design is proposed in
-[ADR 0025](docs/adr/0025-gmod-ragdolls-nm-proxy.md) (status: proposed, decided by M9's spikes). The previous attempt's
+[ADR 0025](docs/adr/0025-gmod-ragdolls-nm-proxy.md) (accepted after M9's spikes; the fork's part ADR 0026). The previous attempt's
 `delirium-ragdoll` stays ignored: this is the new tool and the new approach.
 
 **The approach: an NM body fitted to the model, the model posed from it.** It's how Delirium's own SDK drives other
@@ -510,14 +510,14 @@ What changes against Homer and needs care:
 
 Each spike ends with numbers and a recommendation; ADR 0025 is accepted (or replaced) at the end.
 
-- [ ] **S1, the skeleton:** read any model's bones, hierarchy and bind pose — from the `.mdl` bytes (`file.Read(model,
+- [x] **S1, the skeleton:** read any model's bones, hierarchy and bind pose — from the `.mdl` bytes (`file.Read(model,
       "GAME")`, mounted Workshop GMAs included) in the module, or through the game (`SetupBones` on the reference pose).
       Pick the more reliable one on HL2's models and 5–10 Workshop models.
-- [ ] **S2, the fit:** the ValveBiped → NM joint map (as `NmCharacter.Joints`: NM's 4 spine joints spread from Spine to
+- [x] **S2, the fit:** the ValveBiped → NM joint map (as `NmCharacter.Joints`: NM's 4 spine joints spread from Spine to
       Neck, a missing neck/clavicle put between its neighbours), `Build::fit` on male_07, combine, alyx, a tall and a
       short Workshop model: sizes, masses, how far from Homer; the fitted build in the Playroom (`<xrt> <build.txt>`):
       does it stand, does it need Homer's links.
-- [ ] **S3, the physics body** — the main choice:
+- [x] **S3, the physics body** — the main choice:
   - **(a) native bodies:** a new `IPhysicsNM` (`VBOX3D_NM_005`) creates the 21 NM bodies and joints straight from the
     fitted build (capsules/boxes, masses, tensors, pivots, limits) in the ragdoll's environment; the game's
     `prop_ragdoll` of the model stays the networked, traced, physgun-able entity, its objects following the NM bodies;
@@ -527,12 +527,19 @@ Each spike ends with numbers and a recommendation; ADR 0025 is accepted (or repl
     posed from it; remote clients would need the proxy model too.
   Prototype both on male_07; compare: binding, FOLLOW fidelity (`golden body`-style numbers), physgun/gravity gun,
   bullets and hit groups, networking to a second client, first-use delay.
-- [ ] **S4, posing the model:** the model's mapped bones from the parts (each with its bind-pose offset to its part),
+- [x] **S4, posing the model:** the model's mapped bones from the parts (each with its bind-pose offset to its part),
       unmapped bones (fingers, toes, jiggle, accessories) following their parents; where it happens (the server's
       ragdoll objects, or the client's `BuildBonePositions`); skins, bodygroups and flexes kept.
 
 **DoD:** ADR 0025 accepted with the chosen S1/S3/S4 variants and their numbers; male_07 stands under `bodyBalance` in a
 prototype.
+
+**Done (ADR 0025, 0026):** S1 the `.mdl` read in the module (97 models, equal to the engine's bind pose); S2 NM's spine
+joints spread in Homer's proportions (male_07 1.74 m, 81 kg; spread evenly: 130 kg), a fitted body's golden on the crate
+(the Playroom's `<build.txt>` can't carry one); S3 **(a) native bodies**, `VBOX3D_NM_005` (the proxy (b) prototyped too:
+the same fidelity, a 7.3 s compile, clients lack it); S4 posed on the server (15 objects without the model's own
+constraints, within 7 mm), the 6 bones without objects finished on the client. Prototypes: `dms_spike_native`,
+`dms_spike_proxy` (`addon/lua/dms/spike_ragdolls.lua`).
 
 ### M10. ValveBiped ragdolls — 5–8 days
 
