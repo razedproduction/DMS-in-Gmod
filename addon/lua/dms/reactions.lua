@@ -306,6 +306,9 @@ hook.Add("Think", "DMS_Reactions", function()
 				ent:SetNW2Vector("DMS_FaceFwd", V(r.face_fwd))
 				ent:SetNW2Vector("DMS_FaceUp", V(r.face_up))
 				ent:SetNW2Float("DMS_FaceR", r.face_radius / M)
+				-- The head capsule's half length (the build's), for what sits on its surface off the middle.
+				DMS_HeadHalf = DMS_HeadHalf or (DMS.BuildParts()[13] or {}).half or 0
+				ent:SetNW2Float("DMS_FaceHalf", DMS_HeadHalf / M)
 			end
 			if r.ring_part and parts and parts[r.ring_part + 1] then
 				local p = parts[r.ring_part + 1]

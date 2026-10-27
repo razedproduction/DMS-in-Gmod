@@ -291,6 +291,7 @@ net.Receive("dms_tuning", function()
 	if not r then return end
 	if r.kind == "catalogue" then
 		catalogue = r.data
+		if catalogue.error then notification.AddLegacy("DMS: " .. catalogue.error, NOTIFY_ERROR, 6) end
 		if editing.name ~= catalogue.profile then request({ kind = "profile", name = catalogue.profile }) end
 		refresh()
 	elseif r.kind == "profile" then

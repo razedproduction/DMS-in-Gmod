@@ -66,6 +66,12 @@ hook.Add("DMS_Attached", "DMS_Tuning", DMS_TuningApply)
 
 -- What the menu needs: NM's behaviours and their params, the Playroom's reaction table, the profiles.
 local function catalogue()
+	-- The menu may open before any Homer: NM's data from the game as a spawn loads it (taskparams, weapons need it).
+	local why
+	if not DMS.DataInfo() then
+		local ok, err = pcall(DMS.LoadData, GetConVar("dms_game_dir"):GetString())
+		if not ok then why = "NM's data isn't loaded: " .. tostring(err) end
+	end
 	local msgs = {}
 	for _, name in ipairs(DMS.Messages() or {}) do
 		local ok, ps = pcall(DMS.MessageParams, name)
@@ -75,10 +81,11 @@ local function catalogue()
 		messages = msgs,
 		reactions = DMS.Reactions(),
 		weapons = DMS.Weapons(),
-		taskparams = DMS.TaskParams(),
+		taskparams = not why and DMS.TaskParams() or {},
 		profiles = DMS_TuningList(),
 		profile = profileName:GetString(),
 		on = tuningOn:GetBool(),
+		error = why,
 	}
 end
 
