@@ -1,21 +1,21 @@
-# 0002. Только серверный бинарный модуль
+# 0002. A server binary module only
 
-Статус: принято (2026-10-21)
+Status: accepted (2026-10-21)
 
-## Контекст
+## Context
 
-Ragdoll'ы в GMod симулируются на сервере, клиент получает их позы по сети. На listen-сервере в одном процессе
-живут два физических окружения: серверное и клиентское.
+GMod's ragdolls are simulated on the server; the client gets their poses over the network. On a listen server two
+physics environments live in one process: the server's and the client's.
 
-## Решение
+## Decision
 
-- Собирается только `gmsv_dms_win64` (x86-64 ветка GMod; 32-битная не поддерживается, Linux — позже).
-  Клиентского `gmcl_` нет.
-- Агенты Delirium вешаются только на серверное окружение (`IPhysicsNM::GetObjectEnvironment` для частей
-  серверного ragdoll'а).
-- Клиентский Lua — только отладочная отрисовка и UI.
+- Only `gmsv_dms_win64` is built (GMod's x86-64 branch; the 32-bit one isn't supported, Linux later). There's no
+  client `gmcl_`.
+- Delirium's agents go only on the server's environment (`IPhysicsNM::GetObjectEnvironment` for the parts of a
+  server ragdoll).
+- Client Lua is only debug drawing and UI.
 
-## Последствия
+## Consequences
 
-- Игрокам на чужих серверах ничего ставить не нужно; ставит только хост (модуль + форк `vphysics`).
-- Клиентские ragdoll'ы (`ClientsideRagdoll`, ragdoll'ы смерти с `cl_`-стороны) FOLLOW не получают.
+- Players on someone else's server needn't install anything; only the host does (the module + the `vphysics` fork).
+- Client ragdolls (`ClientsideRagdoll`, death ragdolls on the `cl_` side) don't get FOLLOW.

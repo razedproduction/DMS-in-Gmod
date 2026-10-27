@@ -1,37 +1,38 @@
-# 0012. Стенд: игра без окна и канал `dms-ctl` в модуле
+# 0012. The bench: the game without a window and the `dms-ctl` channel in the module
 
-Статус: принято (2026-10-21)
+Status: accepted (2026-10-21)
 
-## Контекст
+## Context
 
-M2.5: Claude должен сам запускать GMod, управлять им и видеть состояние (ROADMAP). План был — выделенный сервер
-(`srcds_win64.exe`, SteamCMD app 4020, ветка x86-64) с форком VPhysics-Box3D. Проверка показала, что серверная
-сборка GMod x64 собрана с более новыми интерфейсами vphysics, чем клиент и форк:
+M2.5: Claude has to start GMod on its own, drive it and see its state (ROADMAP). The plan was a dedicated server
+(`srcds_win64.exe`, SteamCMD app 4020, the x86-64 branch) with the VPhysics-Box3D fork. Checking showed that GMod's x64
+server build is built against newer vphysics interfaces than the client and the fork:
 
-- `IAppSystem` с четырьмя методами после `Shutdown` (`GetDependencies` → NULL, `GetTier` → 1, `Reconnect`,
-  `IsSingleton` → true): у серверного `VPhysics031` 17 слотов vtable, у клиентского и у форка — 13;
-  `dedicated.dll` зовёт слот 5 и падает на форке (у форка это `CreateEnvironment`);
-- `VPhysicsCollision007` — 59 слотов против 52, `VPhysicsSurfaceProps001` тоже длиннее: с переходником для
-  `IAppSystem` падает уже `server.dll` на загрузке карты.
+- `IAppSystem` with four methods after `Shutdown` (`GetDependencies` → NULL, `GetTier` → 1, `Reconnect`, `IsSingleton` →
+  true): the server's `VPhysics031` has 17 vtable slots, the client's and the fork's 13; `dedicated.dll` calls slot 5
+  and crashes on the fork (in the fork that's `CreateEnvironment`);
+- `VPhysicsCollision007` has 59 slots against 52, `VPhysicsSurfaceProps001` is longer too: with an adapter for
+  `IAppSystem`, `server.dll` crashes as the map loads.
 
-Клиент игры работает с форком (`IPhysicsNM` `VBOX3D_NM_002`, 4 сабстепа).
+The game's client works with the fork (`IPhysicsNM` `VBOX3D_NM_002`, 4 sub-steps).
 
-## Решение
+## Decision
 
-1. Стенд — **сама игра пользователя** (`gmod_win64.exe -textmode`, listen-сервер `maxplayers 2`, `-usercon` для
-   RCON, всё на `127.0.0.1`), окно скрывается; `scripts\server.ps1 start|stop|restart|status`. Выделенный сервер —
-   опция `-Dedicated` со своим `vphysics.dll` (без `IPhysicsNM`); порт форка на серверный ABI — отдельная задача.
-2. Настройки стенда (`dms_dev 1`, токен, `dms_game_dir`) — в `garrysmod/data/dms/bench.txt`, аддон читает и удаляет
-   его: обычная игра канал не открывает (`exec` из Lua GMod блокирует, `+convar` в командной строке приходит
-   раньше, чем Lua создаёт конвары).
-3. Канал управления и телеметрии — **в модуле**: TCP только на `127.0.0.1`, только при `dms_dev 1`, токен на каждый
-   запуск; сетевые потоки только кладут запросы в очередь и отдают готовые кадры (ADR 0003), исполнение — в `Think`.
-   Консольные команды с выводом идут через RCON (только он отдаёт вывод), остальное — через модуль.
-4. До FOLLOW (M4) сценарии исполняет агент SDK в LEAD (как `dms_selftest`) и пишет `.rec` в формате Playroom;
-   `golden behaviour --source` сверяет с `golden/out/`. В M4 его место займёт Homer на Box3D.
+1. The bench is **the user's game itself** (`gmod_win64.exe -textmode`, a listen server `maxplayers 2`, `-usercon` for
+   RCON, everything on `127.0.0.1`), the window hidden; `scripts\server.ps1 start|stop|restart|status`. A dedicated
+   server is the `-Dedicated` option with its own `vphysics.dll` (without `IPhysicsNM`); porting the fork to the
+   server's ABI is a task of its own.
+2. The bench's settings (`dms_dev 1`, the token, `dms_game_dir`) are in `garrysmod/data/dms/bench.txt`; the addon reads
+   and deletes it: a normal game doesn't open the channel (GMod blocks `exec` from Lua, a `+convar` on the command line
+   comes before Lua creates the convars).
+3. The control and telemetry channel is **in the module**: TCP only on `127.0.0.1`, only with `dms_dev 1`, a token a
+   start; the network threads only queue requests and hand out finished frames (ADR 0003), the work is done in `Think`.
+   Console commands with output go through RCON (only it gives output), the rest through the module.
+4. Until FOLLOW (M4) scenarios are run by an SDK agent in LEAD (as `dms_selftest`), writing a `.rec` in the Playroom's
+   format; `golden behaviour --source` compares with `golden/out/`. In M4 Homer on Box3D takes its place.
 
-## Последствия
+## Consequences
 
-- Пока стенд работает, пользователь не играет (одна копия игры); хост listen-сервера — его аккаунт Steam.
-- Стенд меряет клиентскую сборку — ту же, где играет пользователь.
-- Выделенный сервер (и Linux, M7) требует порта форка на новый `IAppSystem`/интерфейсы vphysics.
+- While the bench runs, the user doesn't play (one copy of the game); the listen server's host is their Steam account.
+- The bench measures the client build: the same one the user plays.
+- A dedicated server (and Linux, M7) needs the fork ported to the new `IAppSystem` and vphysics interfaces.

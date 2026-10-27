@@ -1,37 +1,38 @@
-# 0010. Данные NM — прямо из копии игры, кодом Playroom
+# 0010. NM's data straight from the copy of the game, with the Playroom's code
 
-Статус: принято (2026-10-21). Заменяет в ADR 0006 пункт «пользователь кладёт свои файлы в `garrysmod/data/dms/`».
+Status: accepted (2026-10-21). Replaces ADR 0006's point "the user puts their own files in `garrysmod/data/dms/`".
 
-## Контекст
+## Context
 
-ADR 0006 предполагал, что пользователь извлекает `fred.xrt` / `character.json`, build и `taskparams.txt` в
-`garrysmod/data/dms/`. ADR 0008 требует, чтобы на входе NM были ровно те же данные, что у Playroom. Playroom с
-`--game` берёт их из самой игры, и не только файлы:
+ADR 0006 assumed the user extracts `fred.xrt` / `character.json`, the build and `taskparams.txt` into
+`garrysmod/data/dms/`. ADR 0008 requires NM's inputs to be exactly the Playroom's. The Playroom with `--game` takes them
+from the game itself, and not only files:
 
-- на PC выставляет `delirium_data::LE` (little-endian `Fred.art`);
-- строит Homer из `componentpeds.img/m_y_pmanhat_01` через `delirium::ragdoll::Rig`;
-- выводит из idle-клипа игрока связи частей (`nmdbm::DERIVED_LINKS`, `getup::homer`) — это глобальное состояние,
-  которое влияет на поведение агента, но не попадает ни в build-дамп, ни в `character.json`;
-- ставит стоячую позу (`Clips::stand_up`), таблицу поверхностей из `materials.dat`, пол CONCRETE;
-- в PC-версии `taskparams.txt` нет — работает на умолчаниях.
+- on PC it sets `delirium_data::LE` (little-endian `Fred.art`);
+- it builds Homer from `componentpeds.img/m_y_pmanhat_01` through `delirium::ragdoll::Rig`;
+- it derives the parts' links from the player's idle clip (`nmdbm::DERIVED_LINKS`, `getup::homer`): global state that
+  affects the agent's behaviour but goes into neither the build dump nor `character.json`;
+- it sets the standing pose (`Clips::stand_up`), the surfaces table from `materials.dat`, the CONCRETE floor;
+- the PC version has no `taskparams.txt`: it runs on the defaults.
 
-Через файлы в `data/dms/` (дамп build'а, `character.json`) связи и поверхности теряются: агент был бы другим.
+Through files in `data/dms/` (a build dump, `character.json`) the links and surfaces are lost: the agent would be
+different.
 
-## Решение
+## Decision
 
-1. Данные читаются **из папки игры** (`dms_game_dir`, конвар) при первой нужде, ничего не копируется.
-2. Чтение — общий крейт `tools/dms-game`: те же вызовы `delirium-data` / `delirium`, что `delirium-room`
-   (`archive_read`, `getup::{key, plat, homer, Clips::stand_up}`, `load`), в том же порядке. Им пользуются модуль и
-   `tools/golden`.
-3. Модуль передаёт данные в SDK штатно: `nm_init_memory` (персонаж), `nm_build_from_text` (дамп build'а —
-   `Build::dump`, формат `NM_DUMP`), `nm_load_task_params`. Связи и поверхности ставятся в те же глобальные
-   таблицы, что ставит Playroom.
-4. Тождество с Playroom проверяет `tools/golden`: дамп совпадает с `NM_DUMP` байт в байт, связи — бит в бит по
-   прогону Playroom с `NM_LINKS`, агент в LEAD — бит в бит с первой секундой Playroom.
-5. Поддерживаются PC и Xbox 360 (ключ xex берётся там, где его хранит Playroom); PS3 — нет.
+1. The data is read **from the game's folder** (`dms_game_dir`, a convar) when first needed; nothing is copied.
+2. The reading is the shared crate `tools/dms-game`: the same `delirium-data` / `delirium` calls as `delirium-room`'s
+   (`archive_read`, `getup::{key, plat, homer, Clips::stand_up}`, `load`), in the same order. The module and
+   `tools/golden` use it.
+3. The module hands the data to the SDK the standard way: `nm_init_memory` (the character), `nm_build_from_text` (the
+   build dump: `Build::dump`, the `NM_DUMP` format), `nm_load_task_params`. The links and surfaces go into the same
+   global tables the Playroom sets.
+4. `tools/golden` checks the sameness with the Playroom: the dump matches `NM_DUMP` byte for byte, the links bit for bit
+   by a Playroom run with `NM_LINKS`, the agent in LEAD bit for bit with the Playroom's first second.
+5. PC and Xbox 360 are supported (the xex key is taken where the Playroom keeps it); PS3 isn't.
 
-## Последствия
+## Consequences
 
-- Утилита «сделать `character.json` из файлов игры» не нужна; `character.json` не используется.
-- Данные грузятся один раз за процесс (так устроен Delirium): смена `dms_game_dir` требует перезапуска.
-- M3 (`dms-homer`) строит модель из того же `dms-game`.
+- A tool "make `character.json` from the game's files" isn't needed; `character.json` isn't used.
+- The data loads once a process (that's how Delirium is made): changing `dms_game_dir` needs a restart.
+- M3 (`dms-homer`) builds the model from the same `dms-game`.

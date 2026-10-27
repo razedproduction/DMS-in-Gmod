@@ -1,47 +1,48 @@
-# 0016. Слой реакций Playroom переносится тем же кодом, через крейт `delirium`
+# 0016. The Playroom's reaction layer is carried over with the same code, through the `delirium` crate
 
-Статус: принято (2026-10-26). Уточняет ADR 0008.
+Status: accepted (2026-10-26). Refines ADR 0008.
 
-## Контекст
+## Context
 
-По документации Delirium (`docs/how-it-works.md`, `docs/modding.md`, v0.2.2) и коду `delirium-room`:
+By Delirium's documentation (`docs/how-it-works.md`, `docs/modding.md`, v0.2.2) and `delirium-room`'s code:
 
-- C API SDK (`nm_*`) — тонкий слой над крейтом `delirium`. Наружу из задач он отдаёт только четыре:
+- The SDK's C API (`nm_*`) is a thin layer over the `delirium` crate. Of the tasks it exposes only four:
   `nm_agent_task_shot`, `task_balance`, `task_catch_fall`, `task_flinch`.
-- В движке задач больше: `shottask`, `meleetask`, `explosion`, `onfire`, `playerctl`. Playroom вызывает их
-  напрямую из Rust.
-- Поведения шлют сообщения друг другу через `extras.outbox`: catchFall сам запускает `pedalLegs` и `bodyRollUp`,
-  а в v0.2.2 — `stopAllBehaviours`. Playroom пересылает их агенту после шага. C API этот outbox не отдаёт
-  (замечено в M2.5).
-- Многое из того, что видно в Playroom, — не поведения движка, а слой комнаты в `delirium-room`. Это решения
-  вида «на что какие сообщения слать»:
-  - здоровье и урон (`delirium-data` `ped::damage`);
-  - high fall при падении с высоты;
+- The engine has more tasks: `shottask`, `meleetask`, `explosion`, `onfire`, `playerctl`. The Playroom calls them
+  straight from Rust.
+- Behaviours send each other messages through `extras.outbox`: catchFall itself starts `pedalLegs` and `bodyRollUp`,
+  and in v0.2.2 `stopAllBehaviours`. The Playroom forwards them to the agent after the step. The C API doesn't expose
+  this outbox (noticed in M2.5).
+- Much of what's seen in the Playroom isn't the engine's behaviours but the room layer in `delirium-room`. These are
+  decisions of the kind "which messages to send on what":
+  - health and damage (`delirium-data`'s `ped::damage`);
+  - high fall when falling from a height;
   - near miss;
-  - смерть;
-  - вставание (`getup`);
-  - дополнительные реакции и их переключатели в `settings.txt`.
-- Модуль уже зависит от крейта `delirium` напрямую (M3).
+  - death;
+  - getting up (`getup`);
+  - additional reactions and their switches in `settings.txt`.
+- The module already depends on the `delirium` crate directly (M3).
 
-Если для GMod придумать свою таблицу реакций, Homer будет реагировать «похоже», но не так, как в Playroom.
+If GMod got a reaction table of its own, Homer would react "similarly", but not as in the Playroom.
 
-## Решение
+## Decision
 
-1. Слой реакций Playroom — тоже golden. Что и в какой момент Playroom шлёт агенту на выстрел, удар, взрыв, огонь,
-   шокер, падение, промах, смерть и вставание, модуль повторяет тем же кодом и в том же порядке.
-2. Где C API хватает, используем его. Где нет (outbox, задачи движка, урон и здоровье), модуль вызывает крейт
-   `delirium` и `delirium-data` так же, как `delirium-room`. Это не вмешательство в Delirium (ADR 0008): вызовы
-   те же, что у эталона.
-3. Свой код — только перевод событий GMod (`EntityTakeDamage`, падение, вода, смерть) во входы этого слоя: часть
-   тела, точку, направление, оружие, скорость.
-4. Переключатели Playroom (`tasks`, `avoid`, дополнительные и экспериментальные реакции, `getup`) становятся
-   конварами с умолчаниями Playroom. Golden-прогоны идут на умолчаниях (`--safe`).
-5. Возможности самого приложения Playroom (Hero, Portal, Skate 3, графика, GPU-вода) не переносим
-   (ROADMAP «Отложено»).
+1. The Playroom's reaction layer is golden too. What the Playroom sends the agent, and when, on a shot, a blow, a
+   blast, fire, a stun gun, a fall, a miss, death and getting up, the module repeats with the same code and in the same
+   order.
+2. Where the C API is enough, we use it. Where it isn't (the outbox, the engine's tasks, damage and health), the module
+   calls the `delirium` and `delirium-data` crates as `delirium-room` does. That isn't interfering with Delirium (ADR
+   0008): the calls are the reference's.
+3. Our own code is only translating GMod's events (`EntityTakeDamage`, a fall, water, death) into this layer's inputs:
+   the body part, the point, the direction, the weapon, the speed.
+4. The Playroom's switches (`tasks`, `avoid`, additional and experimental reactions, `getup`) become convars with the
+   Playroom's defaults. Golden runs go on the defaults (`--safe`).
+5. The Playroom application's own features (Hero, Portal, Skate 3, graphics, GPU water) aren't carried over (ROADMAP
+   "Deferred").
 
-## Последствия
+## Consequences
 
-- В M4 модуль пересылает `extras.outbox` после каждого шага NM. Только так catchFall совпадёт с Playroom.
-- M6 — это порт слоя реакций `delirium-room` с golden-сценариями на каждую реакцию.
-- Каждое обновление Delirium требует сверить слой реакций с новым `delirium-room`, как `tools/dms-game` в M2
-  (ADR 0010).
+- In M4 the module forwards `extras.outbox` after every NM step. Only that way does catchFall match the Playroom.
+- M6 is the port of `delirium-room`'s reaction layer, with golden scenarios for every reaction.
+- Every Delirium update needs the reaction layer compared with the new `delirium-room`, as `tools/dms-game` in M2 (ADR
+  0010).

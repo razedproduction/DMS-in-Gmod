@@ -1,15 +1,15 @@
-# Стенд: GMod + `dms-ctl` (ROADMAP M2.5)
+# The bench: GMod + `dms-ctl` (ROADMAP M2.5)
 
-Стенд — та же роль, что у Playroom `--headless`/`--script --rec`, но на Source + Box3D: Claude сам запускает
-Garry's Mod, управляет им и в реальном времени видит состояние; пользователю остаётся визуальная проверка.
-Решения — [ADR 0012](adr/0012-bench-game-and-dms-ctl.md).
+The bench plays the role of the Playroom's `--headless`/`--script --rec`, but on Source + Box3D: Claude starts Garry's
+Mod on its own, drives it and sees its state in real time; what's left to the user is the visual check. The decisions:
+[ADR 0012](adr/0012-bench-game-and-dms-ctl.md).
 
-## Одной командой
+## In one command
 
 ```powershell
-.\scripts\build.ps1                     # модуль -> dist\
+.\scripts\build.ps1                     # the module -> dist\
 cargo build --release -p dms-ctl -p golden
-.\scripts\server.ps1 start              # игра в окне, канал dms-ctl и RCON на 127.0.0.1
+.\scripts\server.ps1 start              # the game in a window, the dms-ctl channel and RCON on 127.0.0.1
 .\target\release\dms-ctl.exe exec status
 .\target\release\dms-ctl.exe lua "return DMS.Version"
 .\target\release\dms-ctl.exe watch --for 2s
@@ -20,101 +20,106 @@ cargo build --release -p dms-ctl -p golden
 
 ## `scripts\server.ps1`
 
-- `start` — ставит `dist\` и `addon\` в игру (`install.ps1`), пишет `garrysmod\data\dms\bench.txt` (`dms_game_dir`
-  из `golden\game_dir.txt`/`DMS_GAME_DIR`/`-GtaDir`, `dms_dev 1`, новый токен) и запускает **саму игру**:
+- `start` installs `dist\` and `addon\` into the game (`install.ps1`; `-NoInstall` keeps what's installed, e.g. a
+  release's), writes `garrysmod\data\dms\bench.txt` (`dms_game_dir` from `golden\game_dir.txt`/`DMS_GAME_DIR`/`-GtaDir`,
+  `dms_dev 1`, a new token) and starts **the game itself**:
   `gmod_win64.exe -w 1280 -h 720 -windowed -nosound -novid -usercon -condebug -ip 127.0.0.1 -port 27115 +maxplayers 2
-  +sv_lan 1 +sv_cheats 1 +sv_hibernate_think 1 +rcon_password <новый> +map gm_flatgrass`. Окно видно, чтобы за тестом
-  можно было смотреть; тики идут 66/с и без фокуса, и свёрнутым. `start -Hidden` — без отрисовки (`-textmode`,
-  640×480), окно скрывается (`ShowWindow`), как было в M2.5.
-  Это listen-сервер: `maxplayers 2`, иначе одиночная игра без RCON; `-usercon` включает RCON. Хост — аккаунт Steam
-  пользователя на loopback. Аддон читает `bench.txt` и сразу удаляет его, так что обычная игра канал не открывает.
-  Адреса и секреты — в `.bench\server.txt` (не в git), их читает `dms-ctl`. Лог консоли —
+  +sv_lan 1 +sv_cheats 1 +sv_hibernate_think 1 +rcon_password <new> +map gm_flatgrass`. The window is visible so the
+  test can be watched; ticks run at 66/s unfocused and minimised too. `start -Hidden`: without drawing (`-textmode`,
+  640×480), the window hidden (`ShowWindow`), as in M2.5.
+  It's a listen server: `maxplayers 2`, otherwise single player without RCON; `-usercon` turns RCON on. The host is the
+  user's Steam account on loopback. The addon reads `bench.txt` and deletes it at once, so a normal game doesn't open
+  the channel. Addresses and secrets are in `.bench\server.txt` (not in git), `dms-ctl` reads them. The console log is
   `garrysmod\console.log`.
-- `stop` — `quit` через RCON, через 10 с — принудительно; `restart`, `status`.
-- Игра не запускается дважды: пока стенд работает, пользователь не играет (и наоборот) — `start` проверяет это.
-- `-Dedicated [-Server <dir>]` — то же на выделенном сервере (`srcds_win64.exe`, SteamCMD app 4020, ветка x86-64;
-  `update` ставит/обновляет его). **Форк VPhysics-Box3D там не работает**: серверная сборка GMod x64 собрана с
-  более новыми интерфейсами (`IAppSystem` с `GetDependencies/GetTier/Reconnect/IsSingleton`: 17 слотов vtable
-  `VPhysics031` против 13 у клиента и форка; `VPhysicsCollision007` — 59 против 52; `VPhysicsSurfaceProps001` тоже
-  длиннее), и форк роняет `dedicated.dll`/`server.dll`. Поэтому сервер оставляет свой `vphysics.dll`: канал,
-  тестовый агент и записи работают, `IPhysicsNM` нет. Порт форка на серверный ABI — отдельная задача.
+- `stop`: `quit` over RCON, forced after 10 s; `restart`, `status`.
+- The game doesn't start twice: while the bench runs, the user doesn't play (and the other way round); `start` checks.
+- `-Dedicated [-Server <dir>]`: the same on a dedicated server (`srcds_win64.exe`, SteamCMD app 4020, the x86-64
+  branch; `update` installs or updates it). **The VPhysics-Box3D fork doesn't run there**: GMod's x64 server build is
+  built against newer interfaces (`IAppSystem` with `GetDependencies/GetTier/Reconnect/IsSingleton`: 17 vtable slots in
+  `VPhysics031` against 13 for the client and the fork; `VPhysicsCollision007` 59 against 52; `VPhysicsSurfaceProps001`
+  longer too), and the fork crashes `dedicated.dll`/`server.dll`. So the server keeps its own `vphysics.dll`: the
+  channel, the test agent and recordings work, `IPhysicsNM` doesn't. Porting the fork to the server's ABI is a task of
+  its own (not done: ADR 0021).
 
-## Канал модуля (`module/src/dev.rs`, `addon/lua/dms/dev.lua`)
+## The module's channel (`module/src/dev.rs`, `addon/lua/dms/dev.lua`)
 
-Только при `dms_dev 1` (по умолчанию 0), только `127.0.0.1:dms_dev_port` (27099), только с `dms_dev_token`
-(первый запрос — `auth`). Сетевые потоки ни Lua, ни физику не трогают (ADR 0003): кладут запросы в очередь и
-отдают готовые кадры. Очередь разбирает `Think` (`DMS.DevThink`): консольные команды и Lua возвращаются в Lua,
-сообщения NM и сценарии идут тестовому агенту. Кадр: строка `<id> <вид> <длина>` и `<длина>` байт UTF-8.
+Only with `dms_dev 1` (0 by default), only on `127.0.0.1:dms_dev_port` (27099), only with `dms_dev_token` (the first
+request is `auth`). The network threads touch neither Lua nor the physics (ADR 0003): they queue requests and hand out
+finished frames. `Think` takes the queue (`DMS.DevThink`): console commands and Lua go back to Lua, NM messages and
+scenarios to the test agent. A frame: a line `<id> <kind> <length>` and `<length>` bytes of UTF-8.
 
 ## `dms-ctl`
 
-| Команда | Что | Путь |
+| Command | What | Path |
 |---|---|---|
-| `status` | что отвечает | RCON и канал |
-| `exec <команда>` | консольная команда с выводом | RCON (только он отдаёт вывод); `--module` — в `Think` без вывода; если RCON молчит — модуль |
-| `lua <код>` / `lua -f <файл>` | Lua в `Think`: что напечатал и вернул (выражение — как `return …`) | модуль; если он не отвечает — RCON `lua_run` |
-| `nm <сообщение> [p=v …]` | сообщение NM тестовому агенту | модуль |
-| `bench reset\|stop\|cancel` | новый агент / убрать / прервать сценарий | модуль |
-| `snapshot [--fields a,b]` | последняя телеметрия (JSON) | модуль |
-| `watch --for 2s [--fields a,b] [--every N]` | поток телеметрии, JSON-строка на кадр сервера; **всегда с `--for`** | модуль |
-| `run <сценарий> [--out f.rec] [--ref p.rec] [--lead]` | сценарий `golden/scenarios/` на Homer в FOLLOW (`--lead`: LEAD-агент) в реальном времени → `.rec` (по умолчанию `golden/out/source/<имя>.rec`); команды — на шагах записи Playroom (`--ref`, по умолчанию `golden/out/<имя>.rec`) | модуль |
+| `status` | what answers | RCON and the channel |
+| `exec <command>` | a console command with its output | RCON (only it gives output); `--module`: into `Think` without output; if RCON is silent, the module |
+| `lua <code>` / `lua -f <file>` | Lua in `Think`: what it printed and returned (an expression as `return …`) | the module; if it doesn't answer, RCON `lua_run` |
+| `nm <message> [p=v …]` | an NM message to the test agent | the module |
+| `bench reset\|stop\|cancel` | a new agent / remove it / break off the scenario | the module |
+| `snapshot [--fields a,b]` | the last telemetry (JSON) | the module |
+| `watch --for 2s [--fields a,b] [--every N]` | a stream of telemetry, a JSON line a server frame; **always with `--for`** | the module |
+| `run <scenario> [--out f.rec] [--ref p.rec] [--lead]` | a `golden/scenarios/` scenario on Homer in FOLLOW (`--lead`: the LEAD agent) in real time → `.rec` (by default `golden/out/source/<name>.rec`); commands on the steps of the Playroom's recording (`--ref`, by default `golden/out/<name>.rec`) | the module |
 
-PowerShell 5.1 выкидывает `"` из аргументов внешних программ: в Lua — одинарные кавычки или `lua -f`.
+PowerShell 5.1 drops `"` from external programs' arguments: in Lua use single quotes or `lua -f`.
 
-Телеметрия (поля верхнего уровня, `--fields` выбирает): `t` (`CurTime`), `tick`, `frame_dt`, `hover` (сколько
-объектов держат отладочные drives `DMS.Drive`), `gravity` (`nm` 9.8, `source` из `physenv`, `compensation` — режим
-`dms_gravity_mode`, ADR 0007), `source_gravity`, `nm_ms` (NM на шаг физики, мс), `agents` (FOLLOW-агенты: `id`, `step`,
-`awake`, `asleep`, `balancing`, `fallen`, `pelvis_z`, `head_z`, `com`, `com_v`, `compensation`, `parts`, `contacts`,
-`drives`, `armature`, `feedback`, `timestep` — шаг физики, `pred_err` — на сколько Box3D разошёлся за шаг с
-предсказанием собственной физики NM, `limit_use` — заполнение пределов суставов NM, `state_v` — скорости из
-`GetBodyState`, `script`), `bench`; при LEAD-агенте ещё `step`, `nm_t`, `mode`, `held`, `balancing`, `fallen`,
-`pelvis_z`, `head_z`, `com`, `com_v`, `parts`, `contacts`, `drives`, `feedback`, `script`.
+Telemetry (top-level fields, `--fields` picks): `t` (`CurTime`), `tick`, `frame_dt`, `hover` (how many objects the
+debug drives `DMS.Drive` hold), `gravity` (`nm` 9.8, `source` from `physenv`, `compensation`: the `dms_gravity_mode`
+mode, ADR 0007), `source_gravity`, `nm_ms` (NM per physics step, ms), `agents` (FOLLOW agents: `id`, `step`, `awake`,
+`asleep`, `balancing`, `fallen`, `pelvis_z`, `head_z`, `com`, `com_v`, `compensation`, `parts`, `contacts`, `drives`,
+`armature`, `feedback`, `timestep`: the physics step, `pred_err`: how far Box3D went from the prediction of NM's own
+physics over a step, `limit_use`: how full NM's joint limits are, `state_v`: velocities from `GetBodyState`, `script`),
+`bench`; with the LEAD agent also `step`, `nm_t`, `mode`, `held`, `balancing`, `fallen`, `pelvis_z`, `head_z`, `com`,
+`com_v`, `parts`, `contacts`, `drives`, `feedback`, `script`.
 
-## Сценарии на Homer в FOLLOW (`module/src/follow.rs`, ROADMAP M4)
+## Scenarios on Homer in FOLLOW (`module/src/follow.rs`, ROADMAP M4)
 
-`dms-ctl run` (и `golden behaviour --source`) ставит сценарий на **Homer в FOLLOW на Box3D**: Lua спавнит Homer в позе
-Playroom в начале комнаты (на 3 м выше для `!button fall`), игрока — туда, где у Playroom камера (4 м сзади), и
-отдаёт Homer модулю (`DMS.BenchFollow`); NM — агент на крейте `delirium` с пересылкой outbox и `in_air` Playroom
-(ADR 0016, 0017). Команды оконного сценария идут на тех **шагах NM**, где их выполнил Playroom (по меткам `#` его
-записи `golden/out/<имя>.rec`, `--ref`; без записи — по времени от первой команды), `!poke` — с импульсом из записи
-Playroom. Запись — формат Playroom `--rec`, в порядке его тика; `n`/`g` у частей — держащие контакты NM (`held_world`)
-на состоянии Box3D. По окончании NM с Homer снимается (до следующего прогона он обычный ragdoll).
+`dms-ctl run` (and `golden behaviour --source`) runs a scenario on **Homer in FOLLOW on Box3D**: Lua spawns Homer in
+the Playroom's pose at the room's start (3 m higher for `!button fall`), the player where the Playroom's camera is (4 m
+behind), and hands Homer to the module (`DMS.BenchFollow`); NM is an agent on the `delirium` crate with the outbox and
+the Playroom's `in_air` forwarded (ADR 0016, 0017). A window scenario's commands go on the **NM steps** where the
+Playroom ran them (by the `#` marks of its recording `golden/out/<name>.rec`, `--ref`; without a recording, by time from
+the first command), `!poke` with the impulse from the Playroom's recording. The recording is the Playroom's `--rec`
+format, in its tick's order; a part's `n`/`g` are NM's holding contacts (`held_world`) on Box3D's state. When it ends,
+NM comes off Homer (until the next run he's an ordinary ragdoll).
 
-Умеет: сообщения NM, все `!button` поведений Playroom (`Sim::lines`: `balance drunk windmill pedal writhe rollup
-catchfall highfall stairs flinch brace look point lean relax stayup foetal grab overwall "STOP all"`, `shot`, `shot
-back`; `fall` только в начале; `get-up` переключает режим вставания), выстрел headless на шаге 60 (ShotTask), команды
-реакций Playroom (M6, ADR 0020) `!shoot <часть> [fatal]`, `!weapon <i>`, `!blast x,y,z`, `!miss <x>`, `!set <ключ>
-<значение>`, `!hfall [up]`, `!nododge`, а также `!poke`, `!quit`. Слой реакций (выстрел, взрыв, смерть, вставание
-клипом или мышцами, задачи игры, `in_air`) — тот же код, что у Homer в игре; агент сценария всегда на умолчаниях
-Playroom и без тюнинга. Не умеет (пишет `# dms: not run on the bench: …`): `!grab`, Hero, машины Playroom и прочие `!…`.
+It can do: NM messages, every behaviour `!button` of the Playroom (`Sim::lines`: `balance drunk windmill pedal writhe
+rollup catchfall highfall stairs flinch brace look point lean relax stayup foetal grab overwall "STOP all"`, `shot`,
+`shot back`; `fall` only at the start; `get-up` switches the get-up mode), the headless shot at step 60 (ShotTask), the
+Playroom's reaction commands (M6, ADR 0020) `!shoot <part> [fatal]`, `!weapon <i>`, `!blast x,y,z`, `!miss <x>`,
+`!set <key> <value>`, `!hfall [up]`, `!nododge`, and `!poke`, `!quit`. The reaction layer (shot, blast, death, getting
+up by clip or muscles, the game's tasks, `in_air`) is the same code as Homer's in the game; a scenario's agent is
+always on the Playroom's defaults and without tuning. It can't (and writes `# dms: not run on the bench: …`): `!grab`,
+Hero, the Playroom's cars and other `!…`.
 
-`golden behaviour --source [имена]` сверяет записи с Playroom **по допускам сценария** — строка `#! tol` в файле
-сценария (`golden/README.md`): разрыв COM, конечная высота, падение, время оседания, шаги команд, реакции слоя
-комнаты. Сейчас в допусках `stand` (60 с), `stand-1s`, `push`, `relax`, `catchfall`, первые 60 шагов `shot`, стадия
-`stairs`; вне допуска `relax-1s`, `lowwall` (близко), конечная поза `kerb`, приземление в `rooftop` (ADR 0019).
-`--lead` — прежний LEAD-агент SDK на полу Playroom (как `dms_selftest`): его записи совпадают с Playroom до трёх
-знаков, кроме `push` (камера), `catchfall` и `shot`.
+`golden behaviour --source [names]` compares the recordings with the Playroom **by the scenario's tolerances**: the
+`#! tol` line in the scenario's file (`golden/README.md`): the COM gap, the final height, the fall, the settling time,
+the commands' steps, the room layer's reactions. Within tolerance now: `stand` (60 s), `stand-1s`, `push`, `relax`,
+`catchfall`, the first 60 steps of `shot`, the `stairs` stage; outside: `relax-1s`, `lowwall` (close), `kerb`'s final
+pose, the landing in `rooftop` (ADR 0019). `--lead`: the former LEAD agent of the SDK on the Playroom's floor (as
+`dms_selftest`): its recordings match the Playroom to three digits, except `push` (the camera), `catchfall` and `shot`.
 
-`DMS.FollowStats()` — стоимость шага NM на главном потоке, потоки, вызовы callback'а (и с чужого окружения), шаг
-каждого агента; `DMS.DevPanic("native"|"step")` — проверка, что паника не роняет игру (ADR 0021). После
-`changelevel` конвары стенда (`dms_dev`, токен) сбрасываются: канал включают заново через RCON
-(`dms_dev_token <из .bench\server.txt>`, `dms_dev 1`).
+`DMS.FollowStats()`: NM's step cost on the main thread, threads, the callback's calls (and from another environment),
+each agent's step; `DMS.DevPanic("native"|"step")` checks that a panic doesn't crash the game (ADR 0021). After
+`changelevel` the bench's convars (`dms_dev`, the token) are reset: turn the channel on again over RCON
+(`dms_dev_token <from .bench\server.txt>`, `dms_dev 1`).
 
-`server.ps1 start -Tickrate 60` — тикрейт сервера 60; шаг физики при этом остаётся 0.015 с (его ставит игра),
-`DMS.EnvTimestep(physobj[, t])` читает и меняет его (только для опытов).
+`server.ps1 start -Tickrate 60`: the server's tickrate 60; the physics step stays 0.015 s (the game sets it),
+`DMS.EnvTimestep(physobj[, t])` reads and changes it (for experiments only).
 
-## Сцена и мир NM (M5, ADR 0018)
+## The scene and NM's world (M5, ADR 0018)
 
-`gm_flatgrass`: плоский пол; начало комнаты Playroom — пол Box3D (`DMS_FloorBelow`: плоскость BSP + оболочка форка
-6.35 мм) под `info_player_start` (`dms_bench_scene`, `DMS.BenchScene()` проверяет, что пол ровный на ±5 м).
+`gm_flatgrass`: a flat floor; the start of the Playroom's room is Box3D's floor (`DMS_FloorBelow`: the BSP plane + the
+fork's 6.35 mm shell) under `info_player_start` (`dms_bench_scene`; `DMS.BenchScene()` checks the floor is level within
+±5 m).
 
-Мир NM — из `.bsp` текущей карты (`world.lua`, `dms_map [reload]`, в логе `[DMS] NM's world: …`); пол — квадратами
-1 м по кадру агента, как пол Playroom. `DMS_MapCheck(pos, half, n)` сравнивает высоты мира NM с трассами игры.
-Пропы в 3 м от агента — препятствия NM (`obstacles` в телеметрии), `pivot_gap` — разрыв пивотов суставов на
-состоянии Box3D.
+NM's world comes from the current map's `.bsp` (`world.lua`, `dms_map [reload]`, `[DMS] NM's world: …` in the log); the
+floor is 1 m squares on the agent's frame, like the Playroom's floor. `DMS_MapCheck(pos, half, n)` compares the heights
+of NM's world with the game's traces. Props within 3 m of the agent are NM's obstacles (`obstacles` in the telemetry),
+`pivot_gap` is the gap of the joints' pivots on Box3D's state.
 
-Стадии Playroom — карта `dms_stages` (её делает `cargo run --release -p dms-map`: `.vmf` в `target/dms-map/`,
-`vbsp/vvis/vrad` игры, `garrysmod/maps/dms_stages.bsp`; в git не попадает): `bigstairs`, `stairsdown`, `rooftop`,
-`highledge`, `lowwall`, `kerb`, `rail`, `open` и наклон, сайт на стадию (`info_target dms_stage_<имя>`,
-`DMS.BenchScene(<имя>)`). Сценарии стадий (`#! window stage=<имя>`) — на стенде с `server.ps1 start -Map dms_stages`;
-сценарии комнаты идут на любой из двух карт.
+The Playroom's stages are the map `dms_stages` (made by `cargo run --release -p dms-map`: the `.vmf` in
+`target/dms-map/`, the game's `vbsp/vvis/vrad`, `garrysmod/maps/dms_stages.bsp`; not in git): `bigstairs`,
+`stairsdown`, `rooftop`, `highledge`, `lowwall`, `kerb`, `rail`, `open` and a slope, a site for each stage
+(`info_target dms_stage_<name>`, `DMS.BenchScene(<name>)`). Stage scenarios (`#! window stage=<name>`) run on the bench
+with `server.ps1 start -Map dms_stages`; the room's scenarios run on either map.

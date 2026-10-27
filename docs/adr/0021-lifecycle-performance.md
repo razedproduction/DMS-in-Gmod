@@ -1,71 +1,77 @@
-# 0021. Жизненный цикл агентов, параллельный шаг, LOD, вырезка мира, паники на границе FFI
+# 0021. Agents' lifecycle, the parallel step, LOD, cropping the world, panics at the FFI boundary
 
-Статус: принято (2026-10-27). Уточняет 0003, 0012, 0018.
+Status: accepted (2026-10-27). Refines 0003, 0012, 0018.
 
-## Контекст
+## Context
 
-M7: агенты должны переживать всё, что игра делает с ragdoll'ом, не ронять игру и укладываться в бюджет. Замеры на
-стенде (машина пользователя, 8 логических ядер, без AVX2), `gm_flatgrass`, Homer балансирует:
+M7: agents have to survive everything the game does to a ragdoll, not crash the game and fit in a budget. Measurements
+on the bench (the user's machine, 8 logical cores, no AVX2), `gm_flatgrass`, Homer balancing:
 
-- шаг самого NM (`Agent::step_follow`) — **1.2–2.1 мс** на агента (лёжа — 0.06–1.6 мс); всё наше вокруг (чтение
-  тел, слой комнаты, drives) — ~0.02 мс. Playroom на своей физике тратит ~1.5 мс на шаг Homer: это цена Delirium,
-  менять её нельзя (ADR 0008). Цель ROADMAP «≤ 0.15 мс/шаг на агента» достижима только для нашего слоя;
-- 8 агентов — ~14 мс на шаг физики на главном потоке;
-- каждый спавн строил мир NM из всей карты под своё начало кадра: ~175 мс фриза и ~50 МБ на мир;
-- в FOLLOW лежащий Homer почти не засыпает (drives держат тела в движении, скорость COM «дрожит» на ~0.1 м/с без
-  смещения), так что «спящих» по флагу NM почти не бывает;
-- дубликатор и сохранения GMod (`gm_save` = `duplicator.CopyEnts`, загрузка = `game.CleanUpMap` + `duplicator.Paste`)
-  сливают Lua-таблицу сущности в копию: копия Homer получала чужой `DMS_Agent`, `DMS_Rising`, колбэки;
-- `catch_unwind` в одном кадре с `lua_error` ронял `lua_shared` при загрузке (SEH-размотка LuaJIT через кадр с
-  catch-funclet Rust).
+- NM's own step (`Agent::step_follow`) is **1.2–2.1 ms** an agent (lying, 0.06–1.6 ms); everything of ours around it
+  (reading bodies, the room layer, drives) ~0.02 ms. The Playroom on its own physics spends ~1.5 ms on Homer's step: it's
+  the price of Delirium, which can't be changed (ADR 0008). The ROADMAP's target "≤ 0.15 ms a step an agent" is reachable
+  only for our layer;
+- 8 agents: ~14 ms a physics step on the main thread;
+- every spawn built NM's world from the whole map under its frame's start: a ~175 ms freeze and ~50 MB a world;
+- in FOLLOW a lying Homer hardly ever falls asleep (drives keep the bodies moving, the COM's speed "trembles" at
+  ~0.1 m/s without moving), so "sleeping" by NM's flag hardly happens;
+- the duplicator and GMod's saves (`gm_save` = `duplicator.CopyEnts`, loading = `game.CleanUpMap` +
+  `duplicator.Paste`) merge the entity's Lua table into the copy: a Homer copy got someone else's `DMS_Agent`,
+  `DMS_Rising`, callbacks;
+- `catch_unwind` in one frame with `lua_error` crashed `lua_shared` on load (LuaJIT's SEH unwinding through a frame with
+  Rust's catch funclet).
 
-## Решение
+## Decision
 
-1. **Шаг в три фазы** (`step.rs`): `Follower::begin` на главном потоке читает тела Box3D (`GetBodyState`) и проверяет
-   суставы ragdoll'а (`FindConstraint` = запомненному, иначе NM снимается); `Follower::compute` — шаги NM без
-   `IPhysicsNM` и игры, агенты параллельно на `dms_threads` потоках (`thread::scope`, 0 — ядра минус одно);
-   `Follower::finish` на главном потоке пишет armature и drives. Box3D между шагами NM одного шага Source не
-   движется, поэтому одно чтение на все — то же, что раньше; результат агента от потока не зависит (глобальное
-   состояние Delirium — только `OnceLock`/`RwLock`/атомики). Один агент (golden) считается на главном потоке.
-   8 агентов: 14 → 4.3 мс на главном потоке.
-2. **Паники**: натив — тело под `catch_unwind` в отдельной `#[inline(never)]` функции, `lua_error` — в другой, без
-   живых значений; паника становится Lua-ошибкой, Lua-ошибка из метаметода проходит насквозь. Шаг агента — под
-   `catch_unwind`, паника снимает только его (`detached`, `panic: …`); весь callback — тоже, на крайний случай
-   снимаются все. `gmod13_open/close` — под `catch_unwind`, `step::shutdown` снимает callback первым. Проверка —
-   `DMS.DevPanic("native"|"step")` (только при канале `dms-ctl`).
-3. **Жизненный цикл** (`lifecycle.lua`, `follow.lua`): удаление/`undo`/cleanup — `OnRemove`; смена карты — `ShutDown`
-   и `gmod13_close`; перезапуск Lua — `require` один раз на состояние Lua, агенты живут; копии — `PreEntityCopy`
-   убирает поля `DMS_*` из копии, оставляя `DMS_Copy`, копия (и копия старого сохранения с чужим агентом)
-   привязывается в любой позе (привязка от позы не зависит) и получает NM, если он был на оригинале. Все пути
-   снятия агента идут через один `forget`: Homer на клипе вставания размораживается. Заморозка части игроком —
-   парковка до разморозки; подбор физганом/гравипушкой на клипе — клип прерывается (`DMS.FollowRiseCancel`), новый
-   агент на теле балансирует, как в конце клипа. Сварка и верёвки — внешние силы, NM остаётся.
-4. **Телепорт**: таз дальше 1 м (+ 2·v·dt) от места, куда его несла скорость, — кадр NM (и мир) сдвигаются на
-   прыжок; агент, его поведения и комната сохраняются, NM прыжка не видит. Не для агента сценария. `Entity:SetPos`
-   у `prop_ragdoll` тела не двигает — двигает `PhysObj:SetPos`.
-5. **LOD — парковка**, не снятие: NM снят с тел (armature 0, без шагов и drives — обычный ragdoll), агент и комната
-   (здоровье, смерть) хранятся. Дальше `dms_lod_distance` от всех игроков — кнопка `relax`, через 1 с парковка,
-   обратно — когда игрок рядом. Неподвижный (не балансирует, не на клипе, COM сместился < 2 см/с) `dms_lod_still`
-   с — парковка, обратно — когда модуль видит движение тел (после 1 с оседания: скорость > 0.5 м/с или 2 рад/с),
-   или перед реакцией/сообщением из Lua. Запаркованный агент стоит ~0.01 мс. Лимит — `dms_max_agents` (8).
-6. **Мир NM — вырезка карты вокруг агента** (`world::CROP` = 32 м по x, y от центра на сетке 8 м кадра NM; уточняет
-   0018): грани, заходящие в неё, целиком; квадраты пола — те же, что у целого мира (края вырезки на их сетке, за
-   `TILED` грубые плитки целиком). Вырезка переезжает, когда таз дальше 16 м от её центра. Спавн 175 → 29 мс, память
-   на мир — единицы МБ. Golden после вырезки — тот же набор вне допуска (`kerb`, `lowwall`, `relax-1s`).
-7. **Выгрузка модуля**: GMod выгружает и заново грузит `gmsv_dms` с каждой картой, а то, что держат статики Rust
-   (данные NM, прочитанные карты, миры, тюнинг, поверхности Delirium), при `FreeLibrary` не освобождается — ~65 МБ
-   на смену карты с агентами. `gmod13_close` очищает их явно (`data::unload`, `world::unload`, `tuning::unload`, буферы
-   `step`); после — живых байт Rust ~0.01 МБ, рост памяти на смену карты — ~8 МБ, как у игры без DMS.
-8. **Listen server**: callback ставится на окружение объекта (`GetObjectEnvironment` сервера), вызовы с другого
-   окружения считаются (`DMS.FollowStats().foreign`) и игнорируются; на стенде — 0.
-9. **Linux / выделенный сервер** — не делаем: серверная сборка GMod x64 несовместима с форком (ADR 0012), решение
-   пользователя — все тесты в игре. Порт форка на серверный ABI — только по отдельной просьбе.
+1. **The step in three phases** (`step.rs`): `Follower::begin` on the main thread reads Box3D's bodies (`GetBodyState`)
+   and checks the ragdoll's joints (`FindConstraint` = the remembered one, else NM comes off); `Follower::compute`, NM's
+   steps without `IPhysicsNM` or the game, agents in parallel on `dms_threads` threads (`thread::scope`, 0: cores less
+   one); `Follower::finish` on the main thread writes armature and drives. Box3D doesn't move between the NM steps of
+   one Source step, so one read for all of them is the same as before; an agent's result doesn't depend on the thread
+   (Delirium's global state is only `OnceLock`/`RwLock`/atomics). A single agent (golden) is computed on the main
+   thread. 8 agents: 14 → 4.3 ms on the main thread.
+2. **Panics**: a native's body is under `catch_unwind` in a separate `#[inline(never)]` function, `lua_error` in another,
+   with no live values; a panic becomes a Lua error, a Lua error from a metamethod passes straight through. An agent's
+   step is under `catch_unwind`, a panic takes only it off (`detached`, `panic: …`); the whole callback too, all of them
+   taken off as a last resort. `gmod13_open/close` are under `catch_unwind`, `step::shutdown` takes the callback off
+   first. The check: `DMS.DevPanic("native"|"step")` (only with the `dms-ctl` channel).
+3. **The lifecycle** (`lifecycle.lua`, `follow.lua`): removal / `undo` / cleanup through `OnRemove`; a map change through
+   `ShutDown` and `gmod13_close`; a Lua restart: `require` once a Lua state, agents live on; copies: `PreEntityCopy`
+   takes the `DMS_*` fields out of the copy, leaving `DMS_Copy`, the copy (and a copy from an old save with someone
+   else's agent) is bound in any pose (binding doesn't depend on the pose) and gets NM if the original had it. Every way
+   of taking an agent off goes through one `forget`: a Homer on the get-up clip is unfrozen. A part frozen by a player:
+   parked until unfrozen; picked up with the physgun or gravity gun on the clip: the clip is broken off
+   (`DMS.FollowRiseCancel`), a new agent on the body balances, as at the clip's end. Welds and ropes are outside forces,
+   NM stays.
+4. **Teleporting**: the pelvis farther than 1 m (+ 2·v·dt) from where its velocity was taking it: NM's frame (and the
+   world) move by the jump; the agent, its behaviours and the room are kept, NM doesn't see the jump. Not for a
+   scenario's agent. `Entity:SetPos` on a `prop_ragdoll` doesn't move the bodies: `PhysObj:SetPos` does.
+5. **LOD is parking**, not detaching: NM off the bodies (armature 0, no steps or drives: an ordinary ragdoll), the agent
+   and the room (health, death) kept. Farther than `dms_lod_distance` from every player: the `relax` button, after 1 s
+   parking, back when a player is near. Still (not balancing, not on the clip, the COM moving < 2 cm/s) for
+   `dms_lod_still` s: parking, back when the module sees the bodies move (after 1 s of settling: speed > 0.5 m/s or
+   2 rad/s), or before a reaction or a message from Lua. A parked agent costs ~0.01 ms. The limit is `dms_max_agents`
+   (8).
+6. **NM's world is the map cropped round the agent** (`world::CROP` = 32 m in x, y from the centre on an 8 m grid of
+   NM's frame; refines 0018): faces reaching into it whole; the floor's squares the same as the whole world's (the
+   crop's edges on their grid, past `TILED` coarse tiles whole). The crop moves when the pelvis is farther than 16 m
+   from its centre. A spawn 175 → 29 ms, memory for a world a few MB.
+   Golden after cropping: the same set outside tolerance (`kerb`, `lowwall`, `relax-1s`).
+7. **Unloading the module**: GMod unloads and loads `gmsv_dms` again with every map, and what Rust's statics hold (NM's
+   data, the maps read, worlds, tuning, Delirium's surfaces) isn't freed by `FreeLibrary`: ~65 MB a map change with
+   agents. `gmod13_close` clears them explicitly (`data::unload`, `world::unload`, `tuning::unload`, `step`'s buffers);
+   after it, Rust's live bytes are ~0.01 MB, memory grows ~8 MB a map change, as for the game without DMS.
+8. **Listen server**: the callback goes on the object's environment (the server's `GetObjectEnvironment`), calls from
+   another environment are counted (`DMS.FollowStats().foreign`) and ignored; on the bench, 0.
+9. **Linux / a dedicated server**: not done: GMod's x64 server build is incompatible with the fork (ADR 0012), the
+   user's decision is all tests in the game. Porting the fork to the server's ABI only on a separate request.
 
-## Последствия
+## Consequences
 
-- Бюджет ≤ 0.15 мс/шаг выполняется для слоя DMS, но не для самого NM (1–2 мс); масштаб держат потоки, лимит и LOD.
-- На listen-сервере потоки агентов делят ядра с клиентом игры.
-- Агент, запаркованный далеко, возвращается в своём поведении (после `relax` обычно лёжа — комната его поднимает).
-- Сохранения, сделанные до M7, несут поля `DMS_*`: копия с чужим агентом распознаётся, а «привязан» без агента —
-  нет (такого Homer надо заспавнить заново).
-- Тела, исчезнувшие без удаления сущности (кроме потери сустава), модуль распознать не может.
+- The ≤ 0.15 ms/step budget holds for DMS's layer, not for NM itself (1–2 ms); threads, the limit and LOD keep the
+  scale.
+- On a listen server the agents' threads share cores with the game's client.
+- An agent parked far away comes back in its behaviour (after `relax` usually lying: the room gets him up).
+- Saves made before M7 carry `DMS_*` fields: a copy with someone else's agent is recognised, but "bound" without an
+  agent isn't (such a Homer has to be spawned again).
+- Bodies that vanished without the entity being removed (other than losing a joint) the module can't recognise.

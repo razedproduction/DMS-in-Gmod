@@ -1,151 +1,172 @@
-# Lua API DMS (M6)
+# DMS's Lua API
 
-Homer в режиме FOLLOW: NM (Delirium) ведёт ragdoll `models/dms/homer.mdl`, а слой реакций Playroom (ADR 0016,
-0020) отвечает на то, что с ним делает игра. Всё — на сервере; менять что-либо из консоли и меню может только
-суперадмин.
+Homer in FOLLOW mode: NM (Delirium) drives the `models/dms/homer.mdl` ragdoll, and the Playroom's reaction layer (ADR
+0016, 0020) answers what the game does to him. Everything is on the server; only a superadmin can change anything
+from the console and the menu.
 
-## Быстрый старт
+## Quick start
 
 ```lua
--- Homer из меню спавна привязывается сам (dms_autoattach 1); свой — dms_homer или DMS_SpawnHomer(pos, yaw).
-local c = dms.Attach(rag)          -- NM на ragdoll + bodyBalance (кнопка Playroom "balance")
-c:Shot(9, nil, "shotgun")          -- выстрел дробовиком в грудь: applyImpulse + ShotTask Playroom
+-- A Homer from the spawn menu is bound by itself (dms_autoattach 1); your own: dms_homer or DMS_SpawnHomer(pos, yaw).
+local c = dms.Attach(rag)          -- NM on the ragdoll + bodyBalance (the Playroom's "balance" button)
+c:Shot(9, nil, "shotgun")          -- a shotgun shot in the chest: applyImpulse + the Playroom's ShotTask
 c:Send("headLook", { start = true, pos = ply:EyePos() })
-print(c:GetState().health)         -- 200 у живого Homer, урон — ped::damage игры
-dms.Detach(rag)                    -- обычный ragdoll
+print(c:GetState().health)         -- 200 for a living Homer, damage is the game's ped::damage
+dms.Detach(rag)                    -- an ordinary ragdoll
 ```
+
+## Versions
+
+`DMS.Version` (the module), `DMS_ADDON_VERSION` (the Lua addon), `DMS.DeliriumVersion` (the Delirium built into the
+module), `DMS.InterfaceVersion()` (the fork's `IPhysicsNM`, `VBOX3D_NM_004` needed), `DMS.HomerModelVersion` (the body
+`homer.mdl` has to be made for; `DMS_HomerModelVersion()` reads the model's mark). The module and the addon of
+different releases don't start; `DMS_Problems()` lists what keeps Homer from working (the fork, the model, the GTA IV
+folder), `dms_info` prints it all.
 
 ## `dms.*`
 
-| Функция | Что делает |
+| Function | What it does |
 |---|---|
-| `dms.Attach(rag[, opts])` | NM на Homer (`opts.balance = false` — без `bodyBalance`). Контроллер или `nil, причина`. Ragdoll должен быть привязан к телу NM (спавн через `dms_homer`, `DMS_SpawnHomer` или меню спавна) |
-| `dms.Detach(rag)` | NM снят: armature 0, drives нет, обычный ragdoll |
-| `dms.Get(rag)` | контроллер Homer с NM или `nil` |
-| `dms.All()` | контроллеры всех Homer с NM |
-| `dms.Messages()` | имена всех сообщений (поведений) NM |
-| `dms.MessageParams(name)` | параметры сообщения: `{name, kind, used, doc, default}` (`used = false` — порт принимает, но не использует) |
-| `dms.Reactions()` | `{buttons, extra, getup, weapons}` — кнопки Playroom, дополнительные реакции, режимы вставания, оружие |
+| `dms.Attach(rag[, opts])` | NM on Homer (`opts.balance = false`: without `bodyBalance`). A controller, or `nil, reason`. The ragdoll has to be bound to NM's body (spawned through `dms_homer`, `DMS_SpawnHomer` or the spawn menu) |
+| `dms.Detach(rag)` | NM off: armature 0, no drives, an ordinary ragdoll |
+| `dms.Get(rag)` | Homer's controller with NM, or `nil` |
+| `dms.All()` | the controllers of every Homer with NM |
+| `dms.Messages()` | the names of all NM messages (behaviours) |
+| `dms.MessageParams(name)` | a message's params: `{name, kind, used, doc, default}` (`used = false`: the port takes it but doesn't use it) |
+| `dms.Reactions()` | `{buttons, extra, getup, weapons}`: the Playroom's buttons, additional reactions, get-up modes, weapons |
 
-## Контроллер
+## The controller
 
-| Метод | Что делает |
+| Method | What it does |
 |---|---|
-| `c:Send(msg[, params])` | сообщение NM, как его берёт консоль Playroom: `c:Send("bodyBalance start=true")` или `c:Send("bodyBalance", {start = true})`. `Vector` — точки игры (переводятся в кадр NM), для направлений (`dir`, `normal`, `bulletVel`, `impulse`, `vel`, `fallOverEdge`) — как есть; строка `"x,y,z"` — кадр NM без перевода |
-| `c:React(line)` | реакция слоя комнаты Playroom (строка `DMS.FollowReact`, ниже) |
-| `c:Shot(where[, dir][, weapon])` | выстрел: `where` — часть 0–20 или точка (`Vector`), `weapon` — `pistol deagle smg ak47 sniper shotgun rpg grenade molotov bat knife taser baton` |
-| `c:Button(name)` | кнопка Playroom (`balance`, `catchfall`, `flinch`, `brace`, `relax`, `STOP all`, …, `shot`, `shot back`) |
-| `c:Balance()`, `c:CatchFall()`, `c:Relax()`, `c:Stop()` | кнопки `balance`, `catchfall`, `relax`, `STOP all` |
-| `c:Flinch([from])` | `upperBodyFlinch` от точки или кнопка `flinch` |
-| `c:Kill()`, `c:SetHealth(h)` | здоровье 0 (смерть: `stopAllBehaviours` + `bodyRelax`) / любое |
-| `c:GetState()` | `{steps, parked, cost, origin, awake, asleep, balancing, fallen, pelvis, head, com, com_v, health, dead, rising, burning, shock, getup}` (м, таблицы `{x, y, z}`; `parked` — NM снят LOD, `cost` — шаг NM, мс) |
-| `c:GetParam(msg, param)` | описание параметра сообщения |
-| `c:Origin()` | начало кадра NM (м, кадр игры; сдвигается при телепорте) |
+| `c:Send(msg[, params])` | an NM message as the Playroom's console takes it: `c:Send("bodyBalance start=true")` or `c:Send("bodyBalance", {start = true})`. A `Vector` is a game point (turned into NM's frame); for directions (`dir`, `normal`, `bulletVel`, `impulse`, `vel`, `fallOverEdge`) as is; a string `"x,y,z"` is NM's frame untouched |
+| `c:React(line)` | a reaction of the Playroom's room layer (a `DMS.FollowReact` line, below) |
+| `c:Shot(where[, dir][, weapon])` | a shot: `where` is a part 0–20 or a point (`Vector`), `weapon` one of `pistol deagle smg ak47 sniper shotgun rpg grenade molotov bat knife taser baton` |
+| `c:Button(name)` | a Playroom button (`balance`, `catchfall`, `flinch`, `brace`, `relax`, `STOP all`, …, `shot`, `shot back`) |
+| `c:Balance()`, `c:CatchFall()`, `c:Relax()`, `c:Stop()` | the buttons `balance`, `catchfall`, `relax`, `STOP all` |
+| `c:Flinch([from])` | `upperBodyFlinch` from a point, or the `flinch` button |
+| `c:Kill()`, `c:SetHealth(h)` | health 0 (death: `stopAllBehaviours` + `bodyRelax`) / any |
+| `c:GetState()` | `{steps, parked, cost, origin, awake, asleep, balancing, fallen, pelvis, head, com, com_v, health, dead, rising, burning, shock, getup}` (m, tables `{x, y, z}`; `parked`: NM taken off by LOD, `cost`: NM's step, ms) |
+| `c:GetParam(msg, param)` | a message param's description |
+| `c:Origin()` | the start of NM's frame (m, the game's frame; moves with a teleport) |
 
-## Хуки
+## Hooks
 
-| Хук | Аргументы | Когда |
+| Hook | Arguments | When |
 |---|---|---|
-| `DMS_Attached` | `ent, id` | NM надет |
-| `DMS_Detached` | `ent, why` | NM снят (`detached`, или NaN/разнос — причина) |
-| `DMS_Fallen` | `ent` | балансир NM сдался |
-| `DMS_Feedback` | `ent, name, slot, value` | feedback NM (после каждого шага NM) |
-| `DMS_Died` | `ent` | здоровье 0: Homer обмяк |
-| `DMS_Reaction` | `ent, text` | строка журнала слоя комнаты Playroom (`room  shot (pistol) at part 9 …`) |
-| `DMS_Teleported` | `ent, metres` | игра переставила тела (`PhysObj:SetPos`): кадр NM и его мир сдвинулись вместе с ним |
+| `DMS_Attached` | `ent, id` | NM is on |
+| `DMS_Detached` | `ent, why` | NM is off (`detached`, or NaN / blow-up: the reason) |
+| `DMS_Fallen` | `ent` | NM's balancer gave up |
+| `DMS_Feedback` | `ent, name, slot, value` | NM's feedback (after every NM step) |
+| `DMS_Died` | `ent` | health 0: Homer went limp |
+| `DMS_Reaction` | `ent, text` | a log line of the Playroom's room layer (`room  shot (pistol) at part 9 …`) |
+| `DMS_Teleported` | `ent, metres` | the game moved the bodies (`PhysObj:SetPos`): NM's frame and its world moved with them |
 
-## Жизненный цикл (M7, ADR 0021)
+## Lifecycle (M7, ADR 0021)
 
-| Событие | Что делает DMS |
+| Event | What DMS does |
 |---|---|
-| удаление, `undo`, `gmod_admin_cleanup` | `OnRemove` снимает агента до того, как уйдут тела |
-| смена карты, выход | хук `ShutDown` и `gmod13_close`: агенты и step-callback сняты до окружения физики |
-| перезапуск Lua (автообновление, `lua_openscript`) | модуль и агенты сохраняются (`require` — один раз на состояние Lua) |
-| дубликатор, сохранение/загрузка (`gm_save`) | поля DMS в копию не попадают (`PreEntityCopy`); копия привязывается и получает NM, если он был на оригинале (или с `dms_autoattach`) |
-| заморозка части (физган, инструмент) | NM паркуется, пока часть заморожена; заморозка клипа вставания — своя |
-| подбор физганом/гравипушкой во время клипа вставания | клип прерывается, тела размораживаются, новый агент на них балансирует |
-| телепорт тел | кадр NM и вырезка мира переезжают, агент и его состояние не сбрасываются |
-| сварка, верёвки | NM остаётся (внешние силы, как захват) |
-| часть сустава потеряна (`RemoveInternalConstraint`) | NM снимается (`DMS_Detached`, «joint is gone») |
-| паника в модуле | натив — Lua-ошибка; шаг агента — снимается только он (`DMS_Detached`, `panic: …`) |
+| removal, `undo`, `gmod_admin_cleanup` | `OnRemove` takes the agent off before the bodies go |
+| a map change, quitting | the `ShutDown` hook and `gmod13_close`: agents and the step callback off before the physics environment |
+| a Lua restart (auto-refresh, `lua_openscript`) | the module and agents stay (`require` once a Lua state) |
+| the duplicator, save/load (`gm_save`) | DMS's fields don't go into the copy (`PreEntityCopy`); the copy is bound and gets NM if the original had it (or with `dms_autoattach`) |
+| freezing a part (physgun, a tool) | NM is parked while the part is frozen; the get-up clip's freezing is its own |
+| picking up with the physgun or gravity gun during the get-up clip | the clip is broken off, the bodies unfrozen, a new agent balances on them |
+| teleporting the bodies | NM's frame and the world's crop move, the agent and its state aren't reset |
+| welds, ropes | NM stays (outside forces, like a grab) |
+| a joint part is lost (`RemoveInternalConstraint`) | NM comes off (`DMS_Detached`, "joint is gone") |
+| a panic in the module | a native: a Lua error; an agent's step: only that agent comes off (`DMS_Detached`, `panic: …`) |
 
-LOD: дальше `dms_lod_distance` (3000 юнитов, 0 — выкл.) от всех игроков Homer получает кнопку `relax`, через 1 с NM
-паркуется (без шагов, drives и armature — обычный ragdoll; агент, здоровье, поведение хранятся) и возвращается, когда
-игрок рядом; лежащий без движения `dms_lod_still` с (5, 0 — выкл.) — паркуется до первого движения тел, реакции или
-сообщения. Лимит — `dms_max_agents` (8): лишние Homer остаются обычными ragdoll. Агенты считаются на `dms_threads`
-потоках (0 — ядра CPU минус одно).
+LOD: farther than `dms_lod_distance` (3000 units, 0: off) from every player, Homer gets the `relax` button, after 1 s NM
+is parked (no steps, drives or armature: an ordinary ragdoll; the agent, health and behaviour are kept) and comes back
+when a player is near; lying still for `dms_lod_still` s (5, 0: off), he's parked until the bodies' first movement, a
+reaction or a message. The limit is `dms_max_agents` (8): Homers beyond it stay ordinary ragdolls. Agents are stepped on
+`dms_threads` threads (0: CPU cores less one).
 
-## Реакции (`DMS.FollowReact(id, line)`, `dms_react`)
+## Reactions (`DMS.FollowReact(id, line)`, `dms_react`)
 
-Точки — `x,y,z` в метрах, кадр игры. Что Playroom делает на каждую — `module/src/follow/room.rs` (порт `Sim`).
+Points are `x,y,z` in metres, the game's frame. What the Playroom does on each: `module/src/follow/room.rs` (the port
+of `Sim`).
 
-| Строка | Реакция Playroom | Что шлёт NM |
+| Line | The Playroom's reaction | What NM gets |
 |---|---|---|
-| `shot [part=k] [at= dir=] [weapon=] [fatal=1] [more=k,k]` | `fire` | урон оружия (`ped::damage`, `weaponinfo.xml`), `applyImpulse` пули (`shottask::bullet`), ShotTask с набором taskparams оружия (`weapon_set`); `more` — остальные дробины |
-| `blast at=` | `blast_on` | `applyImpulse` каждой части в 5 м (15 м/с · масса · (1 − d/5)), урон 250 · (1 − d/5), задача взрыва 6 с |
-| `burn` | `burn` | 25 урона в секунду; задача NM OnFire (`fire_reaction`) |
-| `taser [part=k] [at=]` | `zap` | `electrocute start=true stunMag=0.4 largeMult=2` на 2.5 с |
-| `melee damage= at= impulse= head=` | `land` (удар Hero) | `applyImpulse`, задача ближнего боя игры: flinch (`MELEE`/`MELEE_PASIVE`) или balance |
-| `nearmiss from= dir=` | `near_miss` | в 1.5 м от головы/груди: `bodyBalance`, `upperBodyFlinch`, `headLook`; лёжа — `bodyFoetal` (доп. реакции); `dive_shot` — нырок |
-| `car impulse= at= [id=] [player=1]` | `car_react` | урон `bump::damage`, задача `bump::react`: brace / rollup / balance / relax |
-| `prop at= impulse=` | `obj_hit` | урон 0.6 за Н·с (1–35), ушиб конечности (`injury`) |
+| `shot [part=k] [at= dir=] [weapon=] [fatal=1] [more=k,k]` | `fire` | the weapon's damage (`ped::damage`, `weaponinfo.xml`), the bullet's `applyImpulse` (`shottask::bullet`), ShotTask with the weapon's taskparams set (`weapon_set`); `more`: the other pellets |
+| `blast at=` | `blast_on` | `applyImpulse` on each part within 5 m (15 m/s · mass · (1 − d/5)), damage 250 · (1 − d/5), the explosion task for 6 s |
+| `burn` | `burn` | 25 damage a second; NM's OnFire task (`fire_reaction`) |
+| `taser [part=k] [at=]` | `zap` | `electrocute start=true stunMag=0.4 largeMult=2` for 2.5 s |
+| `melee damage= at= impulse= head=` | `land` (Hero's blow) | `applyImpulse`, the game's melee task: flinch (`MELEE`/`MELEE_PASIVE`) or balance |
+| `nearmiss from= dir=` | `near_miss` | within 1.5 m of the head or chest: `bodyBalance`, `upperBodyFlinch`, `headLook`; lying: `bodyFoetal` (additional reactions); `dive_shot`: a dive |
+| `car impulse= at= [id=] [player=1]` | `car_react` | damage `bump::damage`, the task `bump::react`: brace / rollup / balance / relax |
+| `prop at= impulse=` | `obj_hit` | damage 0.6 per N·s (1–35), a limb injury (`injury`) |
 | `thrown from= vel=` | `throw` | `headLook` (`look`), `upperBodyFlinch` (`avoid`) |
-| `dropped` | `fall` | `smartFall` (доп. реакции) |
-| `button name=<кнопка>` | `button` | сообщения кнопки (`Sim::lines`); `STOP_all` — `STOP all` |
-| `health value=`, `kill` | — | здоровье; `kill` — смертельный выстрел |
+| `dropped` | `fall` | `smartFall` (additional reactions) |
+| `button name=<button>` | `button` | the button's messages (`Sim::lines`); `STOP_all` is `STOP all` |
+| `health value=`, `kill` | — | health; `kill`: a fatal shot |
 
-Игра переводится в реакции сама (`addon/lua/dms/reactions.lua`): `EntityTakeDamage` (пули → `shot`, дробь одного
-тика → один `shot` с `more`, взрыв → `blast`, огонь → `burn`, удар → `melee`, шокер → `taser`), `PhysicsCollide`
-(машина → `car`, проп → `prop`), `EntityFireBullets` (промах → `nearmiss`), физган и гравипушка (`thrown`,
-`dropped`). Толчок пули и взрыва — `applyImpulse` Playroom, поэтому собственная сила урона GMod по Homer обнуляется.
+The game is turned into reactions by itself (`addon/lua/dms/reactions.lua`): `EntityTakeDamage` (bullets → `shot`, one
+tick's pellets → one `shot` with `more`, a blast → `blast`, fire → `burn`, a blow → `melee`, a stun gun → `taser`),
+`PhysicsCollide` (a car → `car`, a prop → `prop`), `EntityFireBullets` (a miss → `nearmiss`), the physgun and gravity
+gun (`thrown`, `dropped`). The push of a bullet or blast is the Playroom's `applyImpulse`, so Garry's Mod's own damage
+force on Homer is zeroed.
 
-## Переключатели Playroom (конвары, умолчания Playroom)
+## The Playroom's switches (convars, the Playroom's defaults)
 
-| Конвар | По умолчанию | Что |
+| Convar | Default | What |
 |---|---|---|
-| `dms_tasks` | 0 | задачи игры: NM → анимация, когда задача кончается |
-| `dms_look`, `dms_avoid` | 1, 0 | смотрит на брошенное / уклоняется |
-| `dms_getup` | 0 | вставание: 0 клип игры, 1 мышцы (NMPose по клипу), 2 не встаёт, 3 обученная сеть (не перенесена) |
-| `dms_extra_reactions`, `dms_extra_pick` | 0, 255 | дополнительные реакции v0.2.1 и их выбор (биты: windmill, curl up, curl up под огнём, взгляд на ударившего, кувырок с уступа, smartFall при броске, уклонение сверху, упор в стену) |
-| `dms_fire_reaction` | 1 | OnFire при горении |
-| `dms_dive_shot`, `dms_dodge_gap` | 0, 3 | нырок при повторном обстреле |
-| `dms_weak`, `dms_god` | 0, 0 | слабые наборы оружия, бесконечное здоровье |
+| `dms_tasks` | 0 | the game's tasks: NM → animation as a task ends |
+| `dms_look`, `dms_avoid` | 1, 0 | looks at what's thrown / dodges it |
+| `dms_getup` | 0 | getting up: 0 the game's clip, 1 muscles (NMPose along the clip), 2 doesn't get up, 3 the learned network (not ported) |
+| `dms_extra_reactions`, `dms_extra_pick` | 0, 255 | v0.2.1's additional reactions and which of them (bits: windmill, curl up, curl up under fire, look at who hit him, tumble off a ledge, smartFall when dropped, dodge from above, brace on a wall) |
+| `dms_fire_reaction` | 1 | OnFire while burning |
+| `dms_dive_shot`, `dms_dodge_gap` | 0, 3 | a dive when shot at again |
+| `dms_weak`, `dms_god` | 0, 0 | weak weapon sets, infinite health |
 
-Сценарии стенда и golden всегда на умолчаниях Playroom (их меняет только `!set` сценария).
+Bench and golden scenarios always run on the Playroom's defaults (only a scenario's `!set` changes them).
 
-## Тюнинг (ADR 0009)
+## Tuning (ADR 0009)
 
-`dms_tuning 0|1`, `dms_tuning_profile <имя>`; профили — `garrysmod/data/dms/profiles/*.json`
-(`{name, messages = {[сообщение] = {[параметр] = "значение"}}, taskparams = {["задача набор параметр"] = число}}`),
-только отличия от Playroom; «Playroom» — пустой и неизменяемый. Значения профиля добавляются к сообщениям, которые
-запускают поведение или меняют его параметры, если строка сама их не задаёт; taskparams — поверх файла игры.
-`dms_tuning_status` — активные значения. Меню — окно DMS (ADR 0022): `dms_menu`, клавиша из
-`dms_menu_key`, иконка DMS в контекстном меню (C) или «Утилиты → DMS → Homer (Delirium)».
+`dms_tuning 0|1`, `dms_tuning_profile <name>`; profiles are `garrysmod/data/dms/profiles/*.json`
+(`{name, messages = {[message] = {[param] = "value"}}, taskparams = {["task set param"] = number}}`), differences from
+the Playroom only; "Playroom" is empty and can't be changed. A profile's values are added to the messages that start a
+behaviour or change its params, unless the line sets them itself; taskparams go over the game's file.
+`dms_tuning_status`: the active values. The menu is the DMS window (ADR 0022): `dms_menu`, the key from `dms_menu_key`,
+the DMS icon in the context menu (C) or "Utilities → DMS → Homer (Delirium)".
 
-## Инструмент DMS (ADR 0023)
+## The DMS window (ADR 0022)
 
-Toolgun → вкладка Tools → «DMS». Режим (`dms_tool_mode`): `attach`, `react`, `behaviour`, `target`, `inspect`, `kick`,
-`throw`, `health`, `pin`; что делают ЛКМ/ПКМ/R — в подсказке инструмента и в ADR 0023. Опции: `dms_tool_reaction`,
-`dms_tool_weapon`, `dms_tool_damage`, `dms_tool_impulse`, `dms_tool_behaviour`, `dms_tool_target`
-(`look|point|lean|flinch|grab`), `dms_tool_speed`, `dms_tool_health`. Сервер: `dms_tool_everyone 0|1` (по умолчанию
-только суперадмины). Lua: `DMS_ReactAt(ent, kind, rest, hit, from, impulse)` — реакция Playroom в точке,
-`DMS_SpawnHomerFor(ply, pos, yaw)` — Homer для игрока с NM.
+Tabs: Homer (spawning, NM on/off the Homer you look at and every Homer, `dms_autoattach`, what this client draws,
+colours, the window's key), Reactions (the Playroom's switches, get-up, additional reactions, try-outs), Tuning, Task
+params, Performance (the M7 convars), Debug (the versions and problems, buttons for `dms_status`, `dms_selftest`,
+`dms_data`, `dms_info`, `dms_tuning_status`, `dms_nm_messages`, `dms_nm_parts`, `dms_nm_joints`, an NM message line to
+the Homer you look at, `dms_react_log`, the overlay). The help pane on the right explains what's under the cursor.
 
-## Консоль
+## The DMS tool (ADR 0023)
 
-| Команда | Что |
+Toolgun → Tools tab → "DMS". The mode (`dms_tool_mode`): `attach`, `react`, `behaviour`, `target`, `inspect`, `kick`,
+`throw`, `health`, `pin`; what the left and right buttons and R do is in the tool's hint and ADR 0023. Options:
+`dms_tool_reaction`, `dms_tool_weapon`, `dms_tool_damage`, `dms_tool_impulse`, `dms_tool_behaviour`, `dms_tool_target`
+(`look|point|lean|flinch|grab`), `dms_tool_speed`, `dms_tool_health`. Server: `dms_tool_everyone 0|1` (superadmins only
+by default). Lua: `DMS_ReactAt(ent, kind, rest, hit, from, impulse)`, the Playroom's reaction at a point;
+`DMS_SpawnHomerFor(ply, pos, yaw)`, a Homer with NM for a player.
+
+## Console
+
+| Command | What |
 |---|---|
-| `dms_homer` | Homer перед игроком, NM, `bodyBalance` |
-| `dms_attach` | NM на Homer, на которого смотрит игрок |
-| `dms_detach_all` | NM со всех Homer |
-| `dms_send <строка>` | сообщение NM Homer под прицелом (с консоли сервера — всем) |
-| `dms_react <реакция> [key=value …]` | реакция Homer под прицелом; без `at=` — точка прицела |
-| `dms_status`, `dms_tuning_status` | агенты (стоимость шага NM, потоки, LOD), тюнинг |
-| `dms_react_log 1` | печатать журнал слоя комнаты |
+| `dms_homer` | Homer in front of the player, NM, `bodyBalance` |
+| `dms_attach` | NM on the Homer the player looks at |
+| `dms_detach` | NM off the Homer the player looks at |
+| `dms_detach_all` | NM off every Homer |
+| `dms_send <line>` | an NM message to the Homer under the crosshair (from the server console: to all) |
+| `dms_react <reaction> [key=value …]` | a reaction of the Homer under the crosshair; without `at=`, the crosshair's point |
+| `dms_status`, `dms_tuning_status` | the agents (NM's step cost, threads, LOD), tuning |
+| `dms_info` | versions (module, addon, Delirium, `IPhysicsNM`, Homer's model) and what's wrong |
+| `dms_game_dir "<folder>"`, `dms_data`, `dms_selftest` | your GTA IV folder, NM's data from it, NM's self-test (docs/data-setup.md) |
+| `dms_react_log 1` | print the room layer's log |
 
-## Клиент
+## Client
 
-`dms_eyes`, `dms_brows` (лицо Playroom: глаза моргают, смотрят на место удара или по ходу, щурятся от боли,
-закрыты у мёртвого; брови — испуг, тревога, боль), `dms_skeleton` (скелет Playroom), `dms_overlay` (суперадмин:
-капсулы и боксы NM, силы и моменты drives, COM и его проекция; зелёный — балансирует, красный — упал),
-`dms_pedcol 0–4` (сервер: схемы цвета Playroom — скины модели).
+`dms_eyes`, `dms_brows` (the Playroom's face: the eyes blink, look where he's hit or where he's going, squint in pain,
+closed when dead; the brows: fright, alarm, pain), `dms_skeleton` (the Playroom's skeleton), `dms_overlay`
+(superadmin: NM's capsules and boxes, the drives' forces and torques, the COM and its projection; green: balancing,
+red: fallen), `dms_pedcol 0–4` (server: the Playroom's colour schemes, the model's skins).

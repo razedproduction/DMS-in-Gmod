@@ -1,19 +1,19 @@
-# 0006. GPL-3.0-only, данные GTA IV не распространяются
+# 0006. GPL-3.0-only, GTA IV's data isn't distributed
 
-Статус: принято (2026-10-21)
+Status: accepted (2026-10-21)
 
-## Контекст
+## Context
 
-Delirium SDK распространяется под GPL-3.0-only, модуль линкуется с ним статически. Для работы Delirium нужны
-персонаж (`fred.xrt` / `character.json`), build и тюнинг задач (`taskparams.txt`) из копии GTA IV пользователя.
+The Delirium SDK is distributed under GPL-3.0-only, and the module links it statically. Delirium needs the character
+(`fred.xrt` / `character.json`), the build and the task tuning (`taskparams.txt`) from the user's copy of GTA IV.
 
-## Решение
+## Decision
 
-- Весь проект (модуль, Lua-аддон, инструменты) — GPL-3.0-only, текст в `LICENSE`.
-- Ни в репозитории, ни в релизах нет файлов GTA IV и данных, извлечённых из них. Пользователь кладёт свои в
-  `garrysmod/data/dms/` (инструкция — `docs/data-setup.md`, веха M2).
+- The whole project (the module, the Lua addon, the tools) is GPL-3.0-only, the text in `LICENSE`.
+- Neither the repository nor the releases have GTA IV's files or data extracted from them. The user puts their own in
+  `garrysmod/data/dms/` (instructions: `docs/data-setup.md`, milestone M2).
 
-## Последствия
+## Consequences
 
-- Исходники модуля публикуются вместе с бинарниками.
-- Без данных пользователя аддон загружается, но агентов не создаёт и говорит, каких файлов не хватает.
+- The module's source is published together with the binaries.
+- Without the user's data the addon loads but creates no agents and says which files are missing.

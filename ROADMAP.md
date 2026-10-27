@@ -1,46 +1,48 @@
 # DMS in Gmod — Roadmap
 
-Delirium (active ragdoll, NM-style) нативно в Garry's Mod в режиме **FOLLOW**: тело — это обычный `prop_ragdoll`
-на физике VPhysics-Box3D, Delirium каждый физический шаг читает состояние частей и возвращает силы/моменты, а
-армирование суставов (armature) решается внутри солвера Box3D.
+Delirium (an active ragdoll, NM-style) natively in Garry's Mod in **FOLLOW** mode: the body is an ordinary
+`prop_ragdoll` on the VPhysics-Box3D physics, every physics step Delirium reads the parts' state and returns forces and
+torques, and the joints' armature is solved inside Box3D's solver.
 
-## Исходные данные
+## Inputs
 
-| Компонент | Где | Что даёт | Правило |
+| Component | Where | What it gives | Rule |
 |---|---|---|---|
-| Delirium SDK **v0.2.2** (`91ee246`) | `../delirium-physics (CLAUDE DONT CHANGE ANYTHING HERE)/crates/delirium-sdk` | C API `delirium_physics.h` (`nm_*`), Rust-крейт `delirium_physics` (`rlib` + `cdylib`) | **только чтение**, подключается path-зависимостью |
-| VPhysics-Box3D (форк) | `vphysics/` (git subtree, ADR 0015) | `vphysics.dll` + `IPhysicsNM` (`VBOX3D_NM_004`, `vphysics/include/vphysics_nm.h`) | менять только ради совпадения с Playroom (ADR 0008), upstream — `git subtree pull` ([docs/vphysics.md](docs/vphysics.md)) |
-| Документация Delirium (v0.2.2) | `../delirium-physics (…)/docs/how-it-works.md`, `docs/modding.md`, `CHANGELOG.md` | устройство движка, шаг, LEAD/FOLLOW, сообщения и их параметры, скрипты и `settings.txt` Playroom | справочник; где расходится с кодом — прав код Playroom |
-| Прошлая попытка | `../delirium-physics (gmod addon & api)` | заметки и грабли (README) | только как справочник, код не переносим |
+| Delirium SDK **v0.2.2** (`91ee246`) | `../delirium-physics (CLAUDE DONT CHANGE ANYTHING HERE)/crates/delirium-sdk` | the C API `delirium_physics.h` (`nm_*`), the Rust crate `delirium_physics` (`rlib` + `cdylib`) | **read only**, a path dependency |
+| VPhysics-Box3D (the fork) | `vphysics/` (git subtree, ADR 0015) | `vphysics.dll` + `IPhysicsNM` (`VBOX3D_NM_004`, `vphysics/include/vphysics_nm.h`) | changed only to match the Playroom (ADR 0008), upstream through `git subtree pull` ([docs/vphysics.md](docs/vphysics.md)) |
+| Delirium's documentation (v0.2.2) | `../delirium-physics (…)/docs/how-it-works.md`, `docs/modding.md`, `CHANGELOG.md` | how the engine works, the step, LEAD/FOLLOW, messages and their params, the Playroom's scripts and `settings.txt` | a reference; where it differs from the code, the Playroom's code is right |
+| The previous attempt | `../delirium-physics (gmod addon & api)` | notes and pitfalls (README) | only as a reference, its code isn't carried over |
 
-Ключевые факты из API, на которых строится план:
+Key facts from the API the plan is built on:
 
-- FOLLOW-цикл: `GetBodyState` → `nm_agent_set_part_states` → `nm_agent_step(dt)` → `nm_agent_get_part_drives` →
-  `ApplyBodyDrive` + `nm_agent_get_joint(...armature)` → `SetJointArmature`. Всё — внутри `SetStepCallback`,
-  на главном потоке, внутри `IPhysicsEnvironment::Simulate`.
-- Тело NM — **21 часть** (капсулы вдоль локальной Y), суставы ball/hinge с `pivot`, `frame`, `limits`, `armature`.
-  Ragdoll ValveBiped — ~15 физобъектов. Форк рассчитан на соответствие **1 часть = 1 физобъект, 1 сустав = 1 constraint**.
-- `SetJointAnchor` / `SetJointLimits` вызываются один раз при привязке, в позе покоя.
-- NM живёт на 60 Гц, Source — 66 тиков (1/66 с, 4 сабстепа Box3D). SI-единицы, Z вверх, 1 unit = 0.0254 м.
-- Delirium нужны данные персонажа (`fred.xrt` / `character.json`, `build.txt`, опционально `taskparams.txt`) из
-  копии GTA IV пользователя — в аддоне их нет и быть не может.
-- В FOLLOW `nm_agent_step` всё равно получает `NmWorld`: NM нужна геометрия мира (опора, raycast'ы, контакты частей).
-- Шаг: `dt` ∈ (0, 0.25] с, внутри `round(dt·60)` сабстепов (1…8); родной шаг 1/60 — ровно один сабстеп. Поэтому
-  NM всегда получает 1/60 (аккумулятор, M4), а не 1/66.
-- Drives FOLLOW — без гравитации («don't add gravity compensation»): хост сам даёт телу 9.8 м/с², как Playroom.
-  Наша компенсация (ADR 0007) снимает только разницу Source − 9.8, а не гравитацию NM.
-- Feedback агента очищается в начале каждого шага NM: читать после каждого `nm_agent_step`, а не раз в тик.
-- Спящий агент пропускает поведения, пока его не разбудят (`nm_agent_is_awake`).
-- C API покрывает не всё, что делает Playroom: задачи движка (`shottask`, `meleetask`, `explosion`, `onfire`,
-  `playerctl`), `extras.outbox` (сообщения, которые поведения шлют друг другу, напр. catchFall), реакции уровня
-  комнаты — их вызывает код `delirium-room` напрямую через крейт `delirium`. Модуль делает так же (ADR 0016).
+- The FOLLOW loop: `GetBodyState` → `nm_agent_set_part_states` → `nm_agent_step(dt)` → `nm_agent_get_part_drives` →
+  `ApplyBodyDrive` + `nm_agent_get_joint(...armature)` → `SetJointArmature`. All of it inside `SetStepCallback`, on the
+  main thread, inside `IPhysicsEnvironment::Simulate`.
+- NM's body is **21 parts** (capsules along the local Y), ball/hinge joints with `pivot`, `frame`, `limits`, `armature`.
+  A ValveBiped ragdoll has ~15 physics objects. The fork is designed for **1 part = 1 physics object, 1 joint = 1
+  constraint**.
+- `SetJointAnchor` / `SetJointLimits` are called once at binding, in the rest pose.
+- NM lives at 60 Hz, Source at 66 ticks (1/66 s, 4 Box3D sub-steps). SI units, Z up, 1 unit = 0.0254 m.
+- Delirium needs the character's data (`fred.xrt` / `character.json`, `build.txt`, optionally `taskparams.txt`) from the
+  user's copy of GTA IV: the addon doesn't have it and can't.
+- In FOLLOW `nm_agent_step` still gets an `NmWorld`: NM needs the world's geometry (support, raycasts, the parts'
+  contacts).
+- The step: `dt` ∈ (0, 0.25] s, inside it `round(dt·60)` sub-steps (1…8); the native 1/60 step is exactly one sub-step.
+  So NM always gets 1/60 (an accumulator, M4), not 1/66.
+- FOLLOW's drives come without gravity ("don't add gravity compensation"): the host gives the body 9.8 m/s² itself, as
+  the Playroom does. Our compensation (ADR 0007) removes only the difference Source − 9.8, not NM's gravity.
+- The agent's feedback is cleared at the start of every NM step: read it after every `nm_agent_step`, not once a tick.
+- A sleeping agent skips behaviours until woken (`nm_agent_is_awake`).
+- The C API doesn't cover everything the Playroom does: the engine's tasks (`shottask`, `meleetask`, `explosion`,
+  `onfire`, `playerctl`), `extras.outbox` (messages behaviours send each other, e.g. catchFall), reactions at the room's
+  level: `delirium-room` calls them directly through the `delirium` crate. The module does the same (ADR 0016).
 
-## Архитектура (целевая)
+## Architecture (the target)
 
 ```
 Lua (addon/)                         Binary module gmsv_dms (Rust)                         vphysics.dll (Box3D fork)
 ─────────────                        ──────────────────────────────                        ─────────────────────────
-dms.Attach(rag) ──► DMS.* натив ──► Registry агентов ──► command queue ──┐
+dms.Attach(rag) ──► DMS.* native ──► agents' registry ──► command queue ──┐
 hooks (damage, remove)                 │                                   ▼
                                        │                  OnStep(env, dt) ◄── SetStepCallback ── Simulate()
                                        │                    GetBodyState ─────────────────────────► IPhysicsNM
@@ -49,446 +51,485 @@ hooks (damage, remove)                 │                                   ▼
                                        └── events queue ──► Think hook ──► hook.Run("DMS_*")
 ```
 
-Решения, принимаемые сразу (ADR в `docs/adr/`):
+Decisions taken at once (ADRs in `docs/adr/`):
 
-1. **Модуль на Rust**, SDK линкуется как `rlib` по пути — одна DLL, без отдельного `delirium_physics.dll`.
-   Каталог SDK не трогаем: Cargo собирает его в `target/` этого репозитория.
-2. **Только серверный модуль** (`gmsv_dms_win64.dll`; 32-битная ветка GMod не поддерживается). Клиенту хватает обычной
-   сетевой репликации ragdoll'а; клиентский Lua — только отладка и UI.
-3. **Lua никогда не вызывается из step-callback'а.** Lua → модуль: очередь команд, применяется в начале `OnStep`.
-   Модуль → Lua: очередь событий, разбирается в `Think`.
-4. **Только тело Homer.** Работаем с телом NM как есть (Homer): модель с 21 костью = 21 физобъект, кадр кости =
-   кадр капсулы NM (нулевые смещения). Оригинальные модели GMod (ValveBiped) пока не делаем — см. «Отложено».
-5. **Нет `IPhysicsNM` → аддон выключается** с понятным сообщением (никакого fallback на ванильную физику в FOLLOW).
-6. Лицензия **GPL-3.0-only** (как у SDK). Игровые данные GTA IV не распространяются.
-7. **Гравитация:** `sv_gravity` не трогаем, разницу с 9.8 м/с² NM снимает сила на каждую часть (ADR 0007).
-8. **Playroom — golden** (ADR 0008): поведение Homer должно совпадать с Playroom один в один. В работу Delirium не
-   вмешиваемся (те же входные данные, drives как есть, без своего тюнинга; исключение — гравитация); расхождения
-   чиним в физике (форк), а проверяем автоматической сверкой с Playroom (`tools/golden`).
+1. **The module in Rust**, the SDK linked as an `rlib` by path: one DLL, without a separate `delirium_physics.dll`. The
+   SDK's folder isn't touched: Cargo builds it in this repository's `target/`.
+2. **A server module only** (`gmsv_dms_win64.dll`; GMod's 32-bit branch isn't supported). The client needs only the
+   ragdoll's ordinary network replication; client Lua is only debugging and UI.
+3. **Lua is never called from the step callback.** Lua → module: a command queue, applied at the start of `OnStep`.
+   Module → Lua: an event queue, taken in `Think`.
+4. **Homer's body only.** We work with NM's body as it is (Homer): a model with 21 bones = 21 physics objects, the
+   bone's frame = the NM capsule's frame (zero offsets). GMod's original models (ValveBiped) aren't done for now: see
+   "Deferred".
+5. **No `IPhysicsNM` → the addon turns off** with a clear message (no fallback to the vanilla physics in FOLLOW).
+6. Licence **GPL-3.0-only** (as the SDK's). GTA IV's game data isn't distributed.
+7. **Gravity:** `sv_gravity` isn't touched, a force on every part removes the difference from NM's 9.8 m/s² (ADR 0007).
+8. **The Playroom is golden** (ADR 0008): Homer's behaviour has to match the Playroom's one to one. We don't interfere
+   with Delirium's work (the same inputs, drives as they are, no tuning of our own; the exception is gravity);
+   divergences are fixed in the physics (the fork) and checked by an automatic comparison with the Playroom
+   (`tools/golden`).
 
-Структура репозитория:
+The repository's layout:
 
 ```
 DMS in Gmod/
   module/            gmsv_dms (Rust): ffi/vphysics_nm.rs, ffi/lua.rs, agent.rs, world.rs, bind.rs, step.rs
-  tools/             dms-homer (Rust CLI): импорт Homer из копии GTA IV → homer.mdl/.phy под тело NM
-                     golden (Rust CLI): прогон Playroom headless, сверка тела и траекторий с GMod
-  golden/            scenarios/*.txt (сценарии); out/ — эталоны Playroom, локально, не в git
+  tools/             dms-homer (Rust CLI): Homer imported from the copy of GTA IV → homer.mdl/.phy for NM's body
+                     golden (Rust CLI): running the Playroom headless, comparing the body and trajectories with GMod
+  golden/            scenarios/*.txt (scenarios); out/: the Playroom's references, local, not in git
   addon/lua/         autorun/server/dms_init.lua, dms/*.lua, autorun/client/dms_debug.lua
-  maps/ (опц.)       тестовая карта: пол, лестница, уступ, стена
-  vphysics/          форк VPhysics-Box3D (git subtree, ADR 0015): vphysics.dll + IPhysicsNM
+  maps/ (opt.)       a test map: a floor, stairs, a ledge, a wall
+  vphysics/          the VPhysics-Box3D fork (git subtree, ADR 0015): vphysics.dll + IPhysicsNM
   docs/              adr/, data-setup.md, vphysics.md, api.md
-  scripts/           build.ps1, build-vphysics.ps1, install.ps1 (копирование dll/аддона/форка в GMod)
+  scripts/           build.ps1, build-vphysics.ps1, install.ps1 (copying the dll, addon and fork into GMod)
 ```
 
 ---
 
-## Этапы
+## Milestones
 
-Оценки — ориентировочные, в «рабочих днях одного человека». Каждый этап закрывается только по чек-листу DoD.
+Estimates are rough, in "one person's working days". Each milestone closes only by its DoD checklist.
 
-### M0. Фундамент — 1–2 дня
+### M0. Foundation — 1–2 days
 
-- [ ] `git init`, `.gitignore`, LICENSE (GPL-3.0), этот roadmap.
-- [ ] ADR 1–6 (выше) записаны.
-- [x] В форке VPhysics-Box3D закоммитить NM-расширение (сейчас `physics_nm.*`, `include/`, `cmake/patches/` не
-      в git) отдельной веткой, собрать `windows-x64` (поддерживается только x86-64 ветка GMod). Закоммичено в
-      razedproduction/VPhysics-Box3D (PR #1, #2), затем форк перенесён в `vphysics/` этого репозитория
-      (`git subtree`, ADR 0015), сборка — `scripts\build-vphysics.ps1`, установка — `install.ps1 -Fork`.
-- [ ] Скопировать `vphysics_nm.h` в `module/` как эталон для FFI (файл неизменяемый, версия `VBOX3D_NM_002`).
-- [ ] `scripts/build.ps1` (cargo для `x86_64-pc-windows-msvc`, переименование в `gmsv_dms_win64.dll`),
-      `scripts/install.ps1` (dll → `garrysmod/lua/bin`, аддон →
-      `garrysmod/addons/dms`, `vphysics.dll` форка → `bin/win64` с бэкапом оригинала).
-- [ ] Тестовый стенд: GMod x86-64 branch + форк + `sv_cheats 1`, `developer 1`.
+- [x] `git init`, `.gitignore`, LICENSE (GPL-3.0), this roadmap.
+- [x] ADRs 1–6 (above) written down.
+- [x] In the VPhysics-Box3D fork, commit the NM extension (now `physics_nm.*`, `include/`, `cmake/patches/` aren't in
+      git) on a separate branch, build `windows-x64` (only GMod's x86-64 branch is supported). Committed in
+      razedproduction/VPhysics-Box3D (PR #1, #2), then the fork moved into this repository's `vphysics/`
+      (`git subtree`, ADR 0015), built with `scripts\build-vphysics.ps1`, installed with `install.ps1 -Fork`.
+- [x] Copy `vphysics_nm.h` into `module/` as the FFI's reference (an unchanging file, version `VBOX3D_NM_002`; now
+      `module/src/ffi/vphysics_nm.h`, `VBOX3D_NM_004`).
+- [x] `scripts/build.ps1` (cargo for `x86_64-pc-windows-msvc`, renamed to `gmsv_dms_win64.dll`),
+      `scripts/install.ps1` (the dll → `garrysmod/lua/bin`, the addon → `garrysmod/addons/dms`, the fork's
+      `vphysics.dll` → `bin/win64` with the original backed up).
+- [x] A test bench: GMod's x86-64 branch + the fork + `sv_cheats 1`, `developer 1` (then M2.5's bench).
 
-**DoD:** пустой модуль собирается под win64, `require("dms")` в GMod печатает версию модуля и `nm_version()`.
+**DoD:** the empty module builds for win64, `require("dms")` in GMod prints the module's version and `nm_version()`.
 
-### M1. Мост к VPhysics-Box3D — 3–4 дня
+### M1. The bridge to VPhysics-Box3D — 3–4 days
 
-- [x] `ffi/vphysics_nm.rs`: `#[repr(C)]` vtable `IPhysicsNM` строго в порядке объявления (10 методов).
-      x64 — обычный `extern "C"` с `this` первым аргументом (x86 не поддерживается, ADR 0002). `PhysicsNMBodyState_t`
-      как `#[repr(C)]`.
-- [x] Получение интерфейса: `GetModuleHandleA("vphysics.dll")` + `CreateInterface("VBOX3D_NM_002")`
-      (Linux: `dlopen(..., RTLD_NOLOAD)`, `vphysics_srv.so` на dedicated — в M7). Если `NULL` — пробуем `_001`
-      и предупреждаем, что лимитов суставов не будет; если и его нет — аддон выключен (`DMS.Available()` = false).
-- [x] `lua.rs`: Lua userdata `PhysObj` → `IPhysicsObject*` (структура GMod `UserData { void* data; uint8 type; }`,
-      проверка типа `PhysObj`). Без сторонних хаков — только через публичный layout.
-- [x] Отладочные нативы: `DMS.Available()`, `DMS.InterfaceVersion()`, `DMS.BodyState(physobj)`,
+- [x] `ffi/vphysics_nm.rs`: a `#[repr(C)]` vtable of `IPhysicsNM` strictly in declaration order (10 methods). x64 is an
+      ordinary `extern "C"` with `this` as the first argument (x86 isn't supported, ADR 0002). `PhysicsNMBodyState_t`
+      as `#[repr(C)]`.
+- [x] Getting the interface: `GetModuleHandleA("vphysics.dll")` + `CreateInterface("VBOX3D_NM_002")` (Linux:
+      `dlopen(..., RTLD_NOLOAD)`, `vphysics_srv.so` on dedicated, in M7). If `NULL`, try `_001` and warn that there'll
+      be no joint limits; if that's missing too, the addon is off (`DMS.Available()` = false).
+- [x] `lua.rs`: Lua userdata `PhysObj` → `IPhysicsObject*` (GMod's structure `UserData { void* data; uint8 type; }`,
+      checking the `PhysObj` type). No third-party hacks: only through the public layout.
+- [x] Debug natives: `DMS.Available()`, `DMS.InterfaceVersion()`, `DMS.BodyState(physobj)`,
       `DMS.Drive(physobj, force, torque[, steps])`, `DMS.FindJoint(a, b)`, `DMS.SetArmature(a, b, value)`,
-      `DMS.GetArmature(a, b)`, `DMS.SubstepCount()`, `DMS.Hover(physobj, mass, g | false)`; консольные команды
+      `DMS.GetArmature(a, b)`, `DMS.SubstepCount()`, `DMS.Hover(physobj, mass, g | false)`; console commands
       `dms_info`, `dms_bodystate`, `dms_hover`, `dms_armature` (`addon/lua/dms/debug_commands.lua`).
-- [x] Step-callback на окружение сервера (`step.rs`): ставится при первом drive'е, снятие при выгрузке модуля
-      (`gmod13_close`) и при `ShutDown` (`DMS.Shutdown()`).
+- [x] The step callback on the server's environment (`step.rs`): set at the first drive, removed when the module
+      unloads (`gmod13_close`) and at `ShutDown` (`DMS.Shutdown()`).
 
-**DoD:** (1) `BodyState` совпадает с `PhysObj:GetPos()/GetVelocity()` с учётом единиц и COM; (2) проп,
-которому `Drive` даёт силу `m·g` вверх, висит в воздухе; (3) armature 1e6 на суставе ragdoll'а делает его жёстким,
-0 — возвращает в норму; (4) `changelevel` и `lua_openscript` повторный `require` не роняют игру.
+**DoD:** (1) `BodyState` matches `PhysObj:GetPos()/GetVelocity()` allowing for units and the COM; (2) a prop given an
+upward `m·g` force by `Drive` hangs in the air; (3) armature 1e6 on a ragdoll's joint makes it rigid, 0 puts it back;
+(4) `changelevel` and `lua_openscript` with a repeated `require` don't crash the game.
 
-### M2. Delirium внутри модуля — 2–3 дня (параллельно с M1)
+### M2. Delirium inside the module — 2–3 days (in parallel with M1)
 
-- [x] Path-зависимость на `delirium-sdk`, вызовы SDK как Rust-функций (обёртки с проверкой кодов `NM_E_*`
-      и `nm_last_error`) — `module/src/nm.rs`.
-- [x] ~~Загрузка данных из `garrysmod/data/dms/`~~ → по ADR 0010 данные читаются прямо из копии игры (конвар
-      `dms_game_dir`) общим крейтом `tools/dms-game` — кодом Playroom: PC (`Fred.art` little-endian через
-      `delirium_data::LE`, как в Playroom) и Xbox 360.
-- [x] ~~Утилита «сделать `character.json`»~~ не нужна (ADR 0010); `docs/data-setup.md`.
-- [x] Офлайн-самопроверка внутри модуля: агент в LEAD на плоском полу, 2 с `bodyBalance` — стоит
-      (команда `dms_selftest`, натив `DMS.SelfTest`).
-- [x] Справочные нативы: имена частей, список сообщений/параметров, `nm_build_part_info`, `nm_agent_get_joint`
-      (`DMS.PartNames/Messages/MessageParams/BuildParts/BuildJoints/BuildDump`, команды `dms_nm_*`).
-- [x] Входные данные NM — те же, что у Playroom (ADR 0008): build Homer = `NM_DUMP` байт в байт, связи из
-      idle-клипа — бит в бит, агент в LEAD — бит в бит с Playroom (`golden dump|links|lead`).
-- [x] Golden-стенд (`tools/golden`, ADR 0008, 0011): сборка Playroom из каталога SDK без записи в него (`--locked`,
-      `--target-dir` в этом репозитории), `NM_DUMP` build'а Homer, прогоны по сценариям `golden/scenarios/`
-      (стойка `bodyBalance` 60 с, выстрел в грудь, толчок, `catchFall` с высоты, `relax`; headless — бит в бит,
-      остальные — `--script --rec` в окне, т.к. headless Playroom сценарии не исполняет) → `golden/out/` (не в
-      git). Формат команд и записи — `golden/README.md`.
+- [x] A path dependency on `delirium-sdk`, SDK calls as Rust functions (wrappers checking the `NM_E_*` codes and
+      `nm_last_error`): `module/src/nm.rs`.
+- [x] ~~Loading data from `garrysmod/data/dms/`~~ → by ADR 0010 the data is read straight from the copy of the game
+      (the convar `dms_game_dir`) by the shared crate `tools/dms-game`, with the Playroom's code: PC (`Fred.art`
+      little-endian through `delirium_data::LE`, as in the Playroom) and Xbox 360.
+- [x] ~~A tool "make `character.json`"~~ isn't needed (ADR 0010); `docs/data-setup.md`.
+- [x] An offline self-test inside the module: an agent in LEAD on a flat floor, 2 s of `bodyBalance`: it stands (the
+      command `dms_selftest`, the native `DMS.SelfTest`).
+- [x] Reference natives: part names, the list of messages and params, `nm_build_part_info`, `nm_agent_get_joint`
+      (`DMS.PartNames/Messages/MessageParams/BuildParts/BuildJoints/BuildDump`, the commands `dms_nm_*`).
+- [x] NM's inputs are the Playroom's (ADR 0008): Homer's build = `NM_DUMP` byte for byte, the links from the idle clip
+      bit for bit, the agent in LEAD bit for bit with the Playroom (`golden dump|links|lead`).
+- [x] The golden bench (`tools/golden`, ADR 0008, 0011): building the Playroom from the SDK's folder without writing to
+      it (`--locked`, `--target-dir` in this repository), the `NM_DUMP` of Homer's build, runs of the scenarios in
+      `golden/scenarios/` (standing under `bodyBalance` 60 s, a shot in the chest, a push, `catchFall` from a height,
+      `relax`; headless bit for bit, the others `--script --rec` in the window, since the headless Playroom doesn't run
+      scenarios) → `golden/out/` (not in git). The commands' and recording's format: `golden/README.md`.
 
-**DoD:** `dms_selftest` проходит в игре; без данных — внятная ошибка с путём, куда положить файлы; `tools/golden`
-одной командой снимает эталоны Playroom для всех сценариев.
+**DoD:** `dms_selftest` passes in the game; without data, a clear error with the path to put the files in;
+`tools/golden` records the Playroom's references for all scenarios in one command.
 
-### M2.5. Тестовый Playroom на Source: стенд в игре + `dms-ctl` — 4–6 дней
+### M2.5. A test Playroom on Source: the bench in the game + `dms-ctl` — 4–6 days
 
-Цель: стенд, где Claude сам, без пользователя, запускает Homer в GMod, управляет им и в реальном времени видит
-его состояние — та же роль, что у Playroom `--headless --script --rec`, но на Source + Box3D. Пользователь
-проверяет в игре только визуальное.
+The goal: a bench where Claude itself, without the user, starts Homer in GMod, drives him and sees his state in real
+time: the same role as the Playroom's `--headless --script --rec`, but on Source + Box3D. The user checks only the
+visual side in the game.
 
-Сделано ([docs/bench.md](docs/bench.md), ADR 0012). Главное отличие от плана: **стенд — сама игра без окна**, а не
-выделенный сервер — серверная сборка GMod x64 собрана с более новыми интерфейсами vphysics (`IAppSystem` с
-`GetDependencies…`, длиннее `IPhysicsCollision`/`IPhysicsSurfaceProps`), и форк её роняет.
+Done ([docs/bench.md](docs/bench.md), ADR 0012). The main difference from the plan: **the bench is the game itself
+without a window**, not a dedicated server: GMod's x64 server build is built against newer vphysics interfaces
+(`IAppSystem` with `GetDependencies…`, longer `IPhysicsCollision`/`IPhysicsSurfaceProps`), and the fork crashes it.
 
-> **Решение (2026-10-21): от выделенного сервера отказались, все тесты — в игре.** Стенд — игра пользователя без
-> окна (listen-сервер), `dms-ctl` подключается к ней. Порт форка на серверный ABI ради стенда не делается; к
-> выделенному серверу возвращаемся только вместе с Linux/dedicated в M7, если он там понадобится.
+> **Decision (2026-10-21): the dedicated server is dropped, all tests are in the game.** The bench is the user's game
+> without a window (a listen server), `dms-ctl` connects to it. The fork isn't ported to the server's ABI for the
+> bench; the dedicated server comes back only with Linux/dedicated in M7, if it's needed there.
 
-- [x] ~~**Выделенный сервер GMod**~~ → стенд на игре (ADR 0012). Выделенный сервер поставлен
-      (`E:\Games\GModServer`, `server.ps1 update`, `start -Dedicated`, `install.ps1 -Server`) и работает со своим
-      `vphysics.dll` (канал, тестовый агент, записи), но **без форка**. Выделенный сервер для тестов **не
-      используется** (решение выше); порт форка VPhysics-Box3D на серверный ABI (`IAppSystem` + интерфейсы vphysics)
-      не делается — вопрос только для Linux/dedicated (M7).
-- [x] **Запуск без окна:** `scripts\server.ps1 start|stop|restart|status` — `gmod_win64.exe -textmode`, окно
-      скрывается, listen-сервер `maxplayers 2` + `-usercon` (RCON), `sv_hibernate_think 1`, `sv_cheats 1`, всё на
-      `127.0.0.1`, RCON и токен канала — новые на каждый запуск, лог `-condebug` → `garrysmod\console.log`.
-      Пока стенд запущен, пользователь не играет.
-- [x] **Тестовая сцена:** `gm_flatgrass` — плоский пол, начало комнаты Playroom = пол под `info_player_start`
-      (`dms_bench_scene`, `DMS.BenchScene()`). Отложено на M5: стадии Playroom (лестница, стена, уступ, мост) —
-      вместе с миром NM из карты (в игре есть `vbsp/vvis/vrad`); спавн Homer в позе Playroom — M3/M4.
-- [x] **Канал управления и телеметрии в модуле** (`dev.rs`, `dev.lua`): только `127.0.0.1`, только при `dms_dev 1`
-      (включает лишь одноразовый `data/dms/bench.txt` от `server.ps1`), токен; сетевые потоки только очередь и
-      готовые кадры (ADR 0003), исполнение в `Think`. Телеметрия — JSON-строка на кадр сервера: время/тик,
-      drives `step.rs`, гравитации NM/Source (компенсация — `null` до M4), место под FOLLOW-агентов (`agents`, M4);
-      тестового агента — шаг, флаги `balancing/fallen`, COM, части, контакты, drives, feedback.
-- [x] **CLI `tools/dms-ctl`**: `status`, `exec` (RCON с выводом; `--module`), `lua` (`-f`), `nm`, `bench`,
-      `snapshot`, `watch --for … [--fields] [--every]`, `run <сценарий>` → `.rec` Playroom; `lua` уходит в RCON
-      `lua_run`, `exec` — в модуль, если другой путь не отвечает.
-- [x] **Сверка в один шаг:** `golden behaviour --source [имена]` — сценарии на стенде против `golden/out/`.
-      Пока сценарии исполняет агент SDK в LEAD (как `dms_selftest`), т.е. проверяется конвейер, а не Box3D:
-      `stand` (60 с), `stand-1s`, `relax`, `relax-1s` совпадают с Playroom до 3 знаков записи на всех шагах. Не
-      совпадают, и это известно: `shot` — с шага 62 (выстрел Playroom — ShotTask, M6); `push` — тычок от камеры
-      Playroom, которая в окне движется (стенд берёт её начальную точку); **`catchfall` — Playroom пересылает агенту
-      сообщения его `extras.outbox` (catchFall сам запускает `pedalLegs`, `bodyRollUp`), а C API SDK этот outbox
-      не отдаёт — решить в M4** (иначе FOLLOW-агент не совпадёт с Playroom на catchFall). Осмысленная сверка
-      поведения Homer — после M3 (модель) и M4 (FOLLOW).
-- [x] Время: прогоны в реальном времени (тики игры, шаги NM 1/60 по аккумулятору, как окно Playroom);
-      `host_timescale` — только для отладки.
+- [x] ~~**A GMod dedicated server**~~ → the bench on the game (ADR 0012). A dedicated server is installed
+      (`E:\Games\GModServer`, `server.ps1 update`, `start -Dedicated`, `install.ps1 -Server`) and works with its own
+      `vphysics.dll` (the channel, the test agent, recordings), but **without the fork**. The dedicated server **isn't
+      used** for tests (the decision above); the VPhysics-Box3D fork isn't ported to the server's ABI (`IAppSystem` +
+      the vphysics interfaces): a question only for Linux/dedicated (M7).
+- [x] **Starting without a window:** `scripts\server.ps1 start|stop|restart|status`: `gmod_win64.exe -textmode`, the
+      window hidden, a listen server `maxplayers 2` + `-usercon` (RCON), `sv_hibernate_think 1`, `sv_cheats 1`,
+      everything on `127.0.0.1`, RCON and the channel's token new on every start, the `-condebug` log →
+      `garrysmod\console.log`. While the bench runs, the user doesn't play.
+- [x] **The test scene:** `gm_flatgrass`: a flat floor, the start of the Playroom's room = the floor under
+      `info_player_start` (`dms_bench_scene`, `DMS.BenchScene()`). Deferred to M5: the Playroom's stages (stairs, a
+      wall, a ledge, a bridge), together with NM's world from the map (the game has `vbsp/vvis/vrad`); spawning Homer in
+      the Playroom's pose: M3/M4.
+- [x] **The control and telemetry channel in the module** (`dev.rs`, `dev.lua`): only `127.0.0.1`, only with
+      `dms_dev 1` (turned on only by the one-off `data/dms/bench.txt` from `server.ps1`), a token; the network threads
+      only queue and hand out finished frames (ADR 0003), the work is done in `Think`. Telemetry: a JSON line a server
+      frame: time/tick, `step.rs`'s drives, NM's and Source's gravities (the compensation `null` until M4), room for
+      FOLLOW agents (`agents`, M4); the test agent's step, the `balancing/fallen` flags, COM, parts, contacts, drives,
+      feedback.
+- [x] **The CLI `tools/dms-ctl`**: `status`, `exec` (RCON with output; `--module`), `lua` (`-f`), `nm`, `bench`,
+      `snapshot`, `watch --for … [--fields] [--every]`, `run <scenario>` → the Playroom's `.rec`; `lua` goes to RCON's
+      `lua_run`, `exec` to the module, if the other way doesn't answer.
+- [x] **Comparison in one step:** `golden behaviour --source [names]`: scenarios on the bench against `golden/out/`.
+      For now the scenarios are run by an SDK agent in LEAD (as `dms_selftest`), i.e. the pipeline is checked, not
+      Box3D: `stand` (60 s), `stand-1s`, `relax`, `relax-1s` match the Playroom to 3 digits of the recording on every
+      step. Not matching, and known: `shot` from step 62 (the Playroom's shot is ShotTask, M6); `push`: a poke from the
+      Playroom's camera, which moves in the window (the bench takes its starting point); **`catchfall`: the Playroom
+      forwards the messages of its `extras.outbox` to the agent (catchFall itself starts `pedalLegs`, `bodyRollUp`), and
+      the SDK's C API doesn't expose this outbox: solve in M4** (otherwise a FOLLOW agent won't match the Playroom on
+      catchFall). A meaningful comparison of Homer's behaviour comes after M3 (the model) and M4 (FOLLOW).
+- [x] Time: runs in real time (the game's ticks, NM steps of 1/60 by an accumulator, like the Playroom's window);
+      `host_timescale` only for debugging.
 
-**DoD:** одной командой (`scripts\server.ps1 start`) поднимается игра без окна (listen-сервер); `dms-ctl exec status`,
-`dms-ctl lua "return DMS.Version"` и `dms-ctl watch --for 2s` работают из PowerShell; сценарий из
-`golden/scenarios/` прогоняется в игре и даёт запись в формате Playroom; всё доступно из сессии Claude без
-участия пользователя.
+**DoD:** one command (`scripts\server.ps1 start`) brings up the game without a window (a listen server); `dms-ctl exec
+status`, `dms-ctl lua "return DMS.Version"` and `dms-ctl watch --for 2s` work from PowerShell; a scenario from
+`golden/scenarios/` runs in the game and gives a recording in the Playroom's format; everything is available from
+Claude's session without the user.
 
-### M3. Модель Homer: импорт с нуля под NM — 6–9 дней
+### M3. Homer's model: imported from scratch for NM — 6–9 days
 
-Цель: ragdoll Homer, у которого физика совпадает с телом NM, чтобы любые проблемы FOLLOW были проблемами
-интеграции, а не подгонки. Дальше все вехи работают только с ним (дальше «эталон» = Homer).
+The goal: a Homer ragdoll whose physics matches NM's body, so that any FOLLOW problems are integration problems, not
+fitting ones. From here every milestone works only with him (from here "the reference" = Homer).
 
-Модель **импортируется заново**, ничего не берётся из прошлой попытки (её `delirium-ragdoll`, `homer.mdl` и
-`.nmfit.txt` не используются). Принцип — максимальная совместимость с NM: всё, что касается тела, берётся из тех же
-данных и тем же кодом, каким Delirium строит Homer сам (`delirium-data` + `delirium::ragdoll::Rig`, как
-`getup::homer` в Playroom), без подгонок (`nm_build_fit`) и ручных правок.
+The model is **imported anew**, nothing is taken from the previous attempt (its `delirium-ragdoll`, `homer.mdl` and
+`.nmfit.txt` aren't used). The principle is maximum compatibility with NM: everything about the body is taken from the
+same data and with the same code Delirium builds Homer with itself (`delirium-data` + `delirium::ragdoll::Rig`, like
+`getup::homer` in the Playroom), without fitting (`nm_build_fit`) or hand edits.
 
-Сделано ([docs/homer.md](docs/homer.md), ADR 0013). Отличия от плана: кадр физобъекта — кадр части NM, но ось
-капсулы в нём повёрнута (NM поворачивает форму своим link'ом), ступни и кисти — боксы NM; вид — как в Playroom
-(капсулы и боксы NM, без меша и текстур GTA IV).
+Done ([docs/homer.md](docs/homer.md), ADR 0013). Differences from the plan: the physics object's frame is the NM
+part's frame, but the capsule's axis in it is turned (NM turns the shape with its link), feet and hands are NM's
+boxes; the look is the Playroom's (NM's capsules and boxes, without GTA IV's mesh and textures).
 
-- [x] `tools/dms-homer` (Rust CLI): Homer из копии GTA IV через `tools/dms-game` (тот же build, что у Playroom, без
-      `nm_build_fit`); тело NM — общий `dms_game::body` (`Ragdoll` + `Agent::joints`), его же берут модуль и `golden`.
-- [x] Физика: 21 физобъект в порядке частей NM, кость повёрнута как кадр части NM, её начало — в пивоте сустава
-      (Source рисует кость ребёнка на постоянном смещении от родителя), центр масс — в центре части, оболочки капсул/боксов NM (уменьшены на
-      6.35 мм — форк их раздувает; шаг ≥ 1.4 см — форк сваривает ближе 1 см), массы NM точно, центр масс в центре
-      части и диагональ инерции NM — прямо в `.phy`, ball/hinge по NM, только пары self-collision NM, демпфирование 0.
-- [x] Визуал — как рисует Homer Playroom (`part_mesh`, `part_color`): капсула/бокс NM каждой части в её кадре
-      капсулы, левые части красные, правые синие, остальные серые, полупрозрачные; остальные схемы `PED_COLORS`
-      (all blue, all red, solid blue, mixed opaque) — скины модели (`$texturegroup`). Меш и текстуры GTA IV не
-      экспортируются. Лицо и скелет-оверлей Playroom — M6.
-- [x] Сборка: SMD + `.qc` → `studiomdl` GMod (`bin\win64`, с форком) → `garrysmod/models/dms/homer.mdl` + `.phy`
-      (текст переписывается: солиды по индексам — так их берёт игра), материалы в `materials/models/dms/homer/`.
-- [x] Модель и рабочие файлы — только у пользователя (`target/dms-homer/`, папки GMod), в git не попадают.
-- [x] Проверка в игре: 21 физобъект, массы, все 20 суставов через `FindConstraint` (`golden body`).
-- [x] Bind (`bind.rs`, `DMS.BindHomer`): `SetJointAnchor` + `SetJointLimits` (кадры NM на родителе и ребёнке) на
-      каждом суставе; части → физобъекты по именам костей (`DMS_HomerParts`).
-- [x] Спавн: `dms_homer` — Homer в стоячей позе Playroom перед игроком, лицом к нему, сразу связан с NM.
-- [x] **`golden body`**: build = `NM_DUMP` (байт в байт; поля и C API SDK — 0…5e-7); `.phy` — массы/центр масс/
-      диагональ инерции точно, оболочки −3.1…+0.5 мм, объём ≤ 3.7 %, констрейнты и пары NM; в игре — позиции
-      ≤ 0.6 мм, повороты ≤ 0.1°, массы и диагональ инерции точно, падение без NM — без взрывов, пивоты ≤ 1.5 мм.
-- [x] **Расхождения форка исправлены** (ADR 0014, `VBOX3D_NM_003`): полный тензор инерции (`SetBodyInertia`; был
-      только диагональ, у рук до 46 %) и шар с семантикой NM (`SetJointBallLimits`: twist по Z, эллипс наклонов в
-      кадре родителя — патч Box3D `box3d-elliptical-cone.patch`; было twist/cone/plane с эвристической осью и
-      перепутанными X/Y, бедро уходило на ~15°). `golden body` проходит: тензор 7e-8, суставы при падении ≤ 0.5° за
-      пределами NM, пивоты ≤ 0.6 мм.
-- [ ] Визуальная проверка пользователем (docs/homer.md: вид, `vcollide_wireframe 1`, падение).
-**DoD:** `dms-homer` из копии GTA IV одной командой делает `homer.mdl`; `tools/golden body` проходит: build совпадает
-с Playroom (1e-5), у заспавненного Homer все 21 часть совпадают с Playroom (позиция ≤ 1 мм, поворот ≤ 0.5°, масса
-точно, инерция ≤ 1 %); брошенный без NM он ведёт себя как обычный ragdoll, суставы гнутся в пределах NM, ничего не
-взрывается; лимиты видны через `IPhysicsConstraint::GetConstraintTransform`.
+- [x] `tools/dms-homer` (a Rust CLI): Homer from the copy of GTA IV through `tools/dms-game` (the same build as the
+      Playroom's, without `nm_build_fit`); NM's body is the shared `dms_game::body` (`Ragdoll` + `Agent::joints`), the
+      module and `golden` take it too.
+- [x] Physics: 21 physics objects in NM's part order, the bone turned as the NM part's frame, its origin in the joint's
+      pivot (Source draws a child's bone at a constant offset from the parent), the centre of mass in the part's
+      centre, the hulls of NM's capsules and boxes (shrunk by 6.35 mm: the fork inflates them; a step ≥ 1.4 cm: the
+      fork welds closer than 1 cm), NM's masses exactly, the centre of mass in the part's centre and NM's inertia
+      diagonal right in the `.phy`, ball/hinge by NM, only NM's self-collision pairs, damping 0.
+- [x] The look, as the Playroom draws Homer (`part_mesh`, `part_color`): each part's NM capsule or box in its capsule
+      frame, left parts red, right blue, the rest grey, translucent; the other `PED_COLORS` schemes (all blue, all red,
+      solid blue, mixed opaque) are the model's skins (`$texturegroup`). GTA IV's mesh and textures aren't exported.
+      The Playroom's face and skeleton overlay: M6.
+- [x] Building: SMD + `.qc` → GMod's `studiomdl` (`bin\win64`, with the fork) → `garrysmod/models/dms/homer.mdl` +
+      `.phy` (the text rewritten: solids by index, as the game takes them), materials in
+      `materials/models/dms/homer/`.
+- [x] The model and working files only on the user's machine (`target/dms-homer/`, GMod's folders), not in git.
+- [x] A check in the game: 21 physics objects, masses, all 20 joints through `FindConstraint` (`golden body`).
+- [x] Bind (`bind.rs`, `DMS.BindHomer`): `SetJointAnchor` + `SetJointLimits` (NM's frames on the parent and the
+      child) on every joint; parts → physics objects by the bones' names (`DMS_HomerParts`).
+- [x] Spawn: `dms_homer`: Homer in the Playroom's standing pose in front of the player, facing them, bound to NM at once.
+- [x] **`golden body`**: build = `NM_DUMP` (byte for byte; the fields and the SDK's C API 0…5e-7); `.phy`:
+      masses/centre of mass/inertia diagonal exactly, hulls −3.1…+0.5 mm, volume ≤ 3.7 %, NM's constraints and pairs; in
+      the game, positions ≤ 0.6 mm, rotations ≤ 0.1°, masses and inertia diagonal exactly, a fall without NM without
+      blow-ups, pivots ≤ 1.5 mm.
+- [x] **The fork's divergences fixed** (ADR 0014, `VBOX3D_NM_003`): the full inertia tensor (`SetBodyInertia`; it was
+      only the diagonal, the arms up to 46 % off) and a ball with NM's semantics (`SetJointBallLimits`: twist about Z, an
+      ellipse of leans in the parent's frame, the Box3D patch `box3d-elliptical-cone.patch`; it was twist/cone/plane
+      with a heuristic axis and X/Y mixed up, the hip went ~15° past). `golden body` passes: the tensor 7e-8, joints in a
+      fall ≤ 0.5° past NM's limits, pivots ≤ 0.6 mm.
+- [ ] The user's visual check (docs/homer.md: the look, `vcollide_wireframe 1`, a fall).
 
-### Обновление SDK: Delirium v0.1.9+7 → v0.2.2 (2026-10-26)
+**DoD:** `dms-homer` makes `homer.mdl` from the copy of GTA IV in one command; `tools/golden body` passes: the build
+matches the Playroom's (1e-5), a spawned Homer has all 21 parts matching the Playroom (position ≤ 1 mm, rotation ≤ 0.5°,
+mass exactly, inertia ≤ 1 %); thrown without NM he behaves as an ordinary ragdoll, the joints bend within NM's limits,
+nothing blows up; the limits are visible through `IPhysicsConstraint::GetConstraintTransform`.
 
-- [x] SDK на `v0.2.2` (`91ee246`); C API (`delirium-sdk`) не менялся, правок API не понадобилось. `bevy_math` /
-      `bevy_transform` 0.18 → 0.20 (`glam` 0.30 → 0.33, версии — как в `Cargo.lock` SDK). Сборка — без AVX2: у модуля
-      те же рантайм-ветки с проверкой CPU (`ymm`/BMI в memchr и std), что и до обновления, FMA-инструкций нет.
-- [x] Тело Homer не изменилось: сужающиеся капсулы (`Shape::Tapered`, `8c47480`) есть только в GJK, частям Homer они не
-      назначаются; build отличается от прежнего в последнем бите float (≤ 1e-7, новый `glam`). Модель `dms-homer`
-      пересобрана (формы и `.phy` те же, вершины оболочек сдвинуты на тысячные доли мм).
-- [x] `tools/dms-game` сверен с Playroom: `getup::{key, plat, homer, Clips::stand_up}` и порядок `load` те же (в
-      `Clips::load` добавились только клипы плавания). Изменился пол комнаты Playroom: `world::floor_tris(pool, 50)` —
-      плитки 1 м, как прежний `add_floor`, но с ямой бассейна (x −3…3, y 5…25 м); `dms_game::floor` повторяет его
-      (мир `dms_selftest` и стенда, `golden lead`).
-- [x] Эталоны Playroom сняты заново (`golden/out/`): поведение изменилось (стойка расходится с прежней с ~0.87 с,
-      `catchFall` теперь шлёт `stopAllBehaviours` в 0.67 с вместо `pedalLegs`/`bodyRollUp` и т.д. — «tester fixes»).
-      Окно Playroom с v0.2.1 читает `%APPDATA%\delirium\settings.txt` (там и переключатели поведения) и на обычной
-      графике идёт < 10 FPS (теряет шаги), поэтому `golden run` запускает окно с `--safe`: умолчания Playroom и
-      минимальная графика, 60 шагов/с.
-- [x] `golden`: dump байт в байт, links и lead бит в бит, `body` проходит целиком; `behaviour --source` — `stand`
-      (60 с), `stand-1s`, `relax`, `relax-1s` совпадают до 3 знаков на всех шагах. Как и раньше, не совпадают `shot`
-      (M6), `push` (камера Playroom; COM теперь в пределах 1.4 мм) и `catchfall` (outbox, M4).
+### SDK update: Delirium v0.1.9+7 → v0.2.2 (2026-10-26)
 
-### M4. FOLLOW-цикл на эталоне — 5–8 дней (главная веха)
+- [x] The SDK at `v0.2.2` (`91ee246`); the C API (`delirium-sdk`) didn't change, no API fixes were needed. `bevy_math` /
+      `bevy_transform` 0.18 → 0.20 (`glam` 0.30 → 0.33, versions as in the SDK's `Cargo.lock`). Built without AVX2: the
+      module has the same runtime branches with a CPU check (`ymm`/BMI in memchr and std) as before the update, no FMA
+      instructions.
+- [x] Homer's body didn't change: tapered capsules (`Shape::Tapered`, `8c47480`) exist only in GJK, Homer's parts
+      don't get them; the build differs from the former in the last bit of a float (≤ 1e-7, the new `glam`). The
+      `dms-homer` model rebuilt (the same shapes and `.phy`, the hulls' vertices moved by thousandths of a mm).
+- [x] `tools/dms-game` compared with the Playroom: `getup::{key, plat, homer, Clips::stand_up}` and the `load` order are
+      the same (`Clips::load` only gained the swimming clips). The Playroom room's floor changed: `world::floor_tris(pool,
+      50)`: 1 m tiles, like the former `add_floor`, but with the pool's pit (x −3…3, y 5…25 m); `dms_game::floor`
+      repeats it (the world of `dms_selftest` and the bench, `golden lead`).
+- [x] The Playroom's references recorded anew (`golden/out/`): the behaviour changed (the stance diverges from the
+      former from ~0.87 s, `catchFall` now sends `stopAllBehaviours` at 0.67 s instead of `pedalLegs`/`bodyRollUp`
+      etc.: "tester fixes"). The Playroom's window since v0.2.1 reads `%APPDATA%\delirium\settings.txt` (the behaviour
+      switches are there too) and on ordinary graphics runs at < 10 FPS (losing steps), so `golden run` starts the
+      window with `--safe`: the Playroom's defaults and minimal graphics, 60 steps/s.
+- [x] `golden`: dump byte for byte, links and lead bit for bit, `body` passes whole; `behaviour --source`: `stand`
+      (60 s), `stand-1s`, `relax`, `relax-1s` match to 3 digits on every step. As before, `shot` (M6), `push` (the
+      Playroom's camera; the COM now within 1.4 mm) and `catchfall` (the outbox, M4) don't match.
 
-Сделано (ADR 0017). Главное отличие от плана: агент FOLLOW работает не через C API, а на крейте `delirium`, как
-Playroom (outbox, `in_air`, импульсы NM мимо `doll.out`), и понадобились правки физики форка — без них Homer падал за
-~2 с.
+### M4. The FOLLOW loop on the reference — 5–8 days (the main milestone)
 
-- [x] `step.rs` + `follow.rs`: на каждый шаг NM — команды → `GetBodyState` ×21 → `set_body` → слой комнаты Playroom →
-      `Agent::step_follow` → drives (`doll.out`) → `ApplyBodyDrive` ×21 на каждый шаг Source → armature из
-      `doll.armature` → `SetJointArmature` ×20. Внутри step-callback — только `IPhysicsNM` (ADR 0003). Кадр тела Homer
-      = кадр части NM (M3), центр масс в центре части — преобразования не нужны.
-- [x] Время: NM всегда 1/60 (аккумулятор над шагами физики 0.015 с, drives держатся до следующего шага NM). Проверено:
-      `-tickrate 60` шаг физики не меняет (игра ставит 0.015), шаг физики 1/60 (`DMS.EnvTimestep`) и шаг NM = шагу
-      Source — не лучше. Запись сценария — в порядке тика Playroom.
-- [x] Гравитация (ADR 0007): `sv_gravity` не трогаем, `F_k = m_k · (g_nm − g_src)`, `g_src` из `physenv.GetGravity()`;
-      режимы `dms_gravity_mode nm | hybrid | off` замерены против Playroom, **по умолчанию `nm`** (решение
-      пользователя): только с ним все сценарии в допусках.
-- [x] Сообщения между поведениями: `extras.outbox` пересылается после каждого шага NM как в Playroom (`extras_frame`).
-      В v0.2.2 `stopAllBehaviours` в `catchfall` шлёт `in_air` слоя комнаты — перенесён тем же кодом (ADR 0016, 0017).
-- [x] Feedback и флаги — после каждого шага NM в очередь событий (`DMS.FollowEvents`, хуки `DMS_Feedback`,
+Done (ADR 0017). The main difference from the plan: the FOLLOW agent works not through the C API but on the `delirium`
+crate, as the Playroom does (the outbox, `in_air`, NM's impulses past `doll.out`), and the fork's physics needed fixes:
+without them Homer fell in ~2 s.
+
+- [x] `step.rs` + `follow.rs`: on every NM step: commands → `GetBodyState` ×21 → `set_body` → the Playroom's room layer
+      → `Agent::step_follow` → drives (`doll.out`) → `ApplyBodyDrive` ×21 on every Source step → armature from
+      `doll.armature` → `SetJointArmature` ×20. Inside the step callback only `IPhysicsNM` (ADR 0003). Homer's body's
+      frame = the NM part's frame (M3), the centre of mass in the part's centre: no conversions needed.
+- [x] Time: NM always 1/60 (an accumulator over the 0.015 s physics steps, drives held until the next NM step).
+      Checked: `-tickrate 60` doesn't change the physics step (the game sets 0.015), a 1/60 physics step
+      (`DMS.EnvTimestep`) and an NM step = the Source step are no better. A scenario's recording in the Playroom's tick
+      order.
+- [x] Gravity (ADR 0007): `sv_gravity` isn't touched, `F_k = m_k · (g_nm − g_src)`, `g_src` from `physenv.GetGravity()`;
+      the modes `dms_gravity_mode nm | hybrid | off` measured against the Playroom, **the default `nm`** (the user's
+      decision): only with it are all the scenarios within tolerance.
+- [x] Messages between behaviours: `extras.outbox` forwarded after every NM step as in the Playroom (`extras_frame`).
+      In v0.2.2 the `stopAllBehaviours` in `catchfall` is sent by the room layer's `in_air`: carried over with the same
+      code (ADR 0016, 0017).
+- [x] Feedback and flags after every NM step into the event queue (`DMS.FollowEvents`, the hooks `DMS_Feedback`,
       `DMS_Fallen`, `DMS_Detached`).
-- [x] Сон: собственный сон доллы NM сохраняется, пока Box3D не сдвинул тело; тела засыпают вместе с ней (событие
-      `sleep`), удар будит обоих.
-- [x] Защита: NaN/Inf или разнос (> 80 м/с, > 300 рад/с) → агент снимается, armature 0, ragdoll обычный.
-- [x] Отладка: `dms_status`, `dms_follow_send`, телеметрия `dms-ctl watch` (`agents`: шаг, флаги, COM, части, drives,
-      armature, `pred_err` — расхождение Box3D с предсказанием физики NM, `limit_use`, `state_v`, компенсация,
-      стоимость NM). Клиентский оверлей капсул/сил **не сделан** — перенесён в M6 (вместе с лицом и скелетом Homer).
-- [x] Golden-сверка: сценарии стенда исполняет Homer в FOLLOW на Box3D (`--lead` — прежний LEAD-агент), команды —
-      на шагах Playroom из меток его записи; `golden behaviour --source` проверяет допуски сценария (`#! tol`).
-- [x] Правки форка (ADR 0017, `VBOX3D_NM_003` без изменения интерфейса): armature (`Cdot0` раз на сабстеп, 8
-      проходов Гаусса–Зейделя по суставам с armature), скорость начала шага в `GetBodyState`, непрерывная гравитация
-      тел NM. `golden body` проходит.
-- [ ] Известные расхождения (план — следующий шаг по физике, ADR 0017): `relax-1s` вне допуска (опорная стопа
-      проседает в мягкий контакт Box3D на 2–4 см под ударной нагрузкой); пол Box3D на 6.35 мм выше BSP; выстрел — M6.
-      → M5 (ADR 0018): пол учтён; причина `relax-1s` уточнена — растяжение суставов, а не контакт.
+- [x] Sleep: the NM doll's own sleep is kept until Box3D moves the body; the bodies fall asleep with it (the `sleep`
+      event), a blow wakes both.
+- [x] Protection: NaN/Inf or a blow-up (> 80 m/s, > 300 rad/s) → the agent comes off, armature 0, an ordinary ragdoll.
+- [x] Debugging: `dms_status`, `dms_follow_send`, the telemetry of `dms-ctl watch` (`agents`: step, flags, COM, parts,
+      drives, armature, `pred_err`: Box3D's divergence from NM physics' prediction, `limit_use`, `state_v`, the
+      compensation, NM's cost). The client overlay of capsules and forces **isn't done**: moved to M6 (with Homer's face
+      and skeleton).
+- [x] The golden comparison: the bench's scenarios are run by Homer in FOLLOW on Box3D (`--lead`: the former LEAD
+      agent), the commands on the Playroom's steps from its recording's marks; `golden behaviour --source` checks the
+      scenario's tolerances (`#! tol`).
+- [x] The fork's fixes (ADR 0017, `VBOX3D_NM_003` without changing the interface): armature (`Cdot0` once a sub-step, 8
+      Gauss–Seidel passes over the joints with armature), the step's starting velocity in `GetBodyState`, continuous
+      gravity for NM bodies. `golden body` passes.
+- [ ] Known divergences (the plan is the next step in the physics, ADR 0017): `relax-1s` outside tolerance (the
+      supporting foot sinks 2–4 cm into Box3D's soft contact under the impact load); Box3D's floor 6.35 mm above the
+      BSP; the shot: M6.
+      → M5 (ADR 0018): the floor is taken into account; the cause of `relax-1s` refined: the joints stretching, not
+      the contact.
 
-**DoD:** стойка `bodyBalance` 60 с, толчок, `catchFall`, `relax`, первые 60 шагов выстрела — в допусках сценария;
-`relax-1s` — вне допуска, причина и план в ADR 0017; 4 Homer одновременно — 67 тиков/с при цели 66.7 (~1 мс NM на
-агента).
+**DoD:** standing under `bodyBalance` 60 s, a push, `catchFall`, `relax`, the first 60 steps of a shot within the
+scenario's tolerances; `relax-1s` outside tolerance, the cause and the plan in ADR 0017; 4 Homers at once: 67 ticks/s
+with a target of 66.7 (~1 ms of NM an agent).
 
-### M5. Мир для NM — 4–6 дней (параллельно с концом M4)
+### M5. The world for NM — 4–6 days (in parallel with the end of M4)
 
-Сделано (ADR 0018). Отличия от плана: мир строится крейтом `delirium` (`Collision`, как у FOLLOW-агента M4), а не
-C API; пол режется на квадраты 1 м, как пол Playroom; понадобились правки форка — материалы контактов NM
-(`VBOX3D_NM_004`) и жёсткость суставов NM.
+Done (ADR 0018). Differences from the plan: the world is built by the `delirium` crate (`Collision`, as for M4's FOLLOW
+agent), not the C API; the floor is cut into 1 m squares, like the Playroom's floor; the fork needed fixes: NM's
+contact materials (`VBOX3D_NM_004`) and the stiffness of NM's joints.
 
-- [x] Статика: `.bsp` карты (Lua читает файл игры, `module/src/world.rs`): грани модели мира без
-      `SKY/SKY2D/WARP/TRIGGER/NODRAW/HINT/SKIP`, displacement'ы, обход против часовой вокруг внешней нормали, без
-      T-стыков; пол — квадратами 1 м по сетке кадра NM (как `world::floor_tris`) в радиусе 50 м. Материалы:
-      `$surfaceprop` → строка materials.dat (`world::SURFACES`, неизвестное — CONCRETE). Кэш: карта — на сессию, мир —
-      по началу кадра агента. Проверка `DMS_MapCheck`: высоты NM и трассы игры совпадают до 0.1 мм.
-- [x] Динамика: пропы в 3 м от агента → `Obstacle` каждый тик (OBB, скорость, вращение, центр масс; `DMS.FollowObstacles`,
-      телеметрия `obstacles`); транспорт — тем же путём (боксом по OBB).
-- [x] Fallback: карта не читается — пол Playroom на высоте трассы вниз (`DMS_FloorBelow`).
-- [x] Пол Box3D на 6.35 мм выше BSP: грани мира NM сдвинуты наружу на оболочку форка, пол под Homer — плоскость
-      трассы (минус `DIST_EPSILON`) плюс оболочка; кадр NM каждого агента — на полу под ним.
-- [x] Трение и упругость контактов как в физике NM: форк `VBOX3D_NM_004` (`SetBodyMaterial`, `SetSurfaceMaterial`):
-      `μ_части × μ_строки materials.dat`, `0.4 × e`; суставы между телами NM — без «бюджета жёсткости» Box3D.
-- [x] Слой комнаты Playroom на стадиях тем же кодом (ADR 0016): `stairs_frame` (`rollDownStairs`), `ledge` (rooftop).
-- [ ] Вода: Homer в воде карты — как в бассейне Playroom (v0.2.1): то же сообщение `buoyancy` с теми же
-      параметрами и поверхностью воды из карты; GPU-симуляцию воды Playroom не переносим.
-- [x] Тестовая карта: `tools/dms-map` → `dms_stages.bsp` (стадии Playroom `bigstairs`, `stairsdown`, `rooftop`,
-      `highledge`, `lowwall`, `kerb`, `rail`, `open` и наклон 20°, сайт на стадию); лёд — не сделан (с водой).
-- [x] Golden-сценарии на стадиях (`#! window stage=…` → Playroom `--stage`, стенд `server.ps1 start -Map dms_stages`):
-      `kerb`, `rooftop`, `lowwall`, `stairs`; проверка `said=` (реакции слоя комнаты). В допусках: `kerb`, все прежние
-      сценарии кроме `relax-1s`, у `rooftop` — реакции и падение (кроме позы после приземления).
-- [ ] Известные расхождения (ADR 0018): `relax-1s` (0.77 с против 1.00) — не мягкий контакт, а растяжение суставов
-      Box3D под весом (голеностоп 6–10 мм; доп. проходы форка не включают контакты стоп); `lowwall`, `stairs` и
-      приземление `rooftop` — хаотическое усиление того же расхождения стойки (2 см до толчка). План — контакты тел NM в
-      доп. проходах Гаусса–Зейделя форка.
-      → ADR 0019: контакты тел NM в доп. проходах сделаны (`box3d-armature-contacts.patch`): `stairs` в допуске,
-      `lowwall` стоит (разрыв COM 0.12 м вместо 2.2), пики растяжения голеностопа 20 → 10 мм. Остаток — упругость
-      мягкого сустава Box3D `F / (m_eff · ω²)` (~5 мм в стойке), из-за неё `relax-1s` (позже 1.00 с), поза `kerb`,
-      `lowwall` (близко) и приземление `rooftop` пока вне допуска; план — жёсткость суставов NM выше потолка ¼.
+- [x] Statics: the map's `.bsp` (Lua reads the game's file, `module/src/world.rs`): the world model's faces without
+      `SKY/SKY2D/WARP/TRIGGER/NODRAW/HINT/SKIP`, displacements, wound anticlockwise about the outward normal, without
+      T-junctions; the floor in 1 m squares on NM's frame's grid (like `world::floor_tris`) within 50 m. Materials:
+      `$surfaceprop` → a materials.dat row (`world::SURFACES`, unknown → CONCRETE). The cache: the map for the session,
+      the world by the agent's frame's start. The check `DMS_MapCheck`: NM's heights and the game's traces match to
+      0.1 mm.
+- [x] Dynamics: props within 3 m of the agent → an `Obstacle` every tick (OBB, velocity, rotation, centre of mass;
+      `DMS.FollowObstacles`, the telemetry `obstacles`); vehicles the same way (a box by the OBB).
+- [x] Fallback: the map can't be read: the Playroom's floor at the height of a trace downwards (`DMS_FloorBelow`).
+- [x] Box3D's floor 6.35 mm above the BSP: NM's world's faces moved out by the fork's shell, the floor under Homer is
+      the trace's plane (minus `DIST_EPSILON`) plus the shell; each agent's NM frame on the floor under him.
+- [x] Contact friction and restitution as in NM's physics: the fork's `VBOX3D_NM_004` (`SetBodyMaterial`,
+      `SetSurfaceMaterial`): `μ_part × μ_materials.dat row`, `0.4 × e`; joints between NM bodies skip Box3D's "stiffness
+      budget".
+- [x] The Playroom's room layer on the stages with the same code (ADR 0016): `stairs_frame` (`rollDownStairs`),
+      `ledge` (rooftop).
+- [ ] Water: Homer in the map's water as in the Playroom's pool (v0.2.1): the same `buoyancy` message with the same
+      params and the water's surface from the map; the Playroom's GPU water simulation isn't carried over.
+- [x] A test map: `tools/dms-map` → `dms_stages.bsp` (the Playroom's stages `bigstairs`, `stairsdown`, `rooftop`,
+      `highledge`, `lowwall`, `kerb`, `rail`, `open` and a 20° slope, a site a stage); ice isn't done (with the water).
+- [x] Golden scenarios on the stages (`#! window stage=…` → the Playroom's `--stage`, the bench
+      `server.ps1 start -Map dms_stages`): `kerb`, `rooftop`, `lowwall`, `stairs`; the `said=` check (the room layer's
+      reactions). Within tolerance: `kerb`, all the earlier scenarios except `relax-1s`, for `rooftop` the reactions
+      and the fall (except the pose after landing).
+- [ ] Known divergences (ADR 0018): `relax-1s` (0.77 s against 1.00) isn't the soft contact but Box3D's joints
+      stretching under the weight (the ankle 6–10 mm; the fork's extra passes don't include the feet's contacts);
+      `lowwall`, `stairs` and the `rooftop` landing are a chaotic amplification of the same stance divergence (2 cm
+      before the push). The plan: NM bodies' contacts in the fork's extra Gauss–Seidel passes.
+      → ADR 0019: NM bodies' contacts in the extra passes done (`box3d-armature-contacts.patch`): `stairs` within
+      tolerance, `lowwall` stands (the COM gap 0.12 m instead of 2.2), the ankle's stretch peaks 20 → 10 mm. What's
+      left is the springiness of Box3D's soft joint `F / (m_eff · ω²)` (~5 mm standing); because of it `relax-1s` (now
+      after 1.00 s), `kerb`'s pose, `lowwall` (close) and the `rooftop` landing are outside tolerance for now; the plan
+      is NM joints' stiffness above the ¼ ceiling.
 
-**DoD:** golden-сценарии на стадиях Playroom (`--stage`: лестница, стена, уступ) совпадают с Playroom на той же
-геометрии, собранной в GMod; контакты NM (`nm_agent_get_part_contact`) совпадают с касаниями в Box3D.
+**DoD:** golden scenarios on the Playroom's stages (`--stage`: stairs, a wall, a ledge) match the Playroom on the same
+geometry built in GMod; NM's contacts (`nm_agent_get_part_contact`) match the touches in Box3D.
 
-### M6. Lua API, поведения, реакции — 4–5 дней
+### M6. The Lua API, behaviours, reactions — 4–5 days
 
-Сделано (ADR 0020, [docs/api.md](docs/api.md)). Отличия от плана: слой реакций — порт методов `Sim` Playroom
-(`module/src/follow/room.rs`), а не вызовы готовых функций (их в крейте нет); вставание «анимацией» — тела держит клип
-(заморожены и ставятся в позу каждый тик), т.к. спрятать ragdoll, как Playroom прячет доллу, нельзя; Playroom для
-эталонов пересобран (прежний `target-playroom` был старше исходников v0.2.2 и не знал `!miss`, `!set`), эталоны всех
-сценариев сняты заново (`shot` и `catchfall` — байт в байт как прежние).
+Done (ADR 0020, [docs/api.md](docs/api.md)). Differences from the plan: the reaction layer is a port of the Playroom's
+`Sim` methods (`module/src/follow/room.rs`), not calls of ready functions (the crate has none); getting up "by
+animation": the bodies are held by the clip (frozen and posed every tick), since a ragdoll can't be hidden the way the
+Playroom hides its doll; the Playroom for the references was rebuilt (the former `target-playroom` was older than
+v0.2.2's sources and didn't know `!miss`, `!set`), the references of all scenarios recorded anew (`shot` and
+`catchfall` byte for byte as before).
 
-- [x] Публичный API (`dms.*`): `Attach(rag, opts)`, `Detach`, `ctrl:Send(msg, params)`, `ctrl:Shot`,
-      `Balance`, `CatchFall`, `Flinch`, `Relax`, `Stop`, `GetState`, `GetParam`; `dms.Messages()` для интроспекции.
-      Ещё `dms.Get/All/Reactions`, `ctrl:React/Button/Kill/SetHealth`; Homer из меню спавна привязывается при спавне.
-- [x] Хуки: `DMS_Attached`, `DMS_Detached`, `DMS_Fallen`, `DMS_Feedback` (из очереди событий); ещё `DMS_Died`,
-      `DMS_Reaction` (журнал слоя комнаты).
-- [x] **Реакции — порт слоя реакций Playroom, а не свои** (ADR 0016, 0020): выстрел (`fire` + ShotTask, набор оружия
-      `weapon_set`, дробь — `more`), удар (`land`: MeleeTask), взрыв (`blast_on` + explosion), огонь (`burn`: OnFire),
-      шокер (`zap`), high fall (`in_air`), промах (`near_miss`), смерть, урон `ped::damage`/`bump::damage`, машина
-      (`car_react`), проп (`obj_hit`), бросок (`throw`), доп. реакции (`self_preserve`). Импульс пули/взрыва — `applyImpulse`
-      Playroom, сила урона GMod обнуляется. Golden: `shot` (600 шагов), `blast`, `nearmiss`, `shotgun`, `death`,
-      `getup`, `tasks` в допусках. Исходный план: что Playroom делает на выстрел (ShotTask,
-      наборы `taskparams` по оружию), удар (`meleetask`), взрыв (`explosion`), огонь (`onfire`), шокер, падение с
-      высоты (high fall и приземление), промах рядом (near miss: flinch, баланс держит), смерть (dead Homer обмякает),
-      здоровье и урон (`delirium-data` `ped::damage`, `fall_damage`, `car_hit`) — повторяется тем же кодом движка
-      через крейт `delirium`. `EntityTakeDamage` по Homer → часть (`nm_agent_nearest_part`/хитгруппа) → та же
-      задача Playroom; импульс пули в FOLLOW уже приложен движком — **не дублировать** `apply_push`.
-- [x] Переключатели как в Playroom с его умолчаниями (`settings.txt` `--safe`): `tasks`, `avoid` (уклонение),
-      дополнительные реакции v0.2.1 (руки на стену, поручни, упор в ящик, следит и пригибается от падающего, отклоняется
-      от брошенного, оглядывается на ткнувшего), «дополнительные экспериментальные» v0.2.2 — каждая своим конваром,
-      выключенные по умолчанию так же, как в Playroom. Сделано: конвары `dms_tasks look avoid getup extra_reactions
-      extra_pick fire_reaction dive_shot dodge_gap weak god` с умолчаниями `--safe`; экспериментальное v0.2.2, что про тело
-      Homer, — нырок под обстрелом (`dive_shot`); прочее (Hero, Skate 3) — `Отложено`.
-- [x] **Вставание** как в Playroom (`getup`: 0 анимация, 1 мышцы по клипу, 2 выключено, 3 обученная сеть
-      `getup.net`; триггер — здоровье ≥ 50, голова в 0.3 м от таза, тело неподвижно). Режим по умолчанию — как у
-      Playroom. Клипы вставания — из копии игры (`Clips`, ADR 0010); режим «анимация» не NM — решить, как вести тело
-      по клипу в FOLLOW (кинематика тел в форке или режим «мышцы» через `incomingTransforms`); `getup.net` — из
-      Delirium (проверить лицензию/CREDITS перед распространением). Сделано: клипы `get_up_fast`/`idle` тем же кодом
-      (`tools/dms-game/src/getup.rs`); «анимация» — тела держит клип, в конце новый агент + `bodyBalance` (ADR 0020);
-      «мышцы» — `task_pose`; «обученная сеть» не перенесена (`learn.rs` — код комнаты): Homer лежит, как Playroom без
-      `getup.net`. После вставания стойка из позы клипа на Box3D дрейфует и Homer переступает (Playroom стоит) — то же
-      расхождение стойки, что в M5.
-- [x] Консольные команды (суперадмин): `dms_attach`, `dms_send`, `dms_react`, `dms_detach_all`.
-- [x] **Тюнинг и настройка поведений** (ADR 0009), серверная часть: профили `data/dms/profiles/*.json` (только
-      отличия от умолчаний Playroom; профиль «Playroom» пустой и неизменяемый), переопределения параметров
-      сообщений NM (`nm_msg_set_*`) и наборов `taskparams` (`<задача> <набор> <параметр>`), применение на
-      следующем шаге, `dms_tuning 0|1`, активный профиль в `dms_status` и телеметрии; golden-прогоны — всегда без
-      тюнинга. Сделано (`tuning.rs`, `tuning.lua`): значения профиля добавляются к строкам, которые запускают
-      поведение; taskparams — копия файла игры (в PC-версии файла нет — нечего менять).
-- [x] **Лицо Homer как в Playroom** (`delirium-room` `face_view`): клиентская отрисовка на капсуле головы — белки
-      глаз, зрачки, брови; глаза моргают, смотрят на место удара или по скорости, щурятся от боли, закрываются без
-      сознания, брови при испуге — по телеметрии агента (удар, скорость, боль, без сознания). Там же опциональный
-      скелет-оверлей (`skeleton`, `bone_tint`) и выбор схемы цвета (скин модели). Сюда же из M4 — отладочный
-      оверлей: капсулы NM поверх ragdoll'а, векторы drives, COM, stance.
-- [x] Импульсы поведения `shot` (`shot_out.impulse`) и задач — на тела Box3D, как стабилизация и `applyImpulse` в M4.
-      Импульсы задач (пуля, взрыв, удар, тычок) — `applyImpulse`, переносятся. `shot_out.impulse` (рука↔рана, пара с
-      нулевой суммой) и `grab` лежат в закрытом `Ragdoll::pending`: без правки Delirium не достать — не переносятся
-      (ADR 0020, п. 6).
-- [x] **Меню тюнинга** в spawnmenu (вкладка «DMS», только суперадмин, `net`-сообщения на сервер):
-      список поведений из `nm_message_count`/`nm_message_name`, для каждого — параметры с типом, описанием
-      (`nm_message_param_doc`), значением по умолчанию и диапазоном: ползунки/флажки/векторы; параметры,
-      которые порт принимает, но не использует (`nm_message_param_used` = 0), скрыты или помечены; реакции из
-      таблицы реакций (какое поведение и с какими параметрами на выстрел/взрыв/огонь/падение); живое применение
-      к выбранному Homer, «Сбросить к Playroom», сохранение/загрузка/удаление профилей. Сделано: «Утилиты → DMS»
-      (`cl_menu.lua`); диапазонов параметров в API NM нет — из описания или вокруг умолчания.
-- [x] Визуальная проверка пользователем: лицо, скелет, оверлей, меню, вставание (docs/api.md, раздел «Клиент»).
+- [x] The public API (`dms.*`): `Attach(rag, opts)`, `Detach`, `ctrl:Send(msg, params)`, `ctrl:Shot`, `Balance`,
+      `CatchFall`, `Flinch`, `Relax`, `Stop`, `GetState`, `GetParam`; `dms.Messages()` for introspection. Also
+      `dms.Get/All/Reactions`, `ctrl:React/Button/Kill/SetHealth`; a Homer from the spawn menu is bound as he spawns.
+- [x] Hooks: `DMS_Attached`, `DMS_Detached`, `DMS_Fallen`, `DMS_Feedback` (from the event queue); also `DMS_Died`,
+      `DMS_Reaction` (the room layer's log).
+- [x] **Reactions are a port of the Playroom's reaction layer, not our own** (ADR 0016, 0020): a shot (`fire` +
+      ShotTask, the weapon's set `weapon_set`, pellets: `more`), a blow (`land`: MeleeTask), a blast (`blast_on` +
+      explosion), fire (`burn`: OnFire), a stun gun (`zap`), a high fall (`in_air`), a miss (`near_miss`), death, damage
+      `ped::damage`/`bump::damage`, a car (`car_react`), a prop (`obj_hit`), a throw (`throw`), additional reactions
+      (`self_preserve`). The bullet's and blast's impulse is the Playroom's `applyImpulse`, GMod's damage force is zeroed.
+      Golden: `shot` (600 steps), `blast`, `nearmiss`, `shotgun`, `death`, `getup`, `tasks` within tolerance. The
+      original plan: what the Playroom does on a shot (ShotTask, the `taskparams` sets by weapon), a blow (`meleetask`),
+      a blast (`explosion`), fire (`onfire`), a stun gun, a fall from a height (high fall and landing), a near miss
+      (flinch, keeps balance), death (a dead Homer goes limp), health and damage (`delirium-data` `ped::damage`,
+      `fall_damage`, `car_hit`) is repeated with the engine's same code through the `delirium` crate.
+      `EntityTakeDamage` on Homer → a part (`nm_agent_nearest_part`/hitgroup) → the same Playroom task; the bullet's
+      impulse in FOLLOW is already applied by the engine: **don't duplicate** `apply_push`.
+- [x] Switches as in the Playroom with its defaults (`settings.txt` `--safe`): `tasks`, `avoid` (dodging), v0.2.1's
+      additional reactions (hands on a wall, rails, leaning on a crate, watches and ducks from something falling, leans
+      away from something thrown, looks round at who poked him), v0.2.2's "additional experimental", each its own
+      convar, off by default as in the Playroom. Done: the convars `dms_tasks look avoid getup extra_reactions extra_pick
+      fire_reaction dive_shot dodge_gap weak god` with the `--safe` defaults; of v0.2.2's experimental, what's about
+      Homer's body: the dive under fire (`dive_shot`); the rest (Hero, Skate 3): "Deferred".
+- [x] **Getting up** as in the Playroom (`getup`: 0 animation, 1 muscles along the clip, 2 off, 3 the trained network
+      `getup.net`; the trigger: health ≥ 50, the head within 0.3 m of the pelvis, the body still). The default mode as
+      in the Playroom. Get-up clips from the copy of the game (`Clips`, ADR 0010); the "animation" mode isn't NM:
+      decide how to drive the body along the clip in FOLLOW (kinematic bodies in the fork, or the "muscles" mode through
+      `incomingTransforms`); `getup.net` from Delirium (check the licence/CREDITS before distributing). Done: the clips
+      `get_up_fast`/`idle` with the same code (`tools/dms-game/src/getup.rs`); "animation": the clip holds the bodies, at
+      the end a new agent + `bodyBalance` (ADR 0020); "muscles": `task_pose`; "the trained network" isn't carried over
+      (`learn.rs` is the room's code): Homer lies, as the Playroom without `getup.net` (so `getup.net` isn't distributed,
+      M8). After getting up, the stance from the clip's pose drifts on Box3D and Homer steps (the Playroom stands): the
+      same stance divergence as in M5.
+- [x] Console commands (superadmin): `dms_attach`, `dms_send`, `dms_react`, `dms_detach_all`.
+- [x] **Tuning and setting up behaviours** (ADR 0009), the server side: profiles `data/dms/profiles/*.json` (only the
+      differences from the Playroom's defaults; the "Playroom" profile empty and unchangeable), overrides of NM message
+      params (`nm_msg_set_*`) and `taskparams` sets (`<task> <set> <param>`), applied on the next step,
+      `dms_tuning 0|1`, the active profile in `dms_status` and the telemetry; golden runs always without tuning. Done
+      (`tuning.rs`, `tuning.lua`): the profile's values are added to the lines that start a behaviour; taskparams are a
+      copy of the game's file (the PC version has none: nothing to change).
+- [x] **Homer's face as in the Playroom** (`delirium-room` `face_view`): client drawing on the head capsule: the whites
+      of the eyes, pupils, brows; the eyes blink, look where he's hit or along the velocity, squint in pain, close when
+      unconscious, the brows when frightened, by the agent's telemetry (a blow, velocity, pain, unconscious). There too
+      the optional skeleton overlay (`skeleton`, `bone_tint`) and the choice of colour scheme (the model's skin). Here
+      from M4: the debug overlay: NM's capsules over the ragdoll, the drives' vectors, COM, stance.
+- [x] The `shot` behaviour's impulses (`shot_out.impulse`) and the tasks' on Box3D's bodies, like stabilisation and
+      `applyImpulse` in M4. The tasks' impulses (a bullet, a blast, a blow, a poke) are `applyImpulse`, carried over.
+      `shot_out.impulse` (hand↔wound, a pair with a zero sum) and `grab` lie in the private `Ragdoll::pending`: they
+      can't be reached without changing Delirium: not carried over (ADR 0020, point 6).
+- [x] **The tuning menu** in the spawnmenu (the "DMS" tab, superadmin only, `net` messages to the server): the list of
+      behaviours from `nm_message_count`/`nm_message_name`, for each the params with type, description
+      (`nm_message_param_doc`), default and range: sliders, checkboxes, vectors; params the port takes but doesn't use
+      (`nm_message_param_used` = 0) hidden or marked; reactions from the reaction table (which behaviour with what
+      params on a shot, blast, fire, fall); live application to the chosen Homer, "Reset to Playroom", saving, loading
+      and deleting profiles. Done: "Utilities → DMS" (`cl_menu.lua`); the API has no ranges for params: from the
+      description or around the default.
+- [x] The user's visual check: the face, skeleton, overlay, menu, getting up (docs/api.md, the "Client" section).
 
-**DoD:** все реакции из таблицы запускаются из консоли и Lua на Homer и отправляют NM те же сообщения с теми же
-параметрами, что Playroom на ту же реакцию (golden-сценарии реакций); документация `docs/api.md`. В меню любой
-параметр любого поведения меняется, сохраняется в профиль и сбрасывается к Playroom; с профилем «Playroom»
-golden-сценарии проходят без изменений.
+**DoD:** every reaction from the table starts from the console and Lua on Homer and sends NM the same messages with the
+same params as the Playroom on the same reaction (golden reaction scenarios); documentation `docs/api.md`. In the menu
+any param of any behaviour changes, is saved to a profile and resets to the Playroom; with the "Playroom" profile the
+golden scenarios pass unchanged.
 
-### M7. Надёжность, производительность, платформы — 5–7 дней (сквозной, финал перед релизом)
+### M7. Reliability, performance, platforms — 5–7 days (cross-cutting, the final step before the release)
 
-- [x] Жизненный цикл: удаление ragdoll'а, `undo`, `gmod_admin_cleanup`, смена карты, `lua_refresh`, выгрузка
-      модуля, сохранение/загрузка (агенты не сохраняются — пересоздаются), дубликатор, засыпание объектов,
-      заморозка физганом, сварка/верёвки на частях, телепорт (`SetPos`) — сброс агента (ADR 0021: копии без полей
-      DMS, парковка при заморозке, отказ от клипа при подборе, кадр NM едет с телепортом).
-- [x] Listen server: два окружения в одном процессе — хукать только серверное (`GetObjectEnvironment`).
-- [x] Производительность: бюджет на агента (цель — ≤ 0.15 мс/шаг), лимит агентов (`dms_max_agents`),
-      LOD: дальние/спящие агенты переводятся в `relax` и отцепляются. Наш слой ~0.02 мс, сам NM 1–2 мс (не наш);
-      шаг NM параллельно на потоках (8 агентов 14 → 4.3 мс), LOD — парковка, мир NM — вырезка (спавн 175 → 29 мс).
-- [x] Linux: не делаем — серверный ABI GMod x64 несовместим с форком (ADR 0012), решение пользователя: выделенный
-      сервер не нужен, тесты в игре (ADR 0021). Порт — только по отдельной просьбе.
-- [x] Краш-устойчивость: никаких паник через FFI-границу (`catch_unwind` в каждом `extern` входе).
+- [x] The lifecycle: removing the ragdoll, `undo`, `gmod_admin_cleanup`, changing the map, `lua_refresh`, unloading
+      the module, save/load (agents aren't saved: recreated), the duplicator, objects falling asleep, freezing with the
+      physgun, welds and ropes on parts, a teleport (`SetPos`): the agent reset (ADR 0021: copies without DMS's fields,
+      parking while frozen, giving up the clip when picked up, NM's frame moving with a teleport).
+- [x] Listen server: two environments in one process: hook only the server's (`GetObjectEnvironment`).
+- [x] Performance: a budget per agent (the target ≤ 0.15 ms/step), the agents' limit (`dms_max_agents`), LOD: far or
+      sleeping agents go to `relax` and are detached. Our layer ~0.02 ms, NM itself 1–2 ms (not ours); NM's step in
+      parallel on threads (8 agents 14 → 4.3 ms), LOD: parking, NM's world: a crop (a spawn 175 → 29 ms).
+- [x] Linux: not done: GMod's x64 server ABI is incompatible with the fork (ADR 0012), the user's decision: no
+      dedicated server, tests in the game (ADR 0021). A port only on a separate request.
+- [x] Crash resistance: no panics across the FFI boundary (`catch_unwind` in every `extern` entry).
 
-**DoD:** 30-минутный прогон «бот-сервер, 8 агентов, спавн/удаление/смена карты» без падений и утечек; Linux
-dedicated работает (снято: см. Linux выше). Выполнено 2026-10-27 на стенде (listen-сервер в игре): 30 мин, 288 раундов
-спавна/удаления 8 агентов с выстрелами, 11 смен карты — без падений и Lua-ошибок, память на смену карты +~10 МБ (как
-у игры без DMS); 2 разноса тел сняты защитой (`blew up`), игра продолжилась.
+**DoD:** a 30-minute run "bot server, 8 agents, spawn/remove/map change" without crashes or leaks; Linux dedicated
+works (dropped: see Linux above). Done on 2026-10-27 on the bench (a listen server in the game): 30 min, 288 rounds of
+spawning/removing 8 agents with shots, 11 map changes, without crashes or Lua errors, memory +~10 MB a map change (as
+for the game without DMS); 2 blow-ups of bodies caught by the protection (`blew up`), the game went on.
 
-### M8. Релиз — 2–3 дня
+### M8. Release — 2–3 days
 
-- [ ] Конвары и меню в spawnmenu (утилиты: привязать, реакция, отладка) вместе с меню тюнинга из M6 — одна
-      вкладка «DMS», полировка UI и подсказок. Сделано: меню — отдельное окно DMS (`dms_menu`, ADR 0022) с Homer,
-      реакциями, тюнингом, taskparams и конварами M7; привязка, реакции в точке и отладка (инспектор) — инструмент
-      toolgun «DMS» (ADR 0023).
-- [ ] Документация: установка (форк `vphysics.dll` + бэкап, бинарный модуль в `lua/bin`, данные GTA IV в
-      `data/dms`), FAQ («Steam при проверке файлов вернёт оригинальный vphysics»), API.
-- [ ] Дистрибуция: Lua-часть — Workshop; модель Homer не распространяется, её делает `dms-homer` у пользователя; `vphysics.dll` и `gmsv_dms_*.dll` Workshop не принимает —
-      GitHub Releases + `install.ps1`.
-- [ ] Версионирование и проверка совместимости при старте: версия модуля ↔ версия Lua-аддона ↔ интерфейс NM.
+Done (ADR 0024, [docs/install.md](docs/install.md), [THIRD_PARTY.md](THIRD_PARTY.md)). Version 0.1.0. Publishing (a tag,
+a GitHub release, the Workshop) is the user's decision; the release notes are `docs/release-notes-0.1.0.md`.
 
-### Отложено: оригинальные модели GMod (ValveBiped)
+- [x] Convars and the menu in the spawnmenu (utilities: attach, react, debug) with M6's tuning menu: one "DMS" tab,
+      polishing the UI and hints. Done: the menu is the DMS window (`dms_menu`, ADR 0022) with Homer (spawning, NM on/off
+      the Homer looked at, `dms_attach`/`dms_detach`), reactions, tuning, taskparams, M7's convars and a Debug tab
+      (versions and problems, buttons for `dms_status`, `dms_selftest`, `dms_data`, `dms_info`, `dms_tuning_status`,
+      `dms_nm_*`, an NM message line, `dms_react_log`, the overlay); attaching, reactions at a point and debugging (the
+      inspector) are also the toolgun tool "DMS" (ADR 0023).
+- [x] Documentation: installation (the fork's `vphysics.dll` + a backup, the binary module in `lua/bin`, NM's data
+      from the player's GTA IV through `dms_game_dir` or `install.ps1 -Gta`, not `data/dms`: ADR 0010; Homer's model by
+      `dms-homer`), FAQ ("Steam's file check puts the original vphysics back", Homer doesn't appear, no dedicated
+      server/Linux), API (`docs/api.md`). All the documentation is in English.
+- [x] Distribution: the Lua part on the Workshop; Homer's model isn't distributed, `dms-homer` makes it on the player's
+      machine; the Workshop doesn't take `vphysics.dll` and `gmsv_dms_*.dll`: GitHub Releases + `install.ps1`. Done:
+      `scripts\package.ps1` → `dist\DMS-<version>-win64.zip` (the module, the fork, `dms-homer.exe`, the addon, the
+      player's `install.ps1`, `install.md`, licences), the C runtime linked in, no AVX2/FMA needed (checked by
+      `dumpbin`); `dms_dev` off, the `dms-ctl` channel closed. Publishing waits for the user.
+- [x] Versioning and a compatibility check at start: the module's version ↔ the Lua addon's version ↔ NM's interface.
+      Done: the module and the addon of different releases don't start; `DMS_Problems()` (the fork and its interface,
+      Homer's model by its mark `homer_version.txt` ↔ `DMS.HomerModelVersion`, the GTA IV folder), `DMS.DeliriumVersion`,
+      `dms_info`.
 
-Пока не делаем — работаем только с телом Homer. Когда понадобятся модели, для них пишется **новый инструмент с
-новым подходом** (проектируется тогда же, отдельной вехой); инструмент прошлой попытки (`delirium-ragdoll`)
-игнорируется. Сюда же относится авто-привязка ragdoll'ов смерти NPC/игроков.
+### Deferred: GMod's original models (ValveBiped)
 
-### Отложено: возможности Playroom, не нужные для поведения Homer
+Not done for now: we work with Homer's body only. When models are needed, a **new tool with a new approach** is written
+for them (designed then, as a milestone of its own); the previous attempt's tool (`delirium-ragdoll`) is ignored. The
+auto-binding of NPCs' and players' death ragdolls belongs here too.
 
-Не переносим (это приложение Playroom, а не поведение тела): Hero mode, оружейная панель и плавающий пистолет, Portal
-и Skate 3, обученная ходьба/бег (`walk.net`/`run.net`), GPU-вода, огонь/кровь/обугливание/слои урона как графика,
-графические режимы, толпы (`crowd`/`grid`). Кандидаты на потом: пресеты тела (`--body S|A|L|K|F|T`, Homer через
-`Build::scaled` — дёшево, но это уже не 1.8 м), несколько Homer в одной сцене как в «Spawn Homers».
+### Deferred: Playroom features not needed for Homer's behaviour
+
+Not carried over (it's the Playroom application, not the body's behaviour): Hero mode, the weapon panel and the floating
+pistol, Portal and Skate 3, learned walking and running (`walk.net`/`run.net`), GPU water, fire/blood/charring/damage
+layers as graphics, graphics modes, crowds (`crowd`/`grid`). Candidates for later: body presets (`--body S|A|L|K|F|T`,
+Homer through `Build::scaled`: cheap, but no longer 1.8 m), several Homers in one scene as in "Spawn Homers".
 
 ---
 
-## Зависимости и параллельность
+## Dependencies and parallelism
 
 ```
 M0 ──► M1 ─┐
    └─► M2 ─┴─► M2.5 ──► M3 ──► M4 ──► M6 ──► M8
                                 └───► M5 ─┘    ▲
-                       M7 (сквозной, закрывается перед M8) ┘
+                       M7 (cross-cutting, closed before M8) ┘
 ```
 
-Критический путь: **M0 → M1/M2 → M2.5 → M3 → M4**. С M2.5 все проверки в игре, кроме визуальных, Claude делает
-сам на стенде в игре (без окна).
+The critical path: **M0 → M1/M2 → M2.5 → M3 → M4**. From M2.5 on, every check in the game except the visual ones Claude
+does itself on the bench in the game (without a window).
 
-## Риски
+## Risks
 
-| Риск | Влияние | Митигация |
+| Risk | Impact | Mitigation |
 |---|---|---|
-| 66 Гц Source vs 60 Гц NM | дрожь, неверные drives | проверить в M4 на эталоне; аккумулятор шагов |
-| Гравитация 15.24 (Source) vs 9.8 (NM) | тело оседает и падает | компенсирующая сила на каждую часть, `sv_gravity` не меняется (ADR 0007, M4) |
-| Контакты NM (по своему миру) расходятся с Box3D | баланс «не видит» опору | точный BSP-меш (M5), боксы для пропов; в крайнем случае — расширение форка с контактами частей |
-| Порядок vtable `IPhysicsNM` | падение при вызове | FFI-тесты M1 |
-| C API SDK не отдаёт того, что делает Playroom (outbox, задачи движка, реакции комнаты) | catchFall, выстрел, взрыв не 1 в 1 | тот же код через крейт `delirium`, как `delirium-room` (ADR 0016, M4/M6) |
-| Новые версии Delirium меняют поведение (v0.2.2: стойка, catchFall) | эталоны устаревают | при каждом обновлении SDK — новые эталоны Playroom и полная golden-сверка (как для v0.2.2) |
-| Стенд занимает игру пользователя (одна копия GMod) | пользователь не может играть во время прогонов | `server.ps1 stop` сразу после проверки; длинные прогоны — когда пользователь не играет |
-| Выделенный сервер GMod x64 несовместим с форком (новый ABI vphysics) | нет dedicated/Linux | тесты только в игре (решение M2.5); порт форка — только если понадобится в M7 |
-| Канал `dms-ctl` открыт наружу | удалённое управление сервером | только `127.0.0.1`, только при `dms_dev 1`, пароль на запуск, в релизе выключен (M2.5, M8) |
-| Физика Box3D отличается от физики Playroom (инерция, солвер суставов, контакты) | поведение не 1 в 1 | golden-сверка тела (M3) и поведения (M4); правки в форке, не в NM (ADR 0008) |
-| `dms-homer` портирует тело неточно | все последующие вехи меряют не то | `tools/golden body` против `NM_DUMP` Playroom, допуск 1e-5 (M3) |
-| PC `Fred.art` little-endian | мусор в суставах, NaN | `delirium_data::LE` перед чтением, как в Playroom; сверка `golden dump/lead` (M2, ADR 0010) |
-| Steam откатывает `vphysics.dll` | аддон «молча» не работает | явная проверка интерфейса при старте и сообщение игроку (M1) |
-| Несовместимые изменения `IPhysicsNM` в форке | падения | строгая проверка строки версии, копия заголовка в репо |
-| Лицензия GPL-3 и данные GTA IV | юридические | GPL-3 для всего, данные только из копии пользователя |
+| Source's 66 Hz vs NM's 60 Hz | jitter, wrong drives | check in M4 on the reference; a step accumulator |
+| Gravity 15.24 (Source) vs 9.8 (NM) | the body sags and falls | a compensating force on every part, `sv_gravity` unchanged (ADR 0007, M4) |
+| NM's contacts (by its own world) diverge from Box3D | the balance "doesn't see" the support | an exact BSP mesh (M5), boxes for props; at worst, a fork extension with the parts' contacts |
+| The order of `IPhysicsNM`'s vtable | a crash on a call | M1's FFI tests |
+| The SDK's C API doesn't expose what the Playroom does (the outbox, the engine's tasks, the room's reactions) | catchFall, the shot, the blast not 1 to 1 | the same code through the `delirium` crate, as `delirium-room` (ADR 0016, M4/M6) |
+| New Delirium versions change the behaviour (v0.2.2: the stance, catchFall) | the references go stale | at every SDK update, new Playroom references and a full golden comparison (as for v0.2.2) |
+| The bench takes the user's game (one copy of GMod) | the user can't play during runs | `server.ps1 stop` right after a check; long runs when the user isn't playing |
+| GMod's x64 dedicated server is incompatible with the fork (a new vphysics ABI) | no dedicated/Linux | tests only in the game (M2.5's decision); porting the fork only if needed in M7 |
+| The `dms-ctl` channel open to the outside | remote control of the server | only `127.0.0.1`, only with `dms_dev 1`, a password a start, off in the release (M2.5, M8) |
+| Box3D's physics differs from the Playroom's (inertia, the joint solver, contacts) | behaviour not 1 to 1 | golden comparison of the body (M3) and the behaviour (M4); fixes in the fork, not in NM (ADR 0008) |
+| `dms-homer` ports the body inaccurately | every later milestone measures the wrong thing | `tools/golden body` against the Playroom's `NM_DUMP`, tolerance 1e-5 (M3) |
+| PC `Fred.art` is little-endian | garbage in the joints, NaN | `delirium_data::LE` before reading, as in the Playroom; the `golden dump/lead` comparison (M2, ADR 0010) |
+| Steam rolls `vphysics.dll` back | the addon "silently" doesn't work | an explicit interface check at start and a message to the player (M1, M8: `DMS_Problems`) |
+| Incompatible changes of `IPhysicsNM` in the fork | crashes | a strict check of the version string, a copy of the header in the repository |
+| The module, the addon or Homer's model from different releases | errors from the middle of the code | one version, checked at start; the model's mark (M8, ADR 0024) |
+| The GPL-3 licence and GTA IV's data | legal | GPL-3 for everything, the data only from the user's copy |
 
-## Ближайшие шаги (первая неделя)
+## The nearest steps (the first week)
 
-1. M0 целиком: git, ADR, коммит NM-расширения в форке, сборочные скрипты, «hello» модуль.
-2. M1: FFI `IPhysicsNM` + `PhysObj → IPhysicsObject*` + тест «висящий проп».
-3. M2 параллельно: загрузка данных и `dms_selftest`.
+1. All of M0: git, ADRs, committing the NM extension in the fork, the build scripts, a "hello" module.
+2. M1: the `IPhysicsNM` FFI + `PhysObj → IPhysicsObject*` + the "hovering prop" test.
+3. M2 in parallel: loading the data and `dms_selftest`.
