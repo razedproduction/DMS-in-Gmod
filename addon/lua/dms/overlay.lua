@@ -44,7 +44,8 @@ local function makeShape(ent)
 			a = loc(v(1)), b = loc(v(4)), r = o[i + 7], box = v(8),
 			x = dirLoc(rot(1, 0, 0)), y = dirLoc(rot(0, 1, 0)), z = dirLoc(rot(0, 0, 1)),
 			centre = p:GetMassCenter(), parent = o[i + 18],
-			bone = ent:TranslatePhysBoneToBone(k - 1), name = DMS.PartNames()[k],
+			-- The bone named as the part (the ragdoll's own physics order isn't NM's).
+			bone = ent:LookupBone(DMS.PartNames()[k]), name = DMS.PartNames()[k],
 		}
 	end
 	return out

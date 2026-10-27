@@ -301,7 +301,7 @@ hook.Add("Think", "DMS_Reactions", function()
 			local head = parts and parts[13]
 			if head then
 				local mc = head:GetMassCenter()
-				ent:SetNW2Int("DMS_HeadBone", ent:TranslatePhysBoneToBone(12))
+				ent:SetNW2Int("DMS_HeadBone", ent:LookupBone(DMS.PartNames()[13]) or -1)
 				ent:SetNW2Vector("DMS_FaceCentre", mc + V(r.face_centre) / M)
 				ent:SetNW2Vector("DMS_FaceFwd", V(r.face_fwd))
 				ent:SetNW2Vector("DMS_FaceUp", V(r.face_up))
@@ -309,7 +309,7 @@ hook.Add("Think", "DMS_Reactions", function()
 			end
 			if r.ring_part and parts and parts[r.ring_part + 1] then
 				local p = parts[r.ring_part + 1]
-				ent:SetNW2Int("DMS_RingBone", ent:TranslatePhysBoneToBone(r.ring_part))
+				ent:SetNW2Int("DMS_RingBone", ent:LookupBone(DMS.PartNames()[r.ring_part + 1]) or -1)
 				ent:SetNW2Vector("DMS_RingOn", p:GetMassCenter() + V(r.ring_on) / M)
 				ent:SetNW2Float("DMS_RingTime", CurTime() - r.ring_age)
 			end
