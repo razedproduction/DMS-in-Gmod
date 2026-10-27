@@ -794,6 +794,11 @@ end
 concommand.Add("dms_menu", toggle, nil, "Opens and closes the DMS window")
 DMS_MenuOpen = open
 
+-- The catalogue for the DMS tool (its behaviours and weapons): what came last, and a request for it (the hook
+-- DMS_Catalogue runs when it comes; superadmins only).
+function DMS_MenuCatalogue() return catalogue end
+function DMS_MenuAskCatalogue() request({ kind = "catalogue" }) end
+
 -- dms_menu_key, pressed outside text boxes, the chat and the console, opens or closes the window.
 local keyWasDown = false
 hook.Add("Think", "DMS_MenuKey", function()
@@ -829,6 +834,7 @@ net.Receive("dms_tuning", function()
 		if catalogue.error then notification.AddLegacy("DMS: " .. catalogue.error, NOTIFY_ERROR, 6) end
 		if editing.name ~= catalogue.profile then request({ kind = "profile", name = catalogue.profile }) end
 		refresh()
+		hook.Run("DMS_Catalogue", catalogue)
 	elseif r.kind == "switches" then
 		if catalogue then catalogue.switches = r.data end
 		applySwitches(r.data)
