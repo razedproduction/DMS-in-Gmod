@@ -10,9 +10,11 @@ const USAGE: &str = "\
 usage: dms-homer [--game <GTA IV dir>] [--gmod <GarrysMod dir>] [--work <dir>]
   makes garrysmod\\models\\dms\\homer.mdl (+ .phy, .vvd, .vtx) from the game's Homer (m_y_pmanhat_01): NM's body,
   drawn as the Playroom draws it, with studiomdl from Garry's Mod's bin\\win64, and checks the compiled .phy against NM's body.
-  --game  GTA IV's folder (default: DMS_GAME_DIR, else golden\\game_dir.txt)
+  --game  GTA IV's folder (default: DMS_GAME_DIR, else garrysmod\\data\\dms\\game_dir.txt, else the repository's
+          golden\\game_dir.txt)
   --gmod  Garry's Mod's folder (default: DMS_GMOD_DIR, else Steam's library from the registry)
-  --work  where the SMDs, the .qc and studiomdl's log go (default: target\\dms-homer; never committed)";
+  --work  where the SMDs, the .qc and studiomdl's log go (default: the repository's target\\dms-homer, else
+          %TEMP%\\dms-homer; never committed)";
 
 fn main() {
     if let Err(e) = run() {
@@ -34,14 +36,18 @@ fn run() -> Result<(), String> {
             PathBuf::from(v)
         })
     };
-    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).parent().and_then(Path::parent).ok_or("no repository")?.to_path_buf();
-    let game = take("--game")
-        .or_else(|| std::env::var_os("DMS_GAME_DIR").map(PathBuf::from))
-        .or_else(|| std::fs::read_to_string(repo.join("golden").join("game_dir.txt")).ok().map(|t| PathBuf::from(t.trim())))
-        .ok_or("no game folder: pass --game <your GTA IV folder>")?;
+    // The repository it was built in, when run there (the release's dms-homer runs on a player's machine without it).
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).parent().and_then(Path::parent).map(Path::to_path_buf).filter(|r| r.join("Cargo.toml").is_file());
+    let read_dir = |p: PathBuf| std::fs::read_to_string(p).ok().map(|t| PathBuf::from(t.trim())).filter(|p| !p.as_os_str().is_empty());
     let gmod = take("--gmod").or_else(|| std::env::var_os("DMS_GMOD_DIR").map(PathBuf::from)).or_else(dms_homer::steam_gmod)
         .ok_or("Garry's Mod not found: pass --gmod <GarrysMod folder>")?;
-    let work = take("--work").unwrap_or_else(|| repo.join("target").join("dms-homer"));
+    let game = take("--game")
+        .or_else(|| std::env::var_os("DMS_GAME_DIR").map(PathBuf::from))
+        .or_else(|| read_dir(gmod.join("garrysmod").join("data").join("dms").join("game_dir.txt")))
+        .or_else(|| repo.as_ref().and_then(|r| read_dir(r.join("golden").join("game_dir.txt"))))
+        .ok_or("no game folder: pass --game <your GTA IV folder>")?;
+    let work = take("--work").or_else(|| repo.as_ref().map(|r| r.join("target").join("dms-homer")))
+        .unwrap_or_else(|| std::env::temp_dir().join("dms-homer"));
     if !args.is_empty() {
         return Err(format!("unknown arguments {args:?}\n{USAGE}"));
     }
@@ -89,6 +95,10 @@ fn run() -> Result<(), String> {
     let text = dms_homer::phy_text(&body, &phy::blocks(&compiled.text))?;
     std::fs::write(&phy_path, phy::write(&compiled, &text)).map_err(|e| format!("{}: {e}", phy_path.display()))?;
     println!("dms-homer: {} (+ .phy with NM's masses, constraints and self-collision pairs)", mdl.display());
+    // The mark the addon checks at start (dms_init.lua): which body this model is.
+    let mark = mdl.with_file_name("homer_version.txt");
+    let text = format!("model {}\ndms-homer {}\n", dms_game::MODEL_VERSION, env!("CARGO_PKG_VERSION"));
+    std::fs::write(&mark, text).map_err(|e| format!("{}: {e}", mark.display()))?;
 
     let checked = phy::read(&std::fs::read(&phy_path).map_err(|e| e.to_string())?)?;
     report(&dms_homer::check_phy(&body, &checked)?);

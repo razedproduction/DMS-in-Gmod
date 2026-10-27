@@ -1,42 +1,42 @@
-# 0015. Форк VPhysics-Box3D — в репозитории DMS через git subtree
+# 0015. The VPhysics-Box3D fork is in the DMS repository through git subtree
 
-Статус: принято (2026-10-26).
+Status: accepted (2026-10-26).
 
-## Контекст
+## Context
 
-Форк VPhysics-Box3D с `IPhysicsNM` жил отдельным репозиторием `razedproduction/VPhysics-Box3D` (форк
-Asphaltian/VPhysics-Box3D) с локальной копией `../VPhysics-Box3D`. Любая правка физики ради совпадения с Playroom
-(ADR 0008, 0014) шла двумя PR в два репозитория: интерфейс в форке, его копия и использование — в модуле. Какой
-коммит форка нужен какому коммиту модуля, нигде не было записано; golden-сверка проверяла сборку, которую нельзя было
-восстановить по истории DMS.
+The VPhysics-Box3D fork with `IPhysicsNM` lived as a separate repository `razedproduction/VPhysics-Box3D` (a fork of
+Asphaltian/VPhysics-Box3D) with a local copy `../VPhysics-Box3D`. Every physics change for the sake of matching the
+Playroom (ADR 0008, 0014) went as two PRs into two repositories: the interface in the fork, its copy and use in the
+module. Which fork commit a module commit needs wasn't written down anywhere; the golden comparison checked a build that
+couldn't be restored from DMS's history.
 
-## Решение
+## Decision
 
-Один репозиторий: форк — папка `vphysics/` в `razedproduction/DMS-in-Gmod`, добавлен
-`git subtree add --prefix vphysics https://github.com/razedproduction/VPhysics-Box3D.git main` (`43789dd`) **без
-`--squash`** — история форка и upstream'а сохраняется.
+One repository: the fork is the folder `vphysics/` in `razedproduction/DMS-in-Gmod`, added with
+`git subtree add --prefix vphysics https://github.com/razedproduction/VPhysics-Box3D.git main` (`43789dd`) **without
+`--squash`**: the fork's and upstream's history is kept.
 
-- Сабмодули форка (`external/box3d`, `external/source-sdk-2013`, shallow) записаны в корневой `.gitmodules` с
-  префиксом `vphysics/`, на тех же коммитах. `vphysics/.gitmodules` и `vphysics/.gitattributes` остаются как у
-  upstream'а (второй действует в своей папке: `*.patch` с `eol=lf`).
-- Свежий upstream: `git subtree pull --prefix vphysics https://github.com/Asphaltian/VPhysics-Box3D main`
+- The fork's submodules (`external/box3d`, `external/source-sdk-2013`, shallow) are in the root `.gitmodules` with the
+  `vphysics/` prefix, at the same commits. `vphysics/.gitmodules` and `vphysics/.gitattributes` stay as upstream has
+  them (the second works in its folder: `*.patch` with `eol=lf`).
+- A fresh upstream: `git subtree pull --prefix vphysics https://github.com/Asphaltian/VPhysics-Box3D main`
   ([docs/vphysics.md](../vphysics.md)).
-- Сборка — `scripts\build-vphysics.ps1` (CMake-пресеты форка внутри `vphysics/`), установка —
+- Building: `scripts\build-vphysics.ps1` (the fork's CMake presets inside `vphysics/`), installing:
   `scripts\install.ps1 -Fork`.
-- Правило ADR 0008 не меняется: форк правится только ради совпадения с Playroom, новые методы — новой версией
-  интерфейса.
+- ADR 0008's rule doesn't change: the fork changes only for the sake of matching the Playroom, new methods with a new
+  version of the interface.
 
-Отвергнуто: сабмодуль на форк (те же два PR и ручное обновление ссылки), `--squash` (теряется история и бисекция по
-коммитам upstream'а, которая уже понадобилась при слиянии `9d5e14c`).
+Rejected: a submodule pointing at the fork (the same two PRs and updating the reference by hand), `--squash` (losing
+the history and bisecting over upstream's commits, which has already been needed in the merge `9d5e14c`).
 
-## Последствия
+## Consequences
 
-- Правка физики и модуля — один PR; коммит DMS однозначно задаёт и модуль, и `vphysics.dll`.
-- `razedproduction/VPhysics-Box3D` больше не обновляется (его можно заархивировать), локальная `../VPhysics-Box3D`
-  не нужна.
-- История репозитория включает всю историю VPhysics-Box3D. Её коммиты до `subtree add` лежат с путями без префикса
-  `vphysics/`, поэтому `git log -- vphysics` их не показывает: они видны через вторых родителей слияний subtree
-  (`git log cd0f52b^2`, `git log -- src/physics_nm.cpp`).
-- Форк — MIT (`vphysics/LICENSE`), остальное — GPL-3.0-only (ADR 0006); `vphysics.dll` распространяется по MIT.
-- NM-правки, не нужные upstream'у, остаются локальными: каждый `subtree pull` может конфликтовать в местах NM-вставок
-  (разбор — в docs/vphysics.md).
+- A physics and module change is one PR; a DMS commit determines both the module and `vphysics.dll`.
+- `razedproduction/VPhysics-Box3D` isn't updated any more (it can be archived), the local `../VPhysics-Box3D` isn't
+  needed.
+- The repository's history includes all of VPhysics-Box3D's. Its commits before the `subtree add` have paths without the
+  `vphysics/` prefix, so `git log -- vphysics` doesn't show them: they're seen through the subtree merges' second
+  parents (`git log cd0f52b^2`, `git log -- src/physics_nm.cpp`).
+- The fork is MIT (`vphysics/LICENSE`), the rest GPL-3.0-only (ADR 0006); `vphysics.dll` is distributed under MIT.
+- NM changes upstream doesn't need stay local: every `subtree pull` can conflict where the NM insertions are (sorting
+  them out: docs/vphysics.md).

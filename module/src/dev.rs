@@ -522,7 +522,12 @@ unsafe fn bench_follow_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String
             return Err(e);
         }
     };
-    step::with(agent, |f| f.script = Some(script));
+    // The agent was made with the player's switches (dms_avoid, dms_extra_reactions, ... as saved): a scenario's runs
+    // on the Playroom's defaults, and only its `!set` changes them (docs/adr/0020).
+    step::with(agent, |f| {
+        f.script = Some(script);
+        f.room.set = crate::follow::Settings::default();
+    });
     main.follow_run = Some((conn, id, agent));
     unsafe { (api.pushnumber)(l, f64::from(agent)) };
     Ok(1)

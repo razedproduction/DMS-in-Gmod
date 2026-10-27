@@ -1,22 +1,22 @@
-# 0003. Lua не вызывается из step-callback, обмен через очереди
+# 0003. No Lua in the step callback, exchange through queues
 
-Статус: принято (2026-10-21)
+Status: accepted (2026-10-21)
 
-## Контекст
+## Context
 
-`IPhysicsNM::SetStepCallback` вызывает нас изнутри `IPhysicsEnvironment::Simulate`, перед решением шага. В этот
-момент безопасно только читать состояния тел и ставить drives/armature; игровые вызовы ставятся в очередь на
-следующий шаг или небезопасны. Lua-код в этот момент может создавать/удалять сущности и трогать физику.
+`IPhysicsNM::SetStepCallback` calls us from inside `IPhysicsEnvironment::Simulate`, before the step is solved. At that
+moment it's only safe to read the bodies' states and set drives and armature; game calls get queued for the next step
+or are unsafe. Lua code at that moment could create or remove entities and touch the physics.
 
-## Решение
+## Decision
 
-- Внутри step-callback не вызывается ни одна функция Lua и ни одна игровая функция, кроме методов `IPhysicsNM`.
-- Lua → модуль: нативы кладут команды (attach, detach, сообщения NM, реакции) в очередь; очередь разбирается
-  в начале следующего `OnStep`.
-- Модуль → Lua: события (упал, feedback NM, агент снят из-за NaN) копятся в очереди и разбираются из хука
-  `Think`, который вызывает `hook.Run("DMS_*")`.
+- No Lua function and no game function other than `IPhysicsNM`'s methods is called inside the step callback.
+- Lua → module: the natives put commands (attach, detach, NM messages, reactions) in a queue; the queue is taken at
+  the start of the next `OnStep`.
+- Module → Lua: events (fell, NM's feedback, an agent taken off for a NaN) gather in a queue taken from the `Think`
+  hook, which calls `hook.Run("DMS_*")`.
 
-## Последствия
+## Consequences
 
-- Команды из Lua действуют с задержкой до одного физического шага (≤ 1/66 с).
-- Состояние агента, которое видит Lua (`GetState`), — снимок на конец последнего шага.
+- Commands from Lua act with a delay of up to one physics step (≤ 1/66 s).
+- The agent's state Lua sees (`GetState`) is a snapshot at the end of the last step.

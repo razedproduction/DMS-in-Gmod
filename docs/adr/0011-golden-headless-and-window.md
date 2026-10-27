@@ -1,32 +1,32 @@
-# 0011. Эталоны Playroom: headless бит в бит, сценарии — в окне
+# 0011. The Playroom's references: headless bit for bit, scenarios in the window
 
-Статус: принято (2026-10-21). Уточняет ADR 0008 (пункт про `--headless --script --rec`).
+Status: accepted (2026-10-21). Refines ADR 0008 (the point about `--headless --script --rec`).
 
-## Контекст
+## Context
 
-ADR 0008 рассчитывал на прогоны `--headless N --script <сценарий> --rec <файл>`. По коду Playroom (`main`,
-`headless`, `scripted` в `delirium-room/src/main.rs`):
+ADR 0008 counted on runs of `--headless N --script <scenario> --rec <file>`. By the Playroom's code (`main`,
+`headless`, `scripted` in `delirium-room/src/main.rs`):
 
-- `--headless` **не исполняет** `--script`: сценарий разбирает только оконная система `scripted`;
-- headless сам жмёт `balance` на шаге 0, кнопки `--press` следом, и **всегда** стреляет в грудь на шаге 60;
-  печатает позы частей битами — точный, детерминированный эталон;
-- в окне команды сценария срабатывают по часам (`time.elapsed_secs()`), шаги — в реальном времени; пока нет первой
-  команды, тело держится и шаги не идут.
+- `--headless` **doesn't run** `--script`: only the windowed `scripted` system reads a scenario;
+- headless presses `balance` itself at step 0, the `--press` buttons next, and **always** shoots the chest at step 60;
+  it prints the parts' poses as bits: an exact, deterministic reference;
+- in the window a scenario's commands fire by the clock (`time.elapsed_secs()`), the steps run in real time; until
+  the first command the body is held and no steps run.
 
-Playroom менять нельзя (каталог SDK только для чтения).
+The Playroom mustn't be changed (the SDK's folder is read-only).
 
-## Решение
+## Decision
 
-1. Сценарий `golden/scenarios/*.txt` объявляет режим строкой `#! headless <шагов> [press=…]` или `#! window`.
-2. **headless** — для всего, что укладывается в «кнопки на шаге 0 + выстрел на шаге 60»: стойка первой секунды,
-   выстрел в грудь, relax первой секунды. Эталон — `.frames` (бит в бит) и `.rec`.
-3. **window** — для остального (стойка 60 с, толчок, `catchFall` с высоты, `relax`): `--script --rec`, первая
-   команда на 3 с (после загрузки окна). Фактический шаг каждой команды берётся из строк `#` в `.rec`; сверка в M4
-   идёт по этим шагам, а не по времени из файла.
-4. Анимацию вставания Playroom (не NM) сценарии выключают кнопкой `get-up` ×2 (режим `off`).
+1. A scenario `golden/scenarios/*.txt` declares its mode with a line `#! headless <steps> [press=…]` or `#! window`.
+2. **headless** for everything that fits "buttons at step 0 + a shot at step 60": the first second of standing, a shot
+   in the chest, the first second of relax. The reference is `.frames` (bit for bit) and `.rec`.
+3. **window** for the rest (standing 60 s, a push, `catchFall` from a height, `relax`): `--script --rec`, the first
+   command at 3 s (after the window loads). Each command's actual step is taken from the `#` lines in the `.rec`; the
+   comparison in M4 goes by those steps, not by the file's times.
+4. The Playroom's get-up animation (not NM) is turned off in scenarios with the `get-up` button ×2 (the `off` mode).
 
-## Последствия
+## Consequences
 
-- `dms_script` в GMod (M4) исполняет команды по шагам из эталонного `.rec`.
-- Оконные прогоны открывают окно Playroom на время сценария и идут в реальном времени.
-- Если Playroom получит headless-исполнение `--script`, оконные сценарии переводятся в headless.
+- `dms_script` in GMod (M4) runs the commands on the steps from the reference `.rec`.
+- Window runs open the Playroom's window for the scenario's length and run in real time.
+- If the Playroom gets headless running of `--script`, the window scenarios move to headless.

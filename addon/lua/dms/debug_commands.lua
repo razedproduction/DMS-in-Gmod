@@ -51,8 +51,11 @@ end
 
 concommand.Add("dms_info", function(ply)
 	if IsValid(ply) and not ply:IsSuperAdmin() then return end
-	say(ply, string.format("[DMS] module %s, SDK %d, IPhysicsNM: %s, sub-steps: %s", DMS.Version, DMS.NmVersion(),
-		DMS.InterfaceVersion() or "none", DMS.Available() and DMS.SubstepCount() or "-"))
+	say(ply, string.format("[DMS] module %s, Lua addon %s, Delirium %s, IPhysicsNM: %s, sub-steps: %s, homer.mdl: model %s "
+		.. "(needs %d)", DMS.Version, DMS_ADDON_VERSION, DMS.DeliriumVersion, DMS.InterfaceVersion() or "none",
+		DMS.Available() and DMS.SubstepCount() or "-", tostring(DMS_HomerModelVersion() or "unmarked"), DMS.HomerModelVersion))
+	-- DMS_Problems comes with dms_init.lua, after this file.
+	for _, p in ipairs(DMS_Problems and DMS_Problems() or {}) do say(ply, "[DMS] problem: " .. p) end
 end)
 
 -- BodyState of the aimed part next to the same values from GMod's PhysObj, in SI.

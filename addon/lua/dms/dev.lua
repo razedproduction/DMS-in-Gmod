@@ -116,7 +116,7 @@ local function apply()
 	print("[DMS] dms-ctl channel on 127.0.0.1:" .. port:GetInt())
 	-- The bench agent needs NM's data.
 	if not DMS.DataInfo() then
-		local loaded, info = pcall(DMS.LoadData, GetConVar("dms_game_dir"):GetString())
+		local loaded, info = pcall(DMS.LoadData, DMS_GameDir())
 		print(loaded and ("[DMS] NM's data: " .. info.dir) or ("[DMS] NM's data isn't loaded: " .. tostring(info)))
 	end
 end

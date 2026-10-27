@@ -274,6 +274,15 @@ local function homerTab(p)
 	off:Dock(LEFT)
 	off:DockMargin(6, 0, 0, 0)
 	off:SetWide(180)
+	local a = row(p)
+	local attach = button(a, "NM on the Homer you look at", "Puts NM back on the Homer ragdoll you look at (one spawned with dms_homer, the spawn menu or the DMS tool): he balances.\n\ndms_attach", function() RunConsoleCommand("dms_attach") end)
+	attach:Dock(LEFT)
+	attach:SetWide(180)
+	local detach = button(a, "NM off the Homer you look at", "Takes NM off the Homer you look at: an ordinary ragdoll until NM is put back on.\n\ndms_detach", function() RunConsoleCommand("dms_detach") end)
+	detach:Dock(LEFT)
+	detach:DockMargin(6, 0, 0, 0)
+	detach:SetWide(180)
+	note(p, "Close the window to aim: these act on the Homer under your crosshair. The DMS tool (Tools -> DMS) does the same and more.")
 	local auto = check(p, "NM on Homers spawned from the spawn menu", switchHelp("autoattach"), function(v) switch("autoattach", v and 1 or 0) end)
 	bindSwitch("autoattach", function(v) auto:SetChecked(tonumber(v) ~= 0) end)
 
@@ -384,6 +393,69 @@ local function performanceTab(p)
 	num("threads", "Threads (0: auto)", 0, 16, 0)
 	num("lod_distance", "LOD distance (units)", 0, 10000, 0)
 	num("lod_still", "Still for (s)", 0, 30, 1)
+end
+
+-- The server's console commands for looking into DMS: they print to your console (~).
+local COMMANDS = {
+	{ "Status", "dms_status", "The agents: their flags, the gravity compensation, NM's cost a step, threads and LOD." },
+	{ "Self-test", "dms_selftest", "Homer in NM's own physics on a flat floor for 2 s under bodyBalance: he has to stay up. Checks NM's data, not the fork." },
+	{ "NM's data", "dms_data", "Loads NM's data from your GTA IV (once a game) and says what was read, or what's missing." },
+	{ "Physics", "dms_info", "The module, its IPhysicsNM and the physics environment." },
+	{ "Tuning", "dms_tuning_status", "The tuning profile in use and its values." },
+	{ "Behaviours", "dms_nm_messages", "Every NM message (behaviour); dms_nm_messages <name> lists its params." },
+	{ "Parts", "dms_nm_parts", "NM's 21 parts of Homer, in order (the part numbers reactions take)." },
+	{ "Joints", "dms_nm_joints", "NM's joints of Homer: pivots, frames, limits, armature." },
+}
+
+local function debugTab(p)
+	heading(p, "Versions")
+	note(p, "The module, the Lua addon and the fork come in one release and have to match; homer.mdl is made by its dms-homer.")
+	ui.about = note(p, "(the server hasn't answered yet)", C.text)
+	ui.problems = note(p, "", C.bad)
+
+	heading(p, "Console commands")
+	note(p, "They print to your console: open it with ~ (or the button below).")
+	local grid = p:Add("DIconLayout")
+	grid:Dock(TOP)
+	grid:SetSpaceX(6)
+	grid:SetSpaceY(6)
+	for _, c in ipairs(COMMANDS) do
+		button(grid, c[1], c[3] .. "\n\n" .. c[2], function() RunConsoleCommand(c[2]) end):SetSize(150, 26)
+	end
+	button(grid, "Open the console", "Shows the game's console, where the commands print.\n\nshowconsole", function() RunConsoleCommand("showconsole") end):SetSize(150, 26)
+
+	heading(p, "Send NM a message")
+	local r = row(p)
+	local line
+	-- The button docks first: FILL takes what's left.
+	local go = button(r, "Send", nil, function()
+		-- Through the menu's channel: dms_send by RunConsoleCommand would get the line in quotes.
+		if line:GetValue() ~= "" then send(line:GetValue()) end
+	end)
+	go:Dock(RIGHT)
+	go:SetWide(80)
+	go:DockMargin(6, 0, 0, 0)
+	line = r:Add("DTextEntry")
+	line:Dock(FILL)
+	line:SetPlaceholderText("bodyBalance start=true")
+	line.OnEnter = go.DoClick
+	help(r, "Send NM a message", "A line as the Playroom's console takes it, to the Homer you look at: \"bodyRelax start=true\", \"applyImpulse start=true partIndex=9 impulse=0,30,0\". Points are in NM's frame (metres).\n\ndms_send <line>")
+
+	heading(p, "Logs")
+	local log = check(p, "Print the Playroom's reaction log", switchHelp("react_log"), function(v) switch("react_log", v and 1 or 0) end)
+	bindSwitch("react_log", function(v) log:SetChecked(tonumber(v) ~= 0) end)
+	check(p, "Debug overlay", "NM's capsules, drives and centre of mass over Homer (superadmins). The DMS tool's Inspector shows one Homer's state.\n\ndms_overlay"):SetConVar("dms_overlay")
+end
+
+-- The Debug tab's versions and problems, from the catalogue.
+local function fillAbout()
+	local a = catalogue and catalogue.about
+	if not a or not IsValid(ui.about) then return end
+	ui.about:SetText(string.format("DMS module %s, Lua addon %s, Delirium %s\nIPhysicsNM: %s\nhomer.mdl: model %s (this release: %s)\nGTA IV: %s\nNM's data: %s",
+		tostring(a.module), tostring(a.addon), tostring(a.delirium), tostring(a.interface), tostring(a.modelMade),
+		tostring(a.model), a.gameDir ~= "" and a.gameDir or "(none: dms_game_dir)", tostring(a.data)))
+	local ps = a.problems or {}
+	ui.problems:SetText(#ps == 0 and "" or ("Problems:\n- " .. table.concat(ps, "\n- ") .. "\nSee docs/install.md (FAQ)."))
 end
 
 -- One behaviour's params: a slider, a checkbox or a text box each, its doc in the help pane and the tooltip.
@@ -662,6 +734,7 @@ local function refresh()
 	applySwitches(catalogue.switches)
 	fillTaskParams()
 	fillParams()
+	fillAbout()
 end
 
 -- The window -----------------------------------------------------------------------------------------------------
@@ -672,6 +745,7 @@ local TABS = {
 	{ "Tuning", "icon16/wrench.png", tuningTab, true },
 	{ "Task params", "icon16/table.png", function(p) ui.tp = p end },
 	{ "Performance", "icon16/server.png", performanceTab },
+	{ "Debug", "icon16/bug.png", debugTab },
 }
 
 local DEFAULT_HELP = { "DMS", "Point at anything to see what it does.\n\nThe window: dms_menu, or a key from the Homer tab." }

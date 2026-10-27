@@ -6,13 +6,21 @@ local gameDir = CreateConVar("dms_game_dir", "", FCVAR_ARCHIVE + FCVAR_PROTECTED
 
 local say = DMS_Say
 
+-- The GTA IV folder: dms_game_dir, else the one install.ps1 -Gta wrote to data/dms/game_dir.txt (a path only, no
+-- game files: docs/adr/0006, 0010). "" when there's neither.
+function DMS_GameDir()
+	local dir = gameDir:GetString()
+	if dir ~= "" then return dir end
+	return string.Trim(file.Read("dms/game_dir.txt", "DATA") or "")
+end
+
 local function allowed(ply)
 	return not IsValid(ply) or ply:IsSuperAdmin()
 end
 
--- Loads NM's data from dms_game_dir (once), or says what's missing and where to point it.
+-- Loads NM's data from the GTA IV folder (once), or says what's missing and where to point it.
 local function load(ply)
-	local ok, info = pcall(DMS.LoadData, gameDir:GetString())
+	local ok, info = pcall(DMS.LoadData, DMS_GameDir())
 	if not ok then
 		say(ply, "[DMS] NM's data isn't loaded: " .. tostring(info))
 		return

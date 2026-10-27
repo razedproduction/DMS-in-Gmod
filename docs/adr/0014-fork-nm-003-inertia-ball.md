@@ -1,41 +1,44 @@
-# 0014. Форк `VBOX3D_NM_003`: полный тензор инерции и шар с семантикой NM
+# 0014. The fork's `VBOX3D_NM_003`: the full inertia tensor and a ball with NM's semantics
 
-Статус: принято (2026-10-22). Уточняет ADR 0013 (снимает его два расхождения с форком).
+Status: accepted (2026-10-22). Refines ADR 0013 (removes its two divergences from the fork).
 
-## Контекст
+## Context
 
-`golden body` (M3) показал два расхождения Box3D с физикой NM, которые не исправить ни моделью, ни NM (ADR 0008):
+`golden body` (M3) showed two divergences of Box3D from NM's physics that neither the model nor NM can fix (ADR 0008):
 
-1. **Инерция.** Форк держит инерцию тела диагональной в его кадре (`m_Inertia`, `b3MassData` по диагонали). У NM
-   тензор части в её кадре недиагонален (у рук внедиагональные члены до 46 % по норме).
-2. **Шар.** `SetJointLimits` строит ragdoll-констрейнт twist/cone/plane: ось twist выбирается эвристикой
-   (`SelectTwistAxis`), конус круговой, а `limits[i]` берутся как пределы вокруг оси `i`. У NM (`ragdoll.rs`
-   `lean_limit`, `rigid::leans`): twist — вокруг Z кадра сустава, наклон (поворот Z родителя в Z ребёнка вокруг оси
-   `s` в плоскости XY родителя на угол `t`) ограничен эллипсом `(t·s.y/l0)² + (t·s.x/l1)² ≤ 1` — `limits[0]` держит
-   поворот вокруг **Y** родителя, `limits[1]` — вокруг X. Левое бедро при падении уходило на ~15° за предел NM.
+1. **Inertia.** The fork keeps a body's inertia diagonal in its frame (`m_Inertia`, `b3MassData` on the diagonal). NM's
+   part tensor isn't diagonal in the part's frame (for the arms the off-diagonal terms are up to 46 % by norm).
+2. **The ball.** `SetJointLimits` builds a twist/cone/plane ragdoll constraint: the twist axis picked by a heuristic
+   (`SelectTwistAxis`), the cone circular, and `limits[i]` taken as the limits about axis `i`. In NM (`ragdoll.rs`
+   `lean_limit`, `rigid::leans`) the twist is about the joint frame's Z, and the lean (turning the parent's Z into the
+   child's Z about an axis `s` in the parent's XY plane by an angle `t`) is limited by the ellipse
+   `(t·s.y/l0)² + (t·s.x/l1)² ≤ 1`: `limits[0]` holds the turn about the parent's **Y**, `limits[1]` about X. The left
+   hip went ~15° past NM's limit in a fall.
 
-## Решение
+## Decision
 
-Новая версия интерфейса форка `VBOX3D_NM_003` (строки `_002` и `_001` отдаются тем же объектом, их vtable — префикс):
+A new version of the fork's interface, `VBOX3D_NM_003` (the strings `_002` and `_001` give the same object, their
+vtables are a prefix):
 
-- `SetBodyInertia(obj, tensor[9])` — тензор 3×3 (кг·м², около центра масс, в кадре тела) идёт в `b3MassData`
-  целиком; `GetInertia` и прочие диагональные приближения VPhysics берут его диагональ; сбрасывается `SetInertia`,
-  масштабируется `SetMass`. `GetBodyInertia(obj, tensor[9])` — тензор, которым Box3D реально крутит тело (проверка).
-- `SetJointBallLimits(c, parent, frames[2], limits[3])` — шар NM на ragdoll-констрейнте: сферический сустав Box3D с
-  кадрами NM, twist ±`limits[2]`, эллиптический конус в кадре родителя. Эллипс — патч Box3D
-  `cmake/patches/box3d-elliptical-cone.patch` (`b3SphericalJointDef::coneAngleY`: предел вдоль оси наклона `s` в
-  кадре тела B — `1/√((s.x/coneAngle)² + (s.y/coneAngleY)²)`, считается при подготовке шага). Подстройки конуса и
-  строки «плоскости» ragdoll-решателя форка для такого сустава отключены. Хинжи NM — по-прежнему `SetJointLimits`.
-- Модуль требует `_003` для `DMS.BindHomer` (на `_002` — внятная ошибка); `bind.rs` ставит тензор каждой части и
-  шары/хинжи NM. Копия заголовка — `module/src/ffi/vphysics_nm.h`.
+- `SetBodyInertia(obj, tensor[9])`: a 3×3 tensor (kg·m², about the centre of mass, in the body's frame) goes into
+  `b3MassData` whole; `GetInertia` and VPhysics's other diagonal approximations take its diagonal; `SetInertia` resets it,
+  `SetMass` scales it. `GetBodyInertia(obj, tensor[9])`: the tensor Box3D actually turns the body with (a check).
+- `SetJointBallLimits(c, parent, frames[2], limits[3])`: NM's ball on a ragdoll constraint: Box3D's spherical joint with
+  NM's frames, twist ±`limits[2]`, an elliptical cone in the parent's frame. The ellipse is the Box3D patch
+  `cmake/patches/box3d-elliptical-cone.patch` (`b3SphericalJointDef::coneAngleY`: the limit along the lean axis `s` in
+  body B's frame is `1/√((s.x/coneAngle)² + (s.y/coneAngleY)²)`, computed while preparing the step). The fork's ragdoll
+  solver's cone adjustments and "plane" rows are off for such a joint. NM's hinges still go through `SetJointLimits`.
+- The module requires `_003` for `DMS.BindHomer` (on `_002`, a clear error); `bind.rs` sets every part's tensor and NM's
+  balls and hinges. The header's copy is `module/src/ffi/vphysics_nm.h`.
 
-## Последствия
+## Consequences
 
-- `golden body` проходит целиком: тензор Box3D = NM (≤ 7e-8), суставы при падении ≤ 0.5° за пределами NM (мягкость
-  лимитов Box3D), пивоты ≤ 0.6 мм.
-- Твист NM меряется в swing-twist разложении относительно родителя, Box3D — относительно ребёнка; при симметричных
-  пределах NM это одно и то же.
-- Эллипс берётся по оси наклона на начало шага (как и круговой конус Box3D) — внутри шага ось не уточняется.
-- Ограничения: `SetJointBallLimits` требует, чтобы родитель был attached-объектом констрейнта (так игра строит
-  ragdoll'ы); save/restore такого сустава не сохраняет его форму (как и остальные NM-правки форка).
-- NM-расширение форка (вместе с `_003`) по-прежнему не закоммичено в репозитории форка (ROADMAP M0).
+- `golden body` passes whole: Box3D's tensor = NM's (≤ 7e-8), joints in a fall ≤ 0.5° past NM's limits (the softness of
+  Box3D's limits), pivots ≤ 0.6 mm.
+- NM measures twist in a swing-twist decomposition relative to the parent, Box3D relative to the child; with NM's
+  symmetric limits it's the same thing.
+- The ellipse is taken along the lean axis at the step's start (as is Box3D's circular cone): the axis isn't refined
+  within the step.
+- Limitations: `SetJointBallLimits` needs the parent to be the constraint's attached object (that's how the game builds
+  ragdolls); save/restore of such a joint doesn't keep its shape (as with the fork's other NM changes).
+- The fork's NM extension (with `_003`) still isn't committed in the fork's repository (ROADMAP M0).

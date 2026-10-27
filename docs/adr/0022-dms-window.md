@@ -1,50 +1,51 @@
-# 0022. Меню DMS — отдельное окно
+# 0022. The DMS menu is a window of its own
 
-Статус: принято (2026-10-27). Уточняет 0009.
+Status: accepted (2026-10-27). Refines 0009.
 
-## Контекст
+## Context
 
-Меню M6 (ADR 0009) было вкладкой спавн-меню «Утилиты → DMS → Homer (Delirium)»: узкая колонка `DForm`, в которой
-Homer, переключатели Playroom, пробы реакций, профили, ~30 поведений NM с десятками параметров и taskparams идут одним
-длинным списком; документация параметра — только во всплывающей подсказке с задержкой. В M7 добавились конвары
-`dms_max_agents`, `dms_threads`, `dms_lod_distance`, `dms_lod_still`, которых в меню не было. Пользователь хочет
-отдельное окно, как у gwater2 (`lua/menu`): своё окно поверх игры, своя команда и клавиша, вкладки слева, свой стиль,
-пояснение к тому, что под курсором.
+M6's menu (ADR 0009) was a spawn menu tab "Utilities → DMS → Homer (Delirium)": a narrow `DForm` column where Homer, the
+Playroom's switches, reaction try-outs, profiles, ~30 NM behaviours with dozens of params and taskparams went in one
+long list; a param's documentation only in a tooltip with a delay. M7 added the convars `dms_max_agents`, `dms_threads`,
+`dms_lod_distance`, `dms_lod_still`, which weren't in the menu. The user wants a separate window, like gwater2's
+(`lua/menu`): its own window over the game, its own command and key, tabs on the left, its own style, an explanation of
+what's under the cursor.
 
-Попутно на стенде нашлась гонка в `tuning.lua`: после `save` сервер менял `dms_tuning_profile` через
-`RunConsoleCommand` (применяется в следующем кадре), а каталог уходил раньше — со старым профилем; меню видело
-расхождение, запрашивало старый профиль и затирало только что сохранённые правки. Это та же петля, что чинили в M7
-флагом `filling`, только со стороны сервера.
+Along the way the bench found a race in `tuning.lua`: after `save` the server changed `dms_tuning_profile` through
+`RunConsoleCommand` (applied the next frame), and the catalogue went out before, with the old profile; the menu saw the
+mismatch, asked for the old profile and wiped the just-saved edits. It's the same loop fixed in M7 with the `filling`
+flag, only from the server's side.
 
-## Решение
+## Decision
 
-- `addon/lua/dms/cl_menu.lua` — своё окно (`DFrame`, `MakePopup`, размытие фона, тёмная «стеклянная» панель с одним
-  акцентным цветом). Открывается командой `dms_menu` (повторно — закрывает), клавишей из клиентского конвара
-  `dms_menu_key` (`DBinder` на вкладке Homer; не срабатывает в текстовых полях, чате и консоли), иконкой DMS в
-  контекстном меню (C, `DesktopWindows`) и кнопкой в «Утилиты → DMS» (сама вкладка спавн-меню остаётся только
-  ссылкой на окно).
-- Вкладки слева: Homer (спавн, снятие NM, `dms_autoattach`, клиентские галочки, цвета, клавиша окна), Reactions
-  (переключатели Playroom, `dms_dodge_gap`, вставание, дополнительные реакции побитно `dms_extra_pick`, пробы
-  реакций), Tuning (вкл/выкл, профили, поиск по поведениям, параметры, «запустить на Homer»), Task params (или
-  сообщение, что у PC-версии их нет), Performance (конвары M7). Справа — панель помощи: заголовок и текст того, что
-  под курсором (описание параметра NM, его умолчание Playroom, отметка «порт не использует»; для конваров сервера —
-  их собственный help text), без задержки; у параметров NM остаётся и подсказка.
-- Протокол `dms_tuning` прежний (каталог, параметры поведения по запросу, ответы кусками по 16 КБ раз в тик) и
-  расширен: каталог несёт `switches` — значения и help text конваров, которые меню меняет (у клиента серверных
-  конваров нет); `switch` принимает только имена из белого списка `SWITCHES` в `tuning.lua` (раньше — любой
-  `dms_*`, включая `dms_game_dir` и `dms_dev`), ставит значение сразу и отвечает новыми `switches`.
-- Профиль и тюнинг сервер меняет `ConVar:SetString`/`SetBool` (сразу), а не `RunConsoleCommand`; после каждого
-  изменения — `DMS_TuningApply()` (пересохранение под тем же именем колбэк конвара не вызывает).
-- Программное заполнение виджетов (`quietly`, счётчик `filling`) никогда не срабатывает как выбор игрока; выбранное
-  поведение не «выделяется» в списке, а рисуется по `ui.msg`, поэтому перезаполнение списка ничего не выбирает и
-  выбранное остаётся выбранным (и между открытиями окна). Ползунки серверных конваров отправляют значение через
-  0.3 с после остановки. В простое окно к серверу не обращается: запрос каталога — только при открытии, параметры
-  поведения — один раз за сессию.
+- `addon/lua/dms/cl_menu.lua` is a window of its own (`DFrame`, `MakePopup`, a blurred background, a dark "glass" panel
+  with one accent colour). It opens with the command `dms_menu` (again: closes), with a key from the client convar
+  `dms_menu_key` (a `DBinder` in the Homer tab; doesn't fire in text boxes, the chat or the console), with the DMS icon
+  in the context menu (C, `DesktopWindows`) and with a button in "Utilities → DMS" (the spawn menu tab itself stays only
+  as a link to the window).
+- Tabs on the left: Homer (spawning, taking NM off, `dms_autoattach`, client checkboxes, colours, the window's key),
+  Reactions (the Playroom's switches, `dms_dodge_gap`, getting up, the additional reactions bit by bit
+  `dms_extra_pick`, reaction try-outs), Tuning (on/off, profiles, search over behaviours, params, "run on Homer"), Task
+  params (or a message that the PC version has none), Performance (the M7 convars). On the right, a help pane: the title
+  and text of what's under the cursor (an NM param's description, its Playroom default, the mark "the port doesn't use
+  it"; for the server's convars, their own help text), without delay; NM params keep their tooltip too.
+- The `dms_tuning` protocol is the same (the catalogue, a behaviour's params on request, replies in 16 KB pieces once a
+  tick) and extended: the catalogue carries `switches`, the values and help texts of the convars the menu changes (the
+  client doesn't have the server's convars); `switch` takes only names from the `SWITCHES` whitelist in `tuning.lua`
+  (before, any `dms_*`, including `dms_game_dir` and `dms_dev`), sets the value at once and answers with new `switches`.
+- The server changes the profile and tuning with `ConVar:SetString`/`SetBool` (at once), not `RunConsoleCommand`; after
+  each change, `DMS_TuningApply()` (saving again under the same name doesn't call the convar's callback).
+- Filling widgets programmatically (`quietly`, the `filling` counter) never acts as the player's choice; the chosen
+  behaviour isn't "selected" in the list but drawn by `ui.msg`, so refilling the list chooses nothing and the chosen one
+  stays chosen (and between openings of the window). Sliders of server convars send their value 0.3 s after they stop.
+  While idle, the window doesn't talk to the server: the catalogue is asked for only on opening, a behaviour's params
+  once a session.
 
-Код написан заново по мотивам устройства gwater2, без копирования (лицензия проекта GPL-3.0-only).
+The code is written anew after the pattern of gwater2's layout, without copying (the project's licence is
+GPL-3.0-only).
 
-## Последствия
+## Consequences
 
-- Все настройки DMS в одном месте; новые поведения и параметры NM появляются в окне без правок (как и раньше).
-- Новые серверные конвары для меню добавляются в `SWITCHES` (`tuning.lua`) и в нужную вкладку `cl_menu.lua`.
-- `dms_tuning`/`dms_tuning_profile` теперь меняются без задержки в кадр; поведение консольных команд не изменилось.
+- All of DMS's settings in one place; new NM behaviours and params appear in the window without changes (as before).
+- New server convars for the menu go into `SWITCHES` (`tuning.lua`) and into the right tab of `cl_menu.lua`.
+- `dms_tuning`/`dms_tuning_profile` now change without a frame's delay; the console commands behave as before.

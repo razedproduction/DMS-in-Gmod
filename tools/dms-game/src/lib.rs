@@ -21,6 +21,9 @@ use delirium_data::{anim, img, model, resource, rpf, skeleton};
 pub const HOMER_MODEL: &str = "m_y_pmanhat_01";
 /// Which NM character Homer is (`delirium::nmrs::HOMER`, fred.xrt).
 pub const HOMER_NM: usize = delirium::nmrs::HOMER;
+/// The version of Homer's model (`tools/dms-homer`): one more whenever what it writes changes (the body, its bones,
+/// the `.phy`). dms-homer marks the model with it (`models/dms/homer_version.txt`), the module asks for it at start.
+pub const MODEL_VERSION: u32 = 1;
 
 /// The game's platform, as the Playroom tells them apart.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

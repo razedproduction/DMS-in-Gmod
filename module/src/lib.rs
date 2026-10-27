@@ -25,6 +25,8 @@ use ffi::vphysics_nm::{self, AcquireError, Version};
 use lua::{Api, LuaState};
 
 const MODULE_VERSION: &str = env!("CARGO_PKG_VERSION");
+/// The Delirium release built in: the SDK checkout's tag (build.rs).
+const DELIRIUM_RELEASE: &str = env!("DMS_DELIRIUM_RELEASE");
 
 // Only the x86-64 branch of GMod is built for.
 const ARCH: &str = "win64";
@@ -86,10 +88,16 @@ unsafe fn open(l: *mut LuaState) -> c_int {
     let nm_message = acquire_message();
     unsafe {
         let natives = natives::NATIVES.iter().chain(nm_natives::NATIVES).chain(bind::NATIVES).chain(agents::NATIVES).chain(dev::NATIVES).chain(world::NATIVES).chain(react::NATIVES);
-        (api.createtable)(l, 0, 2 + natives.clone().count() as c_int);
+        (api.createtable)(l, 0, 4 + natives.clone().count() as c_int);
         let version = CString::new(MODULE_VERSION).unwrap_or_default();
         (api.pushstring)(l, version.as_ptr());
         (api.setfield)(l, -2, c"Version".as_ptr());
+        // What the Lua addon checks at start (dms_init.lua): the Delirium built in, and the body homer.mdl must be made for.
+        let delirium = CString::new(DELIRIUM_RELEASE).unwrap_or_default();
+        (api.pushstring)(l, delirium.as_ptr());
+        (api.setfield)(l, -2, c"DeliriumVersion".as_ptr());
+        (api.pushnumber)(l, f64::from(dms_game::MODEL_VERSION));
+        (api.setfield)(l, -2, c"HomerModelVersion".as_ptr());
         (api.pushcclosure)(l, lua_nm_version, 0);
         (api.setfield)(l, -2, c"NmVersion".as_ptr());
         for (name, f) in natives {
@@ -98,7 +106,7 @@ unsafe fn open(l: *mut LuaState) -> c_int {
         }
         (api.setfield)(l, lua::GLOBALSINDEX, c"DMS".as_ptr());
 
-        let banner = format!("[DMS] gmsv_dms {MODULE_VERSION} ({ARCH}), Delirium SDK {}", sdk_version());
+        let banner = format!("[DMS] gmsv_dms {MODULE_VERSION} ({ARCH}), Delirium {DELIRIUM_RELEASE} (SDK {})", sdk_version());
         api.print(l, &CString::new(banner).unwrap_or_default());
         api.print(l, &CString::new(nm_message).unwrap_or_default());
     }

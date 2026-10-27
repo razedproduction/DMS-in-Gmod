@@ -1,23 +1,23 @@
-# 0004. Сначала эталонное тело 1:1, потом реальные модели
+# 0004. A 1:1 reference body first, real models later
 
-Статус: принято (2026-10-21)
+Status: accepted (2026-10-21)
 
-## Контекст
+## Context
 
-Тело NM — 21 часть (капсулы вдоль локальной Y) и 20 суставов (ball/hinge) с пивотами, рамками и лимитами.
-Ragdoll ValveBiped — около 15 физобъектов. `IPhysicsNM` рассчитан на соответствие «часть = физобъект,
-сустав = constraint» (`SetJointAnchor`, `SetJointLimits`, `SetJointArmature` на constraint). Если начать
-с ValveBiped, любая нестабильность смешивает ошибки интеграции с ошибками подгонки тела.
+NM's body is 21 parts (capsules along the local Y) and 20 joints (ball/hinge) with pivots, frames and limits. A
+ValveBiped ragdoll has about 15 physics objects. `IPhysicsNM` is designed for "part = physics object, joint =
+constraint" (`SetJointAnchor`, `SetJointLimits`, `SetJointArmature` on a constraint). Starting with ValveBiped, any
+instability would mix integration errors with errors of fitting the body.
 
-## Решение
+## Decision
 
-- Первая цель FOLLOW — эталонная модель: 21 кость, 21 физобъект, кадр кости совпадает с кадром капсулы NM
-  (нулевые смещения части), массы, пивоты и лимиты — из build'а NM.
-- К моделям ValveBiped (конвертация в 21 часть или сведение частей на меньшее число объектов) переходим только
-  после того, как эталон стабильно стоит и реагирует (веха M4).
+- FOLLOW's first target is a reference model: 21 bones, 21 physics objects, the bone's frame the same as the NM
+  capsule's (zero part offsets), masses, pivots and limits from NM's build.
+- ValveBiped models (converted to 21 parts, or parts merged into fewer objects) come only after the reference stands
+  and reacts reliably (milestone M4).
 
-## Последствия
+## Consequences
 
-- Нужен инструмент генерации модели и `.phy` (`tools/dms-ragdoll`, `studiomdl`) раньше, чем видимый результат
-  на «настоящих» моделях.
-- Эталон остаётся регрессионным тестом: если он ломается, проблема в интеграции, а не в модели.
+- A tool generating the model and its `.phy` (`tools/dms-ragdoll`, `studiomdl`) is needed before visible results on
+  "real" models.
+- The reference stays a regression test: if it breaks, the problem is in the integration, not the model.

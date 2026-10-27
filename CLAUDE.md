@@ -65,6 +65,10 @@ VPhysics-Box3D. Тело — `prop_ragdoll` Homer; Delirium каждый физ�
 - GMod: `E:\Games\Steam\steamapps\common\GarrysMod` (x86-64 ветка, форк `vphysics.dll` уже в `bin\win64`,
   оригинал — `vphysics.dll.original`). После сборки устанавливать в игру самому, не спрашивая.
 - В PowerShell не запускать `build.ps1` с `2>&1`: вывод cargo в stderr превращается в ошибку.
+- Релиз (ADR 0024): `.\scripts\package.ps1` → `dist\DMS-<версия>-win64.zip`. Версия — `Cargo.toml`
+  (`workspace.package`) и `DMS_ADDON_VERSION` в `dms_init.lua`, одинаковые; изменилось то, что пишет `dms-homer`, —
+  `dms_game::MODEL_VERSION` + 1. CRT линкуется статически (`.cargo\config.toml`). Публикация — только с разрешения
+  пользователя.
 - Свой стенд (M2.5, [docs/bench.md](docs/bench.md), ADR 0012): **сама игра в окне** —
   `.\scripts\server.ps1 start|stop|restart|status` (`gmod_win64.exe`, listen-сервер на `127.0.0.1`,
   окно 1280×720 видно, чтобы тест можно было смотреть; `-Hidden` — `-textmode` и скрытое окно) и CLI `.\target\release\dms-ctl.exe` (`cargo build --release -p dms-ctl -p golden`): `status`,
@@ -104,6 +108,8 @@ VPhysics-Box3D. Тело — `prop_ragdoll` Homer; Delirium каждый физ�
 ## Стиль
 
 - Код как в `module/src/*.rs`: краткие `///`-комментарии, `// SAFETY:` у каждого `unsafe`, без лишних зависимостей.
+- Документация (README, ROADMAP, `docs/` с ADR, `golden/README.md`, заметки к релизу) — **на английском** (решение
+  пользователя, M8); с пользователем по-прежнему по-русски.
 - Новое архитектурное решение — новый ADR `docs/adr/NNNN-slug.md` + строка в индексе; принятые ADR не
   переписывать, а заменять.
 - Выполненные пункты вехи отмечать `[x]` в ROADMAP.md (в ветке вехи, вместе с её PR).

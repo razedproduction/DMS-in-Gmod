@@ -1,0 +1,5 @@
+# The C runtime linked in, as Garry's Mod's own binaries have it: a player's machine needn't have the Visual C++
+# Redistributable (VCRUNTIME140.dll) for gmsv_dms_win64.dll and dms-homer.exe. No target-cpu here: the user's CPU has
+# no AVX2 (CLAUDE.md).
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

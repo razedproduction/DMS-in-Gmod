@@ -1,32 +1,33 @@
-# 0009. Пользовательский тюнинг поведений поверх Playroom-умолчаний
+# 0009. The player's tuning of behaviours over the Playroom's defaults
 
-Статус: принято (2026-10-21). Уточняет ADR 0008, не отменяет его.
+Status: accepted (2026-10-21). Refines ADR 0008, doesn't revoke it.
 
-## Контекст
+## Context
 
-ADR 0008 запрещает подстраивать NM: поведение Homer должно совпадать с Playroom. Пользователю аддона при этом
-нужна возможность самому менять поведения (сила реакции на выстрел, жёсткость, баланс, длительность) из меню
-игры. Если смешать это с интеграцией, тюнинг станет способом «прятать» расхождения с Playroom.
+ADR 0008 forbids fitting NM: Homer's behaviour has to match the Playroom's. Yet the addon's user needs to be able to
+change behaviours themselves (how strongly he reacts to a shot, stiffness, balance, duration) from the game's menu. If
+that's mixed with the integration, tuning becomes a way to "hide" divergences from the Playroom.
 
-## Решение
+## Decision
 
-1. **По умолчанию — ровно Playroom.** Без пользовательских настроек NM получает те же данные и параметры, что в
-   Playroom; golden-сверки всегда идут без тюнинга (`dms_tuning 0` принудительно в `tools/golden` и `dms-ctl run`).
-2. **Тюнинг — только через публичный интерфейс NM**, теми же каналами, которыми пользуется сама игра:
-   - параметры сообщений поведений (`nm_msg_set_*` поверх значений по умолчанию; имена, типы, описания, значения
-     по умолчанию и «используется ли» — из `nm_message_param_*`);
-   - наборы `taskparams` (замена значений `<задача> <набор> <параметр>` поверх файла игры).
-   Никаких изменений внутри Delirium, масштабирования drives или своих формул.
-3. **Тюнинг — фича для игрока, не инструмент интеграции.** Расхождения с Playroom тюнингом не исправляются
-   (ADR 0008 в силе).
-4. Настройки — профили (`garrysmod/data/dms/profiles/*.json`): пустой профиль «Playroom» неизменяем, остальные
-   создаёт пользователь; в профиль записываются только отличия от умолчаний. Кнопка «Сбросить к Playroom».
-5. Менять настройки может только суперадмин; применяются на сервере (клиентский UI шлёт `net`-сообщения),
-   действуют на следующий шаг (ADR 0003).
+1. **By default, exactly the Playroom.** Without the player's settings NM gets the same data and params as in the
+   Playroom; golden comparisons always run without tuning (`dms_tuning 0` forced in `tools/golden` and `dms-ctl run`).
+2. **Tuning only through NM's public interface**, by the same channels the game itself uses:
+   - the params of the behaviours' messages (`nm_msg_set_*` over the defaults; names, types, descriptions, defaults
+     and "is it used" from `nm_message_param_*`);
+   - the `taskparams` sets (values `<task> <set> <param>` replaced over the game's file).
+   No changes inside Delirium, no scaling of drives, no formulas of our own.
+3. **Tuning is a feature for the player, not an integration tool.** Divergences from the Playroom aren't fixed with
+   tuning (ADR 0008 stands).
+4. Settings are profiles (`garrysmod/data/dms/profiles/*.json`): the empty "Playroom" profile can't be changed, the
+   others the user makes; a profile holds only the differences from the defaults. A "Reset to Playroom" button.
+5. Only a superadmin can change the settings; they're applied on the server (the client UI sends `net` messages) and
+   act from the next step (ADR 0003).
 
-## Последствия
+## Consequences
 
-- Нужен генератор UI из интроспекции сообщений NM: новые параметры SDK появляются в меню без правок кода.
-- Изменённые `taskparams` требуют перезагрузки набора в SDK: проверить, применяет ли `nm_load_task_params`
-  повторную загрузку; если нет — тюнинг `taskparams` действует на новых агентах.
-- В статусе и в телеметрии виден активный профиль, чтобы отличать «Homer с тюнингом» от эталонного.
+- A UI generated from the introspection of NM's messages is needed: new SDK params appear in the menu without code
+  changes.
+- Changed `taskparams` need the set reloaded in the SDK: check whether `nm_load_task_params` applies a second load; if
+  not, `taskparams` tuning acts on new agents.
+- The status and the telemetry show the active profile, to tell "Homer with tuning" from the reference one.

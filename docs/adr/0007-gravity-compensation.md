@@ -1,53 +1,57 @@
-# 0007. Гравитация: sv_gravity не трогаем, разницу компенсирует сила на каждую часть
+# 0007. Gravity: sv_gravity stays, a force on every part makes up the difference
 
-Статус: принято (2026-10-21)
+Status: accepted (2026-10-21)
 
-## Контекст
+## Context
 
-- Delirium считает с постоянной `delirium::ragdoll::GRAVITY = 9.8` м/с² (через C API её не поменять, а SDK менять
-  нельзя). На ней построено всё, что связано с весом: мышцы, держащие тело (`oppose_gravity` в `nmdbm.rs` —
-  моменты от `-up · GRAVITY · m` по цепочке от опоры), баланс, прогноз падения (`nmhf.rs`), удары о землю.
-- Drives в FOLLOW выдаются **без гравитации** (`nm_agent_get_part_drive`: «gravity left out»): в Playroom хост сам
-  прикладывает к частям `-9.8 · m`, и именно под эту нагрузку рассчитаны мышцы.
-- В GMod `sv_gravity 600` u/s² = 600 · 0.0254 = **15.24 м/с²**. Менять `sv_gravity` нельзя: правильно станет вести
-  себя только Homer, а вся остальная игра (пропы, игроки, NPC, транспорт) — нет.
-- Если ничего не делать, Homer весит в 15.24 / 9.8 ≈ 1.56 раза больше, чем рассчитывает NM: мышцам не хватает
-  момента, тело оседает и падает.
-- Масштабировать drives NM целиком нельзя: от g зависит только их часть (компенсация веса), остальное — пружины,
-  демпфирование, реакции; реакция опоры под тяжёлым телом тоже останется другой.
+- Delirium computes with the constant `delirium::ragdoll::GRAVITY = 9.8` m/s² (the C API can't change it, and the SDK
+  mustn't be changed). Everything to do with weight is built on it: the muscles holding the body up (`oppose_gravity` in
+  `nmdbm.rs`: torques from `-up · GRAVITY · m` along the chain from the support), balance, the fall prediction
+  (`nmhf.rs`), hitting the ground.
+- FOLLOW's drives come **without gravity** (`nm_agent_get_part_drive`: "gravity left out"): in the Playroom the host
+  applies `-9.8 · m` to the parts itself, and the muscles are designed for exactly that load.
+- In GMod `sv_gravity 600` u/s² = 600 · 0.0254 = **15.24 m/s²**. `sv_gravity` mustn't change: only Homer would then
+  behave correctly, and the rest of the game (props, players, NPCs, vehicles) wouldn't.
+- Doing nothing, Homer weighs 15.24 / 9.8 ≈ 1.56 times what NM expects: the muscles lack torque, the body sags and
+  falls.
+- NM's drives can't be scaled as a whole: only part of them depends on g (holding the weight), the rest are springs,
+  damping, reactions; the support's reaction under a heavy body would stay different too.
 
-## Решение
+## Decision
 
-Каждый физический шаг вместе с drives NM на каждую часть Homer через `IPhysicsNM::ApplyBodyDrive` (она действует
-на всех сабстепах Box3D) добавляется компенсирующая сила
+Every physics step, together with NM's drives, every Homer part gets through `IPhysicsNM::ApplyBodyDrive` (which acts
+on all of Box3D's sub-steps) a compensating force
 
 ```
-F_k = m_k · (g_nm − g_src)        g_nm = (0, 0, −9.8) м/с²,  g_src = гравитация окружения в м/с²
+F_k = m_k · (g_nm − g_src)        g_nm = (0, 0, −9.8) m/s²,  g_src = the environment's gravity in m/s²
 ```
 
-при `sv_gravity 600`: `F_k = m_k · 5.44 м/с²` вверх. Сумма внешних сил на каждой части становится ровно такой, как
-в Playroom (`−9.8 · m_k` + drive NM), поэтому суставы, мышцы, контакты и баланс работают как в Playroom, а
-`sv_gravity` и весь остальной мир не меняются.
+with `sv_gravity 600`: `F_k = m_k · 5.44 m/s²` upwards. The sum of outside forces on each part becomes exactly what
+it is in the Playroom (`−9.8 · m_k` + NM's drive), so the joints, muscles, contacts and balance work as in the
+Playroom, while `sv_gravity` and the rest of the world don't change.
 
-- `m_k` — масса части по NM (`nm_build_part_info`); у модели Homer она совпадает с массой физобъекта (ROADMAP M3).
-- `g_src` берётся из игры (`physenv.GetGravity()`, учитывая изменение `sv_gravity` на лету) и передаётся в модуль
-  через очередь команд (ADR 0003). Часть с выключенной гравитацией (`PhysObj:EnableGravity(false)`) получает
+- `m_k` is the part's mass by NM (`nm_build_part_info`); in Homer's model it's the physics object's mass (ROADMAP M3).
+- `g_src` is taken from the game (`physenv.GetGravity()`, following `sv_gravity` changed on the fly) and passed to the
+  module through the command queue (ADR 0003). A part with gravity turned off (`PhysObj:EnableGravity(false)`) gets
   `g_src = 0`.
-- Режим (конвар `dms_gravity_mode`), окончательно выбирается по замерам в M4:
-  - `nm` — компенсация всегда, пока агент привязан: Homer целиком живёт в 9.8, точное совпадение с Playroom.
-  - `hybrid` (по умолчанию) — компенсация, пока у тела есть опора/контакт или идёт поведение, требующее держать
-    вес; в свободном полёте (ни одна часть не касается мира) — выключена, и Homer падает с ускорением игры, как
-    все остальные объекты. Однородная гравитация в полёте не меняет относительного движения частей, поэтому
-    мышцы NM в полёте работают так же; включение/выключение — плавно за 0.1 с, чтобы не было рывков.
-  - `off` — без компенсации (для сравнения).
-- Отвязанный или обмякший (`relax` без мышц) Homer компенсацию не получает — это обычный ragdoll игры.
+- The mode (the convar `dms_gravity_mode`), finally chosen by measurements in M4:
+  - `nm`: compensation always while the agent is attached: Homer lives in 9.8 entirely, an exact match with the
+    Playroom.
+  - `hybrid` (the default): compensation while the body has support or contact, or a behaviour that has to hold the
+    weight is running; in free flight (no part touches the world) it's off, and Homer falls with the game's
+    acceleration like every other object. Uniform gravity in flight doesn't change the parts' relative motion, so NM's
+    muscles work the same in flight; it's switched on and off smoothly over 0.1 s, without jerks.
+  - `off`: without compensation (for comparison).
+- A detached or limp (`relax` without muscles) Homer gets no compensation: he's an ordinary game ragdoll.
 
-## Последствия
+## Consequences
 
-- Изменение форка не нужно: `ApplyBodyDrive` уже прикладывает силу непрерывно по сабстепам. Если понадобится
-  точность солвера, альтернатива — масштаб гравитации тела в Box3D (`gravityScale`) новым методом интерфейса.
-- В режиме `nm` Homer падает медленнее пропов (с 10 м: 1.43 с против 1.15 с) и давит на опору с весом 9.8 · m.
-  В `hybrid` падение как у мира, но на опоре — вес по NM.
-- Прогнозы NM в полёте (время до удара в `highFall`/`catchFall`) считают с 9.8: в `hybrid` при долгом падении
-  возможна небольшая ошибка тайминга — проверяется в M4.
-- В отладку (M4) добавляется вывод компенсации и сравнение высоты таза/времени падения с Playroom.
+- No change to the fork is needed: `ApplyBodyDrive` already applies the force continuously over the sub-steps. If the
+  solver's accuracy is needed, the alternative is scaling the body's gravity in Box3D (`gravityScale`) with a new
+  method of the interface.
+- In the `nm` mode Homer falls slower than props (from 10 m: 1.43 s against 1.15 s) and presses on the support with a
+  weight of 9.8 · m. In `hybrid` he falls as the world does, but on the support weighs as NM has it.
+- NM's predictions in flight (the time to impact in `highFall`/`catchFall`) assume 9.8: in `hybrid` a long fall can
+  get its timing slightly wrong; checked in M4.
+- Debugging (M4) gets the compensation's output and a comparison of the pelvis height and the fall time with the
+  Playroom.

@@ -1,21 +1,21 @@
-# 0005. Без `IPhysicsNM` аддон выключается
+# 0005. Without `IPhysicsNM` the addon turns itself off
 
-Статус: принято (2026-10-21)
+Status: accepted (2026-10-21)
 
-## Контекст
+## Context
 
-FOLLOW требует непрерывных сил по всем сабстепам и armature суставов внутри солвера — этого нет ни в стандартном
-VPhysics (IVP), ни в других заменах. Steam при проверке файлов возвращает оригинальный `vphysics.dll`, так что
-отсутствие форка — обычная ситуация, а не экзотика.
+FOLLOW needs continuous forces over all sub-steps and joint armature inside the solver: neither the standard VPhysics
+(IVP) nor other replacements have it. Steam's file verification puts the original `vphysics.dll` back, so a missing fork
+is an ordinary situation, not an exotic one.
 
-## Решение
+## Decision
 
-- При загрузке модуль запрашивает `CreateInterface("VBOX3D_NM_002")` у загруженного `vphysics`.
-- Если его нет, но есть `VBOX3D_NM_001` — работаем без `SetJointLimits` и пишем предупреждение.
-- Если нет ни того, ни другого — агенты не создаются, в консоль и игроку-суперадмину выводится понятное сообщение
-  («установлен не тот vphysics, переустановите VPhysics-Box3D»). Fallback на ванильную физику не делаем.
+- On load the module asks the loaded `vphysics` for `CreateInterface("VBOX3D_NM_002")`.
+- If it isn't there but `VBOX3D_NM_001` is, we work without `SetJointLimits` and print a warning.
+- If neither is there, no agents are created, and the console and superadmin players get a clear message ("the wrong
+  vphysics is installed, reinstall VPhysics-Box3D"). No fallback to the vanilla physics.
 
-## Последствия
+## Consequences
 
-- Аддон работает только с форком VPhysics-Box3D.
-- Нужна проверка версии интерфейса при старте и при каждой смене карты.
+- The addon works only with the VPhysics-Box3D fork.
+- The interface version has to be checked at start and at every map change.
