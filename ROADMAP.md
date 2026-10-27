@@ -480,11 +480,103 @@ a GitHub release, the Workshop) is the user's decision; the release notes are `d
       Homer's model by its mark `homer_version.txt` ↔ `DMS.HomerModelVersion`, the GTA IV folder), `DMS.DeliriumVersion`,
       `dms_info`.
 
-### Deferred: GMod's original models (ValveBiped)
+---
 
-Not done for now: we work with Homer's body only. When models are needed, a **new tool with a new approach** is written
-for them (designed then, as a milestone of its own); the previous attempt's tool (`delirium-ragdoll`) is ignored. The
-auto-binding of NPCs' and players' death ragdolls belongs here too.
+## After 0.1.0: GMod's ragdolls, the Workshop's included (M9–M12)
+
+The goal: any humanoid ragdoll of the game — HL2's citizens, combine, players' models, NPCs' death ragdolls and models
+from the Workshop — gets Delirium the way Homer has it, keeping its own look. The design is proposed in
+[ADR 0025](docs/adr/0025-gmod-ragdolls-nm-proxy.md) (status: proposed, decided by M9's spikes). The previous attempt's
+`delirium-ragdoll` stays ignored: this is the new tool and the new approach.
+
+**The approach: an NM body fitted to the model, the model posed from it.** It's how Delirium's own SDK drives other
+skeletons (the Unity bridge `NmCharacter`, `fitToSkeleton`): `nm_build_fit` (`Build::fit`) fits Homer's build to the
+skeleton's 21 joints (bone lengths, masses by the cube of the scale), the host builds the 21 parts as its physics, NM
+drives them in FOLLOW, and the model's bones are posed from the parts. Everything M3–M8 built for Homer — FOLLOW on
+Box3D, the bind, the room layer, the golden comparison — works unchanged on such a body, because it *is* an NM body:
+only its sizes differ. The model's own `.phy` (15 objects on ValveBiped, arbitrary on the Workshop) isn't used for the
+physics at all, so its quality doesn't matter.
+
+What changes against Homer and needs care:
+- **The behaviours are tuned for ~1.8 m** (Delirium's docs): a fitted body far from it behaves worse. ValveBiped is
+  ~1.83 m, so HL2's models are close; the Workshop's extremes get a warning.
+- **The golden comparison** stays possible: the Playroom takes a build dump (`delirium-room <xrt> <build.txt>`), so the
+  fitted build can be run there too. Whether the links Delirium derives for Homer (`nmdbm::DERIVED_LINKS`) apply is a
+  spike question.
+- **The look is the model's**, not the capsules': a model's mesh doesn't match NM's capsules exactly (clipping a bit
+  into the floor or itself is possible, as anywhere an active ragdoll's body is simpler than its mesh).
+
+### M9. Spikes and the decision — 3–5 days
+
+Each spike ends with numbers and a recommendation; ADR 0025 is accepted (or replaced) at the end.
+
+- [ ] **S1, the skeleton:** read any model's bones, hierarchy and bind pose — from the `.mdl` bytes (`file.Read(model,
+      "GAME")`, mounted Workshop GMAs included) in the module, or through the game (`SetupBones` on the reference pose).
+      Pick the more reliable one on HL2's models and 5–10 Workshop models.
+- [ ] **S2, the fit:** the ValveBiped → NM joint map (as `NmCharacter.Joints`: NM's 4 spine joints spread from Spine to
+      Neck, a missing neck/clavicle put between its neighbours), `Build::fit` on male_07, combine, alyx, a tall and a
+      short Workshop model: sizes, masses, how far from Homer; the fitted build in the Playroom (`<xrt> <build.txt>`):
+      does it stand, does it need Homer's links.
+- [ ] **S3, the physics body** — the main choice:
+  - **(a) native bodies:** a new `IPhysicsNM` (`VBOX3D_NM_005`) creates the 21 NM bodies and joints straight from the
+    fitted build (capsules/boxes, masses, tensors, pivots, limits) in the ragdoll's environment; the game's
+    `prop_ragdoll` of the model stays the networked, traced, physgun-able entity, its objects following the NM bodies;
+    clients need nothing but the model they already have;
+  - **(b) a generated proxy model:** `dms-ragdoll` (new) compiles an invisible NM-body ragdoll per model (as `dms-homer`
+    does Homer, with `studiomdl`), cached in `garrysmod/models/dms/proxy/`; the proxy is the physics, the model is drawn
+    posed from it; remote clients would need the proxy model too.
+  Prototype both on male_07; compare: binding, FOLLOW fidelity (`golden body`-style numbers), physgun/gravity gun,
+  bullets and hit groups, networking to a second client, first-use delay.
+- [ ] **S4, posing the model:** the model's mapped bones from the parts (each with its bind-pose offset to its part),
+      unmapped bones (fingers, toes, jiggle, accessories) following their parents; where it happens (the server's
+      ragdoll objects, or the client's `BuildBonePositions`); skins, bodygroups and flexes kept.
+
+**DoD:** ADR 0025 accepted with the chosen S1/S3/S4 variants and their numbers; male_07 stands under `bodyBalance` in a
+prototype.
+
+### M10. ValveBiped ragdolls — 5–8 days
+
+- [ ] The chosen skeleton reader, the ValveBiped map and `Build::fit`; fitted builds cached by model and its CRC.
+- [ ] The NM body for a model (S3's variant), the bind (M3's `bind.rs`, generalised from Homer to any fitted body),
+      FOLLOW (M4) unchanged.
+- [ ] The swap: `dms_attach` on any ValveBiped `prop_ragdoll` — the NM body takes the ragdoll's current pose and every
+      part's velocity, so a falling ragdoll keeps falling; `dms_detach` gives the model its own physics back the same
+      way.
+- [ ] The model's look kept: posing (S4), skin, bodygroups, colour, material.
+- [ ] Golden: the fitted build of male_07 in the Playroom against GMod (`stand`, `push`, `shot`, `catchfall`), the
+      tolerances as for Homer; the body check (`golden body`) on the fitted body.
+- [ ] The DMS window: "NM on the ragdoll under the crosshair" works on any model, the model's fit shown (height, mass,
+      warnings).
+
+**DoD:** HL2's citizens (male/female), combine, police, alyx stand, react and fall as Homer does; the golden scenarios on
+male_07's fitted build within tolerance; the look of the model unchanged.
+
+### M11. Death ragdolls and auto-attach — 3–5 days
+
+- [ ] NPCs: their server ragdolls (`CreateEntityRagdoll`, `ai_serverragdolls`) get NM at once, in the dying pose and
+      velocity; the reaction to the killing hit as the Playroom's death and shot layer (ADR 0016).
+- [ ] Players: GMod's player death ragdolls are client-side (they can't have FOLLOW, ADR 0002) — a server ragdoll of
+      the player's model instead (the client one suppressed), the camera on it as GMod's death camera.
+- [ ] Convars: `dms_autoattach_npc`, `dms_autoattach_players`, a limit (M7's LOD and budget); removal with the ragdoll's
+      fade/cleanup.
+
+**DoD:** killing NPCs and players gives NM ragdolls reacting to the last hit as in the Playroom, without the frame time
+going over M7's budget at the limit.
+
+### M12. Workshop models and other humanoids — 5–8 days
+
+- [ ] Skeletons beyond ValveBiped: classification (ValveBiped, known rigs by bone names, unknown); unknown humanoids
+      through a **mapping editor** in the DMS window: a bone per NM joint, the fitted capsules shown live over the
+      model; mappings saved in `data/dms/skeletons/<model>.json`, exportable and importable as text to share.
+- [ ] Models from the Workshop: read from the mounted GMAs (nothing of them copied or redistributed); first use of a
+      model: the fit in the background with a message, then cached.
+- [ ] Limits stated: non-humanoids (animals, robots without a humanoid chain) aren't supported (a message); far from
+      1.8 m — a warning (Delirium's tuning); models with broken bind poses — reported by the reader.
+- [ ] Multiplayer: what a joining client needs (with S3 (a): only the model, which GMod already sends or the client
+      subscribes to).
+
+**DoD:** 10 popular Workshop player models (different rigs) work — automatically or after a mapping saved once — and a
+mapping made on one machine imports on another.
 
 ### Deferred: Playroom features not needed for Homer's behaviour
 
@@ -503,6 +595,9 @@ M0 ──► M1 ─┐
                                 └───► M5 ─┘    ▲
                        M7 (cross-cutting, closed before M8) ┘
 ```
+
+After 0.1.0: **M9 (spikes, ADR 0025) → M10 (ValveBiped) → M11 (death ragdolls) → M12 (Workshop, other humanoids)**;
+M11 and M12 can go in parallel after M10.
 
 The critical path: **M0 → M1/M2 → M2.5 → M3 → M4**. From M2.5 on, every check in the game except the visual ones Claude
 does itself on the bench in the game (without a window).
@@ -527,6 +622,11 @@ does itself on the bench in the game (without a window).
 | Incompatible changes of `IPhysicsNM` in the fork | crashes | a strict check of the version string, a copy of the header in the repository |
 | The module, the addon or Homer's model from different releases | errors from the middle of the code | one version, checked at start; the model's mark (M8, ADR 0024) |
 | The GPL-3 licence and GTA IV's data | legal | GPL-3 for everything, the data only from the user's copy |
+| A fitted body far from Homer's 1.8 m behaves worse (Delirium's tuning) | Workshop models react less well | a warning per model; the golden comparison on the fitted build in the Playroom (M10); no tuning of NM to "fix" it (ADR 0008) |
+| The model's mesh doesn't match NM's capsules | some clipping into the floor or itself | accepted as an active ragdoll's limit; the fit by the model's own joints keeps it small |
+| Clients don't have what the physics body needs | remote players see nothing or errors | S3 (a): the physics bodies are native, the networked entity is the model's own ragdoll (M9) |
+| Workshop models' skeletons are arbitrary | some don't work | classification, a mapping editor and shared mappings (M12); non-humanoids unsupported, said so |
+| Workshop models' licences | legal | nothing of them is copied or shipped: read from the mounted GMAs at run time |
 
 ## The nearest steps (the first week)
 

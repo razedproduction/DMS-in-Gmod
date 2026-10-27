@@ -29,3 +29,4 @@ replaced by a new ADR saying "replaces NNNN".
 | [0022](0022-dms-window.md) | The DMS menu is a window of its own (`dms_menu`, a key, tabs, a help pane), a whitelist of the menu's convars, the profile changes at once (refines 0009) | accepted |
 | [0023](0023-dms-tool.md) | The DMS tool for the toolgun: NM modes, reactions at a point, behaviours, a target, an inspector, a kick, a throw, health, pins (refines 0016, 0022) | accepted |
 | [0024](0024-release-versions-package.md) | The release: one version for the module and the addon, checks at start (the fork, the model's mark, the GTA IV folder), the C runtime linked in, the package (refines 0005, 0006, 0010) | accepted |
+| [0025](0025-gmod-ragdolls-nm-proxy.md) | GMod's ragdolls: an NM body fitted to the model (`Build::fit`, as Delirium's Unity bridge), the model posed from it (refines 0004) | proposed |
