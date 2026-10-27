@@ -1,36 +1,23 @@
--- Homer's face as the Playroom draws it (`delirium-room` `face`, ROADMAP M6): eye whites, pupils and brows on his head
--- capsule. The eyes blink, look at where he was last hit (or along his way when he's quick), squint with pain, shut
+-- Homer's face as the Playroom draws it (`delirium-room` `face`, ROADMAP M6): dark eyes with a white glint and dark
+-- brows on his head capsule. The eyes blink, look at where he was last hit (or along his way when he's quick), squint with pain, shut
 -- when he's dead or blinking; the brows show when he's scared, worried or hurt. The server sends NM's view (NW2 vars,
 -- reactions.lua); the head is the bone's, so the face moves with the drawn ragdoll.
 
 local eyes = CreateClientConVar("dms_eyes", "1", true, false, "Homer's eyes (the Playroom's)")
 local brows = CreateClientConVar("dms_brows", "1", true, false, "Homer's eyebrows (the Playroom's)")
 
-local SPHERE = "models/hunter/misc/sphere025x025.mdl"
-local WHITE = Material("models/debug/debugwhite")
-local model
-
+-- One of the Playroom's pieces, a unit sphere: at `pos`, its axes x y z scaled by sx sy sz (units), in a colour.
 local function piece(pos, x, y, z, sx, sy, sz, r, g, b)
-	if not IsValid(model) then
-		model = ClientsideModel(SPHERE, RENDERGROUP_OPAQUE)
-		if not IsValid(model) then return end
-		model:SetNoDraw(true)
-	end
-	local radius = model:GetModelRadius()
-	if radius <= 0 or sx <= 0 then return end
+	if sx <= 0 then return end
 	local m = Matrix({
-		{ x.x * sx, y.x * sy, z.x * sz, 0 },
-		{ x.y * sx, y.y * sy, z.y * sz, 0 },
-		{ x.z * sx, y.z * sy, z.z * sz, 0 },
+		{ x.x * sx, y.x * sy, z.x * sz, pos.x },
+		{ x.y * sx, y.y * sy, z.y * sz, pos.y },
+		{ x.z * sx, y.z * sy, z.z * sz, pos.z },
 		{ 0, 0, 0, 1 },
 	})
-	m:Scale(Vector(1, 1, 1) / radius)
-	model:SetPos(pos)
-	model:SetAngles(angle_zero)
-	model:EnableMatrix("RenderMultiply", m)
-	model:SetupBones()
-	render.SetColorModulation(r, g, b)
-	model:DrawModel()
+	cam.PushModelMatrix(m)
+	render.DrawSphere(vector_origin, 1, 12, 12, Color(r * 255, g * 255, b * 255))
+	cam.PopModelMatrix()
 end
 
 local function draw(ent)
@@ -67,8 +54,7 @@ local function draw(ent)
 	local gaze = look - fwd * look:Dot(fwd)
 	if gaze:Length() > 1 then gaze:Normalize() end
 	gaze = gaze * 0.12
-	render.SetMaterial(WHITE)
-	render.MaterialOverride(WHITE)
+	render.SetColorMaterial()
 	for i = 0, 5 do
 		local side = i % 2 == 0 and 1 or -1
 		local n = (fwd + up * 0.1 + left * side * 0.3 + gaze):GetNormalized()
@@ -76,23 +62,26 @@ local function draw(ent)
 		local ey = n:Cross(el)
 		local eye = centre + n * r
 		local w, h = 0.12 * r, 0.19 * r * open
+		-- The Playroom's: the eye a dark ellipsoid, its glint a small white ball, the brow a dark bar.
 		if i < 2 then
 			if open > 0.5 and eyes:GetBool() then
 				local s = 0.035 * r
-				piece(eye + n * 0.05 * r + ey * h * 0.4 - el * w * 0.35, el, ey, n, s, s, s, 0.05, 0.05, 0.05)
+				piece(eye + n * 0.05 * r + ey * h * 0.4 - el * w * 0.35, el, ey, n, s, s, s, 1, 1, 1)
 			end
 		elseif i < 4 then
-			if eyes:GetBool() then piece(eye, el, ey, n, w, h, 0.06 * r, 1, 1, 1) end
+			if eyes:GetBool() then piece(eye, el, ey, n, w, h, 0.06 * r, 0.05, 0.05, 0.07) end
 		elseif brows:GetBool() and upset > 0.2 then
 			local roll = -side * 0.45 * upset
 			local at = centre + (fwd + up * (0.42 + 0.06 * upset) + left * side * 0.3):GetNormalized() * r
 			local c, s = math.cos(roll), math.sin(roll)
 			local bx, by = el * c + ey * s, ey * c - el * s
-			piece(at, bx, by, n, 0.24 * r, 0.035 * r, 0.03 * r, 0.2, 0.12, 0.05)
+			-- A unit cube scaled: half sizes.
+			local ang = bx:AngleEx(n)
+			local half = Vector(0.12 * r, 0.0175 * r, 0.015 * r)
+			-- AngleEx: x along bx, z along n; y then is the bar's thickness way.
+			render.DrawBox(at, ang, Vector(-half.x, -half.y, -half.z), half, Color(13, 13, 18))
 		end
 	end
-	render.MaterialOverride()
-	render.SetColorModulation(1, 1, 1)
 end
 
 hook.Add("PostDrawOpaqueRenderables", "DMS_Face", function(depth, sky)
