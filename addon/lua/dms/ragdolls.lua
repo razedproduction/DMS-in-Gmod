@@ -81,6 +81,9 @@ local function facing(objs)
 	return f:Length() > 0.1 and f:Angle().y or 0
 end
 
+-- Where a ValveBiped ragdoll faces (degrees), as NM's face takes it.
+function DMS_RagdollFacing(ent) return facing(objectsOf(ent)) end
+
 -- The model's look while NM drives it: its objects frozen, without collisions and gravity, its own joints gone (or
 -- Source's separation fix pulls the posed objects back, ADR 0025).
 local function hold(ent)
@@ -217,8 +220,8 @@ function DMS_RagdollGone(ent)
 	ent.DMS_Native = nil
 	if DMS then DMS.RagdollRemove(handle) end
 	ent:SetNW2Bool("DMS_Ragdoll", false)
-	-- The bench's (dev.lua) stays as it is till its next run.
-	if ent.DMS_Restoring or ent.DMS_Bench or ent:IsMarkedForDeletion() then return end
+	-- The bench's (dev.lua) stays as it is till its next run; a live body's (live.lua) gives way to its owner.
+	if ent.DMS_Restoring or ent.DMS_Bench or ent.DMS_LiveOf or ent:IsMarkedForDeletion() then return end
 	-- NM came off by itself (NaN, a limit): not in the middle of its callback.
 	timer.Simple(0, function()
 		if not IsValid(ent) or ent.DMS_Agent then return end

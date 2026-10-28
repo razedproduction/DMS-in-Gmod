@@ -96,7 +96,8 @@ Hero, the Playroom's cars and other `!…`.
 `#! tol` line in the scenario's file (`golden/README.md`): the COM gap, the final height, the fall, the settling time,
 the commands' steps, the room layer's reactions. Within tolerance now: `stand` (60 s), `stand-1s`, `push`, `relax`,
 `catchfall`, the first 60 steps of `shot`, the `stairs` stage; outside: `relax-1s`, `lowwall` (close), `kerb`'s final
-pose, the landing in `rooftop` (ADR 0019). `--lead`: the former LEAD agent of the SDK on the Playroom's floor (as
+pose, the landing in `rooftop` (ADR 0019), `drunk`'s wander (no fall and the end height as the Playroom's, the COM apart:
+ADR 0029); `relax`'s final height is near its tolerance (0.150–0.179 m against 0.140 ± 0.03 over 4 runs). `--lead`: the former LEAD agent of the SDK on the Playroom's floor (as
 `dms_selftest`): its recordings match the Playroom to three digits, except `push` (the camera), `catchfall` and `shot`.
 
 `DMS.FollowStats()`: NM's step cost on the main thread, threads, the callback's calls (and from another environment),

@@ -65,6 +65,7 @@ local function hitOf(ent, dmg)
 	end
 	return h
 end
+DMS_HitOf = hitOf
 
 -- The room's lines for the killing hit `h` on the ragdoll: the room's fatally injured (health under 50, its ShotTask's
 -- dying reaction, no getting up), then the hit as the room takes it, its damage on that health (at 0 the room's death).
@@ -121,23 +122,24 @@ local function release(c)
 end
 
 -- Room for one more: the oldest death ragdolls let go of while there are dms_autoattach_max of them or dms_max_agents
--- bodies have NM. Whether there's room.
-local function makeRoom()
+-- bodies have NM (not asked for a ragdoll that has NM already, `had`). Whether there's room.
+local function makeRoom(had)
 	prune()
-	while #corpses > 0 and (#corpses >= maxDeaths:GetInt() or not DMS_AgentRoom()) do
+	while #corpses > 0 and (#corpses >= maxDeaths:GetInt() or not (had or DMS_AgentRoom())) do
 		release(table.remove(corpses, 1))
 	end
-	return #corpses < maxDeaths:GetInt() and DMS_AgentRoom()
+	return #corpses < maxDeaths:GetInt() and (had or DMS_AgentRoom())
 end
 
--- NM on a death ragdoll and the killing hit to it. The agent's id, or nil and why.
-local function attach(rag, h, owner)
-	if not makeRoom() then return nil, "no room (dms_autoattach_max, dms_max_agents)" end
+-- NM on a death ragdoll (kept on one that has it, live.lua's) and the room's lines to it (by default the killing hit
+-- `h`'s). The agent's id, or nil and why.
+local function attach(rag, h, owner, lines)
+	if not makeRoom(rag.DMS_Agent ~= nil) then return nil, "no room (dms_autoattach_max, dms_max_agents)" end
 	local id, why = DMS_AttachRagdoll(rag)
 	if not id then return nil, why end
 	rag.DMS_Death = true
 	corpses[#corpses + 1] = { ent = rag, owner = owner, since = CurTime() }
-	for _, line in ipairs(deathLines(rag, h)) do DMS_React(rag, line) end
+	for _, line in ipairs(lines or deathLines(rag, h)) do DMS_React(rag, line) end
 	hook.Run("DMS_DeathRagdoll", rag, owner)
 	return id
 end
@@ -155,7 +157,8 @@ end)
 
 -- An NPC's server ragdoll: NM on it, posed and moving as the NPC died (the game's own ragdolling, ADR 0027's swap).
 hook.Add("CreateEntityRagdoll", "DMS_Deaths", function(owner, rag)
-	if not IsValid(owner) or not owner:IsNPC() or not npcs:GetBool() or not possible() then return end
+	-- One that died as a ragdoll (live.lua): that ragdoll is its corpse.
+	if not IsValid(owner) or owner.DMS_Live or not owner:IsNPC() or not npcs:GetBool() or not possible() then return end
 	if not IsValid(rag) or rag:GetClass() ~= "prop_ragdoll" or not DMS_IsValveBiped(rag) then return end
 	local h, name = owner.DMS_LastHit, tostring(owner)
 	-- Undo and cleanup take the corpse in the NPC's place.
@@ -169,19 +172,20 @@ hook.Add("CreateEntityRagdoll", "DMS_Deaths", function(owner, rag)
 	end)
 end)
 
--- A player's death ragdoll of their model, posed from their bones and moving as they were.
-local function playerRagdoll(ply)
+-- A ragdoll of a player's or an NPC's model as it looks, posed from its bones and moving as it was (a player's death
+-- ragdoll, live.lua's). The ragdoll, or nil for a model without a ValveBiped one.
+function DMS_RagdollFrom(ent)
 	local rag = ents.Create("prop_ragdoll")
-	rag:SetModel(ply:GetModel())
-	rag:SetPos(ply:GetPos())
-	rag:SetAngles(Angle(0, ply:GetAngles().y, 0))
-	rag:SetSkin(ply:GetSkin())
-	for i = 0, ply:GetNumBodyGroups() - 1 do rag:SetBodygroup(i, ply:GetBodygroup(i)) end
-	rag:SetColor(ply:GetColor())
-	rag:SetRenderMode(ply:GetRenderMode())
-	rag:SetMaterial(ply:GetMaterial())
-	for i = 0, #(ply:GetMaterials() or {}) - 1 do
-		local m = ply:GetSubMaterial(i)
+	rag:SetModel(ent:GetModel())
+	rag:SetPos(ent:GetPos())
+	rag:SetAngles(Angle(0, ent:GetAngles().y, 0))
+	rag:SetSkin(ent:GetSkin())
+	for i = 0, ent:GetNumBodyGroups() - 1 do rag:SetBodygroup(i, ent:GetBodygroup(i)) end
+	rag:SetColor(ent:GetColor())
+	rag:SetRenderMode(ent:GetRenderMode())
+	rag:SetMaterial(ent:GetMaterial())
+	for i = 0, #(ent:GetMaterials() or {}) - 1 do
+		local m = ent:GetSubMaterial(i)
 		if m ~= "" then rag:SetSubMaterial(i, m) end
 	end
 	rag:Spawn()
@@ -192,14 +196,16 @@ local function playerRagdoll(ply)
 	end
 	-- As GMod's own: the world and things, not players and NPCs.
 	rag:SetCollisionGroup(COLLISION_GROUP_WEAPON)
-	-- The player's colour on their model (the PlayerColor material proxy, cl_ragdolls.lua).
-	rag:SetNW2Vector("DMS_PlayerColor", ply:GetPlayerColor())
-	rag:SetNW2Entity("DMS_Owner", ply)
-	local vel = ply:GetVelocity()
+	if ent:IsPlayer() then
+		-- The player's colour on their model (the PlayerColor material proxy, cl_ragdolls.lua).
+		rag:SetNW2Vector("DMS_PlayerColor", ent:GetPlayerColor())
+		rag:SetNW2Entity("DMS_Owner", ent)
+	end
+	local vel = ent:GetVelocity()
 	for i = 0, rag:GetPhysicsObjectCount() - 1 do
 		local p = rag:GetPhysicsObjectNum(i)
-		local b = ply:LookupBone(rag:GetBoneName(rag:TranslatePhysBoneToBone(i)))
-		local m = b and ply:GetBoneMatrix(b)
+		local b = ent:LookupBone(rag:GetBoneName(rag:TranslatePhysBoneToBone(i)))
+		local m = b and ent:GetBoneMatrix(b)
 		if IsValid(p) and m then
 			p:SetPos(m:GetTranslation(), true)
 			p:SetAngles(m:GetAngles())
@@ -218,11 +224,13 @@ end
 
 -- After the gamemode's DoPlayerDeath (its CreateRagdoll): GMod's client ragdoll gives way to a server one with NM.
 hook.Add("PlayerDeath", "DMS_Deaths", function(ply)
+	-- Died as a ragdoll (live.lua's drunk): that ragdoll is their corpse (DMS_DiedAsRagdoll).
+	if ply.DMS_Live then return end
 	-- One death ragdoll a player, as GMod's.
 	dropCorpse(ply)
 	if not players:GetBool() or not possible() or not DMS_HasValveBiped(ply) then return end
 	local h = ply.DMS_LastHit
-	local rag = playerRagdoll(ply)
+	local rag = DMS_RagdollFrom(ply)
 	if not rag then return end
 	local id, why = attach(rag, h, ply)
 	if not id then
@@ -235,6 +243,23 @@ hook.Add("PlayerDeath", "DMS_Deaths", function(ply)
 	if IsValid(theirs) then theirs:Remove() end
 	follow(ply, rag)
 end)
+
+-- An NPC or a player that died as a ragdoll with NM (live.lua): that ragdoll is their death ragdoll, NM kept. The hit
+-- that killed it went to it as any hit does (reactions.lua): the room's fatally injured body takes it (a death without a
+-- hit, its death at once). True, or false and why (death ragdolls off for it, no room).
+function DMS_DiedAsRagdoll(rag, owner)
+	if not IsValid(rag) or not rag.DMS_Agent then return false, "no NM on it" end
+	if not wanted(owner) or not possible() then return false, "death ragdolls are off" end
+	local h = owner.DMS_LastHit
+	local lines = { (h and CurTime() - h.time <= HIT_AGE) and ("health value=" .. FATALLY_INJURED) or "health value=0" }
+	local ply = owner:IsPlayer() and owner or nil
+	-- One death ragdoll a player: the last one goes.
+	if ply then dropCorpse(ply) end
+	local id, why = attach(rag, nil, ply, lines)
+	if not id then return false, why end
+	if ply then follow(ply, rag) end
+	return true
+end
 
 hook.Add("PlayerSpawn", "DMS_Deaths", function(ply) ply:SetNW2Entity("DMS_Corpse", NULL) end)
 

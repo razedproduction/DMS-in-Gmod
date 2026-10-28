@@ -65,12 +65,12 @@ cvars.AddChangeCallback("dms_tuning_profile", DMS_TuningApply, "DMS_Tuning")
 hook.Add("DMS_Attached", "DMS_Tuning", DMS_TuningApply)
 
 -- The server's convars the menu sets (`dms_<name>`): the Playroom's switches (reactions.lua), Homer's colours, NM on
--- spawned Homers and the agents' limits (follow.lua, lifecycle.lua), NM on death ragdolls (deaths.lua). Nothing else: dms_game_dir and dms_dev aren't
--- the menu's.
+-- spawned Homers and the agents' limits (follow.lua, lifecycle.lua), NM on death ragdolls (deaths.lua) and live NPCs
+-- (live.lua). Nothing else: dms_game_dir and dms_dev aren't the menu's.
 local SWITCHES = {
 	"tasks", "look", "avoid", "getup", "extra_reactions", "extra_pick", "fire_reaction", "dive_shot", "dodge_gap",
 	"weak", "god", "pedcol", "autoattach", "max_agents", "threads", "lod_distance", "lod_still", "react_log",
-	"autoattach_npc", "autoattach_players", "autoattach_max", "autoattach_time",
+	"autoattach_npc", "autoattach_players", "autoattach_max", "autoattach_time", "live_npc", "live_max", "live_time",
 }
 local isSwitch = {}
 for _, s in ipairs(SWITCHES) do isSwitch[s] = true end

@@ -298,6 +298,11 @@ pub struct Room {
 }
 
 impl Room {
+    /// The game's tasks running on him: the ShotTask, the explosion task.
+    pub fn tasks(&self) -> (bool, bool) {
+        (self.shot_task.is_some(), self.blast_task.is_some())
+    }
+
     pub fn new(set: Settings) -> Room {
         Room {
             set,

@@ -1,0 +1,10 @@
+# The drunk button from the stance (bodyBalance with arms out, leanInDirection 0.2 for 1.5 s): M11.5's dms_drunk.
+# Window mode (--script): commands by the clock; the first at 3 s while the window loads (the body is held in its
+# pose, no steps run). Each command's actual step is in the "#" lines of the .rec.
+# The Playroom gets up by animation (not NM) after 2 s lying: get-up twice = the mode off.
+#! window
+#! tol com_max=0.10 com_mean=0.05 fall end_z=0.02 marks   # Homer in FOLLOW on Box3D against the Playroom (golden/README.md)
+3 !button get-up
+3 !button get-up
+3 !button drunk
+9 !quit

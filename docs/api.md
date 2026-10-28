@@ -107,6 +107,28 @@ NM off a death ragdoll is `dms.Detach`'s swap: an ordinary ragdoll of the model 
 needs the fork's hulls (~0.9 s): an NPC's or a player's model is fitted and hulled ahead as they spawn, a part a tick.
 `DMS_DeathRagdolls()` lists the death ragdolls with NM, oldest first.
 
+## Live bodies (M11.5, ADR 0029)
+
+A ValveBiped NPC shot and not killed becomes a server ragdoll of its model with NM on it (posed from its bones, moving
+as it was), the bullet the room's shot (`shot at= dir= weapon= part=`); the NPC itself is hidden meanwhile (not drawn,
+not solid, not thinking or targeted), keeping its health, relationships and weapon. Hits on the ragdoll are the NPC's
+(scaled for the hitgroup by the gamemode, `ScaleNPCDamage`). Once the room's ShotTask is over and the body has settled
+(standing, or lying still), or after `dms_live_time`, the NPC stands where the body is, facing as it did, and the ragdoll
+goes; killed meanwhile, that ragdoll is its death ragdoll (fatally injured, as above).
+
+`dms_drunk` (the DMS window's "Drunk (you)"): the player becomes a ragdoll of their model with the Playroom's `drunk`
+button on it, the camera on the body as the death camera (the mouse turns it), their own moves and buttons ignored;
+`dms_drunk` again stands them up where the body is. Hits on it are theirs; dying drunk, it's their death ragdoll.
+
+| Convar | Default | What |
+|---|---|---|
+| `dms_live_npc` | 1 | shot NPCs become ragdolls with NM, then get up |
+| `dms_live_max` | 4 | NPCs that are ragdolls at once (within `dms_max_agents`); more take shots as the game does |
+| `dms_live_time` | 15 | seconds at most an NPC stays a ragdoll |
+
+`DMS_LiveBodies()` lists `{owner, rag, kind ("npc", "drunk"), since}`; hooks `DMS_LiveStarted(owner, rag)` and
+`DMS_LiveEnded(owner)`. `DMS.FollowRoom(id)` has `shot` and `blast`: the room's ShotTask and explosion task run.
+
 ## Reactions (`DMS.FollowReact(id, line)`, `dms_react`)
 
 Points are `x,y,z` in metres, the game's frame. What the Playroom does on each: `module/src/follow/room.rs` (the port

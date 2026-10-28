@@ -121,6 +121,17 @@ local function partNear(ent, pos, d)
 	return best
 end
 
+-- A bullet on a body with NM, to go with the tick's others as one shot: at `pos` along `d`.
+function DMS_QueueShot(ent, pos, d, weapon)
+	local s = pending[ent]
+	if s then
+		s.more[#s.more + 1] = partNear(ent, pos, d)
+	else
+		if not next(pending) then timer.Simple(0, flushShots) end
+		pending[ent] = { pos = pos, dir = d:GetNormalized(), weapon = weapon, more = {}, part = ent.DMS_Native and partNear(ent, pos, d) }
+	end
+end
+
 local lastBlast = {}
 
 hook.Add("EntityTakeDamage", "DMS_Reactions", function(ent, dmg)
@@ -131,13 +142,7 @@ hook.Add("EntityTakeDamage", "DMS_Reactions", function(ent, dmg)
 	local att, inf = dmg:GetAttacker(), dmg:GetInflictor()
 	if dmg:IsBulletDamage() or dmg:IsDamageType(DMG_BUCKSHOT) then
 		local d = force:IsZero() and IsValid(att) and (pos - (att.EyePos and att:EyePos() or att:GetPos())) or force
-		local s = pending[ent]
-		if s then
-			s.more[#s.more + 1] = partNear(ent, pos, d)
-		else
-			if not next(pending) then timer.Simple(0, flushShots) end
-			pending[ent] = { pos = pos, dir = d:GetNormalized(), weapon = weaponOf(dmg), more = {}, part = ent.DMS_Native and partNear(ent, pos, d) }
-		end
+		DMS_QueueShot(ent, pos, d, weaponOf(dmg))
 		-- The bullet's push is the Playroom's applyImpulse (the module's): not the game's as well.
 		dmg:SetDamageForce(vector_origin)
 	elseif dmg:IsExplosionDamage() then

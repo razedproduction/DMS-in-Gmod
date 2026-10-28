@@ -92,15 +92,37 @@ end)
 -- ragdoll's root, CHASE units back along the view, stopped by walls; the mouse turns it.
 local CHASE, DEAD_VIEW, WALL = 96, 14, Vector(6, 6, 6)
 local PELVIS = "ValveBiped.Bip01_Pelvis"
-hook.Add("CalcView", "DMS_DeathCamera", function(ply, _, angles, fov)
-	if ply:Alive() then return end
-	local mode = ply:GetObserverMode()
-	if mode ~= OBS_MODE_NONE and mode ~= OBS_MODE_DEATHCAM and mode ~= OBS_MODE_FREEZECAM then return end
-	local rag = ply:GetNW2Entity("DMS_Corpse")
-	if not IsValid(rag) then return end
+local function chase(ply, rag, angles, fov)
 	local b = rag:LookupBone(PELVIS)
 	local root = b and rag:GetBonePosition(b) or rag:GetPos()
 	local eye = root + Vector(0, 0, DEAD_VIEW)
 	local tr = util.TraceHull({ start = eye, endpos = eye - angles:Forward() * CHASE, mins = -WALL, maxs = WALL, mask = MASK_SOLID, filter = { ply, rag } })
 	return { origin = tr.HitPos, angles = angles, fov = fov, drawviewer = false }
+end
+
+hook.Add("CalcView", "DMS_DeathCamera", function(ply, _, angles, fov)
+	-- Drunk (live.lua): the same camera on the player's ragdoll while they live.
+	local live = ply:GetNW2Entity("DMS_Live")
+	if ply:Alive() and IsValid(live) then return chase(ply, live, angles, fov) end
+	if ply:Alive() then return end
+	local mode = ply:GetObserverMode()
+	if mode ~= OBS_MODE_NONE and mode ~= OBS_MODE_DEATHCAM and mode ~= OBS_MODE_FREEZECAM then return end
+	local rag = ply:GetNW2Entity("DMS_Corpse")
+	if not IsValid(rag) then return end
+	return chase(ply, rag, angles, fov)
+end)
+
+-- Drunk: no weapon in the hands or crosshair, and the player's own moves and buttons aren't predicted (the server
+-- ignores them, live.lua).
+local function drunk()
+	local ply = LocalPlayer()
+	return IsValid(ply) and IsValid(ply:GetNW2Entity("DMS_Live"))
+end
+hook.Add("PreDrawViewModel", "DMS_Live", function() if drunk() then return true end end)
+hook.Add("HUDShouldDraw", "DMS_Live", function(name) if name == "CHudCrosshair" and drunk() then return false end end)
+hook.Add("StartCommand", "DMS_Live", function(ply, cmd)
+	if ply == LocalPlayer() and drunk() then
+		cmd:ClearMovement()
+		cmd:ClearButtons()
+	end
 end)
