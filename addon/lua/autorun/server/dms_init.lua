@@ -76,6 +76,7 @@ include("dms/bench_scene.lua")
 include("dms/dev.lua")
 include("dms/ragdolls.lua")
 include("dms/deaths.lua")
+include("dms/live.lua")
 
 -- What keeps Homer from working here, a line each (empty: nothing): the fork, Homer's model, NM's data. For the
 -- console at start, superadmins as they join, and the DMS window's Debug tab.

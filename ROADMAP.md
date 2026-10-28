@@ -597,6 +597,34 @@ On the bench: 8 NPCs shot 0.3 s apart, limit 4: the tick 14.8 ms mean, 21 ms wor
 1–2 ms an agent). Copies of a ragdoll with NM get NM again. `golden body --fit` on male_07, female_01, combine_soldier:
 the build within 1e-6 of the SDK's `nm_build_fit`, the native body's frames within 2.2 µm, masses and tensors exact.
 
+### M11.5. Live bodies: NPCs' reactions to shots, the drunk player — 2–4 days
+
+One mechanism for both: the living entity → its model's server ragdoll with NM (posed from its bones, as M11's
+player corpse) → back on its feet where the body is.
+
+- [x] NPCs: a ValveBiped NPC shot and not killed becomes its ragdoll with NM, the shot the Playroom room's (`shot at=
+      dir= weapon= part=`, no `fatal`); the NPC hidden meanwhile (health, relationships, weapon, AI kept); hits on the
+      ragdoll are its own (the gamemode's hitgroup scaling); back standing in the ragdoll's place once the ShotTask is
+      over and the body has settled; killed meanwhile: M11's death on that ragdoll (fatally injured).
+- [x] Players: `dms_drunk` (and a button in the DMS window) makes the player their ragdoll with the Playroom's
+      `drunk` button, the camera on it as M11's death camera; `dms_drunk` again stands them up there.
+- [x] Convars `dms_live_npc`, `dms_live_max` (within `dms_max_agents`), `dms_live_time`; `DMS.FollowRoom` tells
+      whether the ShotTask and the explosion task run.
+- [x] Golden `drunk` on Homer (the Playroom's button from the stance).
+
+**DoD:** on the bench a shot at a live NPC gives the Playroom's reaction and the NPC comes back alive; the drunk mode
+turns on and off with the camera on the body; M7's and M11's limits hold; Homer's golden unchanged.
+
+**Done (ADR 0029):** a citizen shot (10 of 100) became its ragdoll with NM in 32 ms (NM's world crop ~28 ms, as an M11
+death ragdoll's), reacted with the room's ShotTask (staggered, fell), and ~10 s later, the task over, stood up where the
+body lay with 90 health and its SMG, walking on command; killed as a ragdoll it stayed that ragdoll as a fatally injured
+corpse (`health 49`, `shotRelax`), the game's death ragdoll gone, its weapon dropped there. 6 citizens shot 0.3 s apart:
+4 ragdolls (`dms_live_max`), the tick 15.0 ms mean, 63.7 ms worst, NM 2.5 ms a step. `dms_drunk` on and off (the player
+hidden, the camera's entity on the body, then standing and walking); dying drunk, the ragdoll is the corpse. From the
+player's pose the drunk body fell within ~2 s in 2 runs of 3 (Homer doesn't in the Playroom, nor a fitted body from NM's
+stance in `golden fit drunk`); not tuned (ADR 0008). Golden `drunk` on Homer: no fall, the end height and the commands'
+steps as the Playroom's, the wander's COM apart (1.86 m).
+
 ### M12. Workshop models and other humanoids — 5–8 days
 
 - [ ] Skeletons beyond ValveBiped: classification (ValveBiped, known rigs by bone names, unknown); unknown humanoids
@@ -630,8 +658,8 @@ M0 ──► M1 ─┐
                        M7 (cross-cutting, closed before M8) ┘
 ```
 
-After 0.1.0: **M9 (spikes, ADR 0025) → M10 (ValveBiped) → M11 (death ragdolls) → M12 (Workshop, other humanoids)**;
-M11 and M12 can go in parallel after M10.
+After 0.1.0: **M9 (spikes, ADR 0025) → M10 (ValveBiped) → M11 (death ragdolls) → M11.5 (live bodies) → M12 (Workshop,
+other humanoids)**; M11 and M12 can go in parallel after M10.
 
 The critical path: **M0 → M1/M2 → M2.5 → M3 → M4**. From M2.5 on, every check in the game except the visual ones Claude
 does itself on the bench in the game (without a window).

@@ -322,9 +322,19 @@ local function homerTab(p)
 	for _, c in ipairs({
 		{ "autoattach_npc", "NM on killed NPCs' ragdolls" },
 		{ "autoattach_players", "NM on killed players' ragdolls (a server ragdoll, the death camera on it)" },
+		{ "live_npc", "Shot NPCs become ragdolls with NM, then get up (the Playroom's reaction to the shot)" },
 	}) do
 		local box = check(p, c[2], switchHelp(c[1]), function(v) switch(c[1], v and 1 or 0) end)
 		bindSwitch(c[1], function(v) box:SetChecked(tonumber(v) ~= 0) end)
+	end
+	local d = row(p)
+	local drunk = button(d, "Drunk (you)", "You become a ragdoll of your model with NM on it and the Playroom's drunk button, the camera on the body (the mouse turns it). Press again to stand up where the body is.\n\ndms_drunk", function() RunConsoleCommand("dms_drunk") end)
+	drunk:Dock(LEFT)
+	drunk:SetWide(180)
+	drunk.Think = function(self)
+		local on = IsValid(LocalPlayer():GetNW2Entity("DMS_Live"))
+		local text = on and "Stand up (drunk off)" or "Drunk (you)"
+		if self:GetText() ~= text then self:SetText(text) end
 	end
 
 	heading(p, "What you see (this client)")

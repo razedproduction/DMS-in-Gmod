@@ -182,18 +182,21 @@ unsafe fn follow_rise_cancel_impl(api: &Api, l: *mut LuaState) -> Result<c_int, 
 }
 
 native!(follow_room => follow_room_impl);
-/// `DMS.FollowRoom(id)`: the room's state of the agent, for the face and the HUD: `{health, dead, rising, frozen,
-/// burning, shock, getup, ring_part, ring_age, ring_on (the hit on the part, from its centre in its frame, m),
+/// `DMS.FollowRoom(id)`: the room's state of the agent, for the face and the HUD: `{health, dead, rising, shot, blast
+/// (the ShotTask, the explosion task running), frozen, burning, shock, getup, ring_part, ring_age, ring_on (the hit on the part, from its centre in its frame, m),
 /// face_centre, face_fwd, face_up (the Playroom's face on the head: in its part's frame, the centre from the part's
 /// centre, m), face_radius (m)}`, nil for no such agent.
 unsafe fn follow_room_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
     let id = unsafe { api.check_number(l, 1)? } as u32;
     let done = step::with(id, |f| unsafe {
         let r = &f.room;
-        (api.createtable)(l, 0, 10);
+        (api.createtable)(l, 0, 12);
         api.set_number(l, c"health", f64::from(r.health));
         api.set_bool(l, c"dead", r.dead);
         api.set_bool(l, c"rising", r.rise.is_some());
+        let (shot, blast) = r.tasks();
+        api.set_bool(l, c"shot", shot);
+        api.set_bool(l, c"blast", blast);
         api.set_bool(l, c"frozen", f.frozen);
         api.set_number(l, c"burning", f64::from(r.burning.max(0.0)));
         api.set_number(l, c"shock", f64::from(r.shock.max(0.0)));
