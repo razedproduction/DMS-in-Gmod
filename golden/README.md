@@ -22,6 +22,7 @@ cargo run --release -p golden -- --game "E:\Downloads\TorrentDownloads\Grand The
 | `run [names]` | the scenarios `golden/scenarios/*.txt` (all or the named ones) | `<name>.rec`, `<name>.log`, `<name>.frames` |
 | `all` | everything in order | |
 | `body [--no-game]` | Homer's body as `dms-homer` ports it (M3, [docs/homer.md](../docs/homer.md)): the build against `NM_DUMP` and the SDK's C API (1e-5), `homer.phy` against the build, in the game on the bench: frames, masses, inertia, a fall without NM | — |
+| `body --fit [<mdl>]` | a body fitted to a GMod model (M11, ADR 0028; default male_07): Homer's build fitted here to the joints the module fitted it to (`DMS.FitJoints`) against the SDK's `nm_build_fit` on the Playroom's dump (1e-5), then on the bench the fork's native body (no NM) against it as Homer's, and a fall without NM | — |
 
 The Playroom runs with `golden/out/` as its working folder (its own files land there, nothing is written into the SDK)
 and with `ROOM_LOG=1` (the log in `<name>.log`). The Playroom is built without the SDK's `.cargo/config.toml` (it has

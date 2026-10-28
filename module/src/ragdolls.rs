@@ -24,9 +24,12 @@ pub const NATIVES: &[(&CStr, lua::CFunction)] = &[
     (c"RagdollFit", ragdoll_fit),
     (c"FitDump", fit_dump),
     (c"FitLead", fit_lead),
+    (c"FitJoints", fit_joints),
     (c"RagdollBody", ragdoll_body),
     (c"RagdollFollow", ragdoll_follow),
+    (c"RagdollWarm", ragdoll_warm),
     (c"RagdollRemove", ragdoll_remove),
+    (c"RagdollReport", ragdoll_report),
     (c"PoseModel", pose_model),
 ];
 
@@ -217,6 +220,8 @@ pub struct Fitted {
     pub checksum: i32,
     /// The fitted build's frames, standing as the model's bind pose (m, the model's space).
     pub frames: Vec<Transform>,
+    /// The 21 joints it was fitted to (`Build::fit`'s input, in Homer's stance; m, the model's space).
+    pub joints: Vec<Vec3>,
     /// The model's bones posed from parts (S4): bone, part, the bone's frame in the part's (m).
     pub posed: Vec<(String, usize, Vec3, Quat)>,
     /// What the player should know: joints made up, a height far from NM's tuning, bones posed only on the client.
@@ -305,7 +310,7 @@ pub fn fit(d: &data::Data, s: &Skeleton) -> Result<Fitted, String> {
     if missing.len() > 6 {
         warnings.push(format!("{} of NM's bones have no physics object here: they're drawn on the client only", missing.len()));
     }
-    Ok(Fitted { def: Arc::new(BodyDef { build, body, fitted: true }), checksum: s.checksum, frames, posed, warnings, height, mass })
+    Ok(Fitted { def: Arc::new(BodyDef { build, body, fitted: true }), checksum: s.checksum, frames, joints: joints.to_vec(), posed, warnings, height, mass })
 }
 
 /// The body's height (m): its lowest point to its highest, its parts' capsules as they stand.
@@ -409,6 +414,17 @@ native!(fit_dump => fit_dump_impl);
 unsafe fn fit_dump_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
     let f = fitted(&unsafe { api.check_string(l, 1)? })?;
     unsafe { api.push_str(l, &f.def.build.dump(&f.frames)) };
+    Ok(1)
+}
+
+native!(fit_joints => fit_joints_impl);
+/// `DMS.FitJoints(model)`: the 21 joints Homer's build was fitted to (`Build::fit`'s input, as `nm_build_fit` takes
+/// them), a line `x y z` (m) each, for `golden body --fit` to fit Homer's build itself: the dump can't carry a fitted
+/// build (its sizes).
+unsafe fn fit_joints_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
+    let f = fitted(&unsafe { api.check_string(l, 1)? })?;
+    let lines: Vec<String> = f.joints.iter().map(|j| format!("{:.9} {:.9} {:.9}", j.x, j.y, j.z)).collect();
+    unsafe { api.push_str(l, &lines.join("\n")) };
     Ok(1)
 }
 
@@ -684,6 +700,33 @@ unsafe fn ragdoll_body_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String
     Ok(2)
 }
 
+native!(ragdoll_warm => ragdoll_warm_impl);
+/// `DMS.RagdollWarm(model, owner, part)`: the fork's hull of the fitted body's part `part` (0-based) made ahead of the
+/// body (a body made and gone at once; the fork keeps the hull, `CreateBody`), so the first body of a model doesn't
+/// make all 21 in one frame (ROADMAP M11: a death). How long it took (ms); nothing for a part past the last.
+unsafe fn ragdoll_warm_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
+    let f = fitted(&unsafe { api.check_string(l, 1)? })?;
+    let owner = unsafe { api.check_physobj(l, 2)? };
+    let k = unsafe { api.check_number(l, 3)? } as usize;
+    let nm = vphysics_nm::get().ok_or("IPhysicsNM isn't available")?;
+    if nm.version < Version::V006 {
+        return Err(format!("{} can't make GMod's ragdolls' bodies", nm.version.name()));
+    }
+    let Some(p) = f.def.body.parts.get(k) else { return Ok(0) };
+    let started = std::time::Instant::now();
+    let points: Vec<[f32; 3]> = dms_homer::hull::points(&p.shape).iter().map(|v| v.to_array()).collect();
+    // SAFETY: a PhysObj Lua handed over; outside the step callback (Lua). The body goes before any step.
+    unsafe {
+        let env = nm.object_environment(owner);
+        let s = nm.body_state(owner).ok_or("GetBodyState failed")?;
+        if let Some(o) = nm.create_body(env, owner, &points, p.mass, &s.position, &[0.0, 0.0, 0.0, 1.0], NO_SELF_COLLISIONS).filter(|o| !o.is_null()) {
+            nm.destroy_body(o);
+        }
+        (api.pushnumber)(l, started.elapsed().as_secs_f64() * 1000.0);
+    }
+    Ok(1)
+}
+
 native!(ragdoll_follow => ragdoll_follow_impl);
 /// `DMS.RagdollFollow(model, handle, yaw, floor)`: NM on a native body (`DMS.Follow` for a fitted one): `yaw` where
 /// it faces (rad), `floor` (m) where NM's frame starts. The agent's id; `DMS.Unfollow` it before `DMS.RagdollRemove`.
@@ -706,6 +749,37 @@ pub fn native_objects(handle: u32) -> Result<Vec<*mut IPhysicsObject>, String> {
 /// A fitted body's definition (the bench's fitted runs).
 pub fn fitted_def(model: &str) -> Result<Arc<BodyDef>, String> {
     fitted(model).map(|f| f.def.clone())
+}
+
+native!(ragdoll_report => ragdoll_report_impl);
+/// `DMS.RagdollReport(model, handle)`: the native body as the game has it, for `golden body --fit` (as
+/// `DMS_HomerReport` has Homer's): a `part <name> <centre x y z> <rotation x y z w> <centre again> <mass> <inertia's
+/// diagonal> <damping lin ang> <tensor, 9>` line a part (m, kg, kg m^2; no bone of its own, so its centre stands for
+/// the origin), then `joints <found by FindConstraint> <objects>`.
+unsafe fn ragdoll_report_impl(api: &Api, l: *mut LuaState) -> Result<c_int, String> {
+    let f = fitted(&unsafe { api.check_string(l, 1)? })?;
+    let n = native(unsafe { api.check_number(l, 2)? } as u32)?;
+    let nm = vphysics_nm::get().ok_or("IPhysicsNM isn't available")?;
+    let body = &f.def.body;
+    let mut out = vec![];
+    for (p, &o) in body.parts.iter().zip(&n.objects) {
+        // SAFETY: the native body's live objects, on the main thread (Lua).
+        let s = unsafe { nm.body_state(o) }.ok_or("GetBodyState failed")?;
+        let t = unsafe { nm.body_inertia(o) }.unwrap_or([0.0; 9]);
+        let (mass, [lin, ang]) = unsafe { (vphysics_nm::object::mass(o), vphysics_nm::object::damping(o)) };
+        let [x, y, z] = s.position;
+        let [qx, qy, qz, qw] = s.rotation;
+        let tensor: Vec<String> = t.iter().map(|v| format!("{v:.9}")).collect();
+        out.push(format!(
+            "part {} {x:.9} {y:.9} {z:.9} {qx:.9} {qy:.9} {qz:.9} {qw:.9} {x:.9} {y:.9} {z:.9} {mass:.9} {:.9} {:.9} {:.9} {lin:.9} {ang:.9} {}",
+            p.name, t[0], t[4], t[8], tensor.join(" ")
+        ));
+    }
+    // SAFETY: as above.
+    let joints = body.joints.iter().filter(|j| !unsafe { nm.find_constraint(n.objects[j.parent], n.objects[j.part]) }.is_null()).count();
+    out.push(format!("joints {joints} {}", n.objects.len()));
+    unsafe { api.push_str(l, &out.join("\n")) };
+    Ok(1)
 }
 
 native!(ragdoll_remove => ragdoll_remove_impl);

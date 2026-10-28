@@ -61,6 +61,7 @@ folder), `dms_info` prints it all.
 | `DMS_Died` | `ent` | health 0: Homer went limp |
 | `DMS_Reaction` | `ent, text` | a log line of the Playroom's room layer (`room  shot (pistol) at part 9 …`) |
 | `DMS_Teleported` | `ent, metres` | the game moved the bodies (`PhysObj:SetPos`): NM's frame and its world moved with them |
+| `DMS_DeathRagdoll` | `ragdoll, player` | a dead NPC's or player's ragdoll got NM, the killing hit sent to it (`player`: nil for an NPC) |
 
 ## Lifecycle (M7, ADR 0021)
 
@@ -69,7 +70,7 @@ folder), `dms_info` prints it all.
 | removal, `undo`, `gmod_admin_cleanup` | `OnRemove` takes the agent off before the bodies go |
 | a map change, quitting | the `ShutDown` hook and `gmod13_close`: agents and the step callback off before the physics environment |
 | a Lua restart (auto-refresh, `lua_openscript`) | the module and agents stay (`require` once a Lua state) |
-| the duplicator, save/load (`gm_save`) | DMS's fields don't go into the copy (`PreEntityCopy`); the copy is bound and gets NM if the original had it (or with `dms_autoattach`) |
+| the duplicator, save/load (`gm_save`) | DMS's fields don't go into the copy (`PreEntityCopy`); the copy is bound and gets NM if the original had it (or with `dms_autoattach`); a ValveBiped ragdoll's copy gets its own physics back (unfrozen) and NM on it again |
 | freezing a part (physgun, a tool) | NM is parked while the part is frozen; the get-up clip's freezing is its own |
 | picking up with the physgun or gravity gun during the get-up clip | the clip is broken off, the bodies unfrozen, a new agent balances on them |
 | teleporting the bodies | NM's frame and the world's crop move, the agent and its state aren't reset |
@@ -82,6 +83,29 @@ is parked (no steps, drives or armature: an ordinary ragdoll; the agent, health 
 when a player is near; lying still for `dms_lod_still` s (5, 0: off), he's parked until the bodies' first movement, a
 reaction or a message. The limit is `dms_max_agents` (8): Homers beyond it stay ordinary ragdolls. Agents are stepped on
 `dms_threads` threads (0: CPU cores less one).
+
+## Death ragdolls (M11, ADR 0028)
+
+An NPC or a player with a ValveBiped model that dies leaves a server ragdoll with NM on it, in the pose and motion it
+died in; the killing hit goes to it as the Playroom's room takes one on a fatally injured body: `health value=49`, then
+the hit's reaction (`shot`, `blast`, `melee`, `burn`, `taser`): the ShotTask's dying reaction (reaching for the wound,
+`shotRelax`), no getting up, later hits reacting till its health is 0 (the room's death: `STOP all`, `relax`); a death
+without a known hit (a fall, a crush, `kill`) is `health value=0` at once. NPCs' ragdolls are made on the server for it (`SetShouldServerRagdoll`)
+without the game's push of the killing hit; a player's client death ragdoll is replaced by a server ragdoll of their
+model (skin, bodygroups, colour, player colour), the death camera on it as GMod's (over it, 96 units back, the mouse
+turns it), one a player (removed at their next death or when they leave). Undo and cleanup take an NPC's corpse in its
+place; removed (cleanup, undo, a fade), NM goes with it.
+
+| Convar | Default | What |
+|---|---|---|
+| `dms_autoattach_npc` | 1 | NM on killed NPCs' ragdolls |
+| `dms_autoattach_players` | 1 | NM on killed players' ragdolls |
+| `dms_autoattach_max` | 4 | death ragdolls with NM at once (within `dms_max_agents`): a new one takes NM off the oldest |
+| `dms_autoattach_time` | 30 | seconds a death ragdoll keeps NM, then it's an ordinary ragdoll (0: till the limit takes it) |
+
+NM off a death ragdoll is `dms.Detach`'s swap: an ordinary ragdoll of the model in its place. A model's first NM body
+needs the fork's hulls (~0.9 s): an NPC's or a player's model is fitted and hulled ahead as they spawn, a part a tick.
+`DMS_DeathRagdolls()` lists the death ragdolls with NM, oldest first.
 
 ## Reactions (`DMS.FollowReact(id, line)`, `dms_react`)
 

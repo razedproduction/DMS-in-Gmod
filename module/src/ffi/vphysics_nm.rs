@@ -474,6 +474,42 @@ pub mod env {
     }
 }
 
+/// `IPhysicsObject`'s own getters, for bodies the fork made that Lua has no PhysObj for (Source SDK 2013
+/// `vphysics_interface.h`: slot 29 `GetMass`, 35 `GetDamping`, the virtual destructor's one slot first).
+pub mod object {
+    use super::IPhysicsObject;
+
+    const GET_MASS: usize = 29;
+    const GET_DAMPING: usize = 35;
+
+    unsafe fn slot(object: *const IPhysicsObject, i: usize) -> *const () {
+        // SAFETY: a live C++ object, its first field the vtable (the caller's promise); the slot is in it.
+        unsafe { *(*(object as *const *const *const ())).add(i) }
+    }
+
+    /// The body's mass (kg).
+    ///
+    /// # Safety
+    /// `object` is a live `IPhysicsObject` of this vphysics, called from the game's main thread.
+    pub unsafe fn mass(object: *const IPhysicsObject) -> f32 {
+        // SAFETY: `float GetMass() const`, `this` first.
+        let f: unsafe extern "C" fn(*const IPhysicsObject) -> f32 = unsafe { std::mem::transmute(slot(object, GET_MASS)) };
+        unsafe { f(object) }
+    }
+
+    /// The body's linear and angular damping.
+    ///
+    /// # Safety
+    /// As [`mass`].
+    pub unsafe fn damping(object: *const IPhysicsObject) -> [f32; 2] {
+        let (mut speed, mut rot) = (0.0f32, 0.0f32);
+        // SAFETY: `void GetDamping(float *speed, float *rot) const`, `this` first.
+        let f: unsafe extern "C" fn(*const IPhysicsObject, *mut f32, *mut f32) = unsafe { std::mem::transmute(slot(object, GET_DAMPING)) };
+        unsafe { f(object, &mut speed, &mut rot) };
+        [speed, rot]
+    }
+}
+
 /// vphysics' `CreateInterface(const char *, int *)`.
 type CreateInterfaceFn = unsafe extern "C" fn(name: *const c_char, return_code: *mut c_int) -> *mut c_void;
 

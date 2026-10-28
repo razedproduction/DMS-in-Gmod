@@ -319,6 +319,13 @@ local function homerTab(p)
 	end
 	local autor = check(p, "NM on ValveBiped ragdolls spawned from the spawn menu", "They balance where they land.\n\ndms_autoattach_ragdolls")
 	autor:SetConVar("dms_autoattach_ragdolls")
+	for _, c in ipairs({
+		{ "autoattach_npc", "NM on killed NPCs' ragdolls" },
+		{ "autoattach_players", "NM on killed players' ragdolls (a server ragdoll, the death camera on it)" },
+	}) do
+		local box = check(p, c[2], switchHelp(c[1]), function(v) switch(c[1], v and 1 or 0) end)
+		bindSwitch(c[1], function(v) box:SetChecked(tonumber(v) ~= 0) end)
+	end
 
 	heading(p, "What you see (this client)")
 	for _, c in ipairs({
@@ -427,6 +434,8 @@ local function performanceTab(p)
 	num("threads", "Threads (0: auto)", 0, 16, 0)
 	num("lod_distance", "LOD distance (units)", 0, 10000, 0)
 	num("lod_still", "Still for (s)", 0, 30, 1)
+	num("autoattach_max", "Death ragdolls with NM at most", 0, 16, 0)
+	num("autoattach_time", "A death ragdoll keeps NM for (s)", 0, 120, 0)
 end
 
 -- The server's console commands for looking into DMS: they print to your console (~).

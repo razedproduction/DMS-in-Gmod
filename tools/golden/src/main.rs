@@ -24,6 +24,9 @@ usage: golden [--game <GTA IV dir>] [--sdk <SDK dir>] <command>
                Homer's body as dms-homer ports it (ROADMAP M3): the build against the Playroom's NM_DUMP and the
                SDK (1e-5), the compiled homer.phy against the build, and on the bench (unless --no-game) Homer
                spawned and bound against NM's body (frames 1 mm / 0.5 deg, masses, inertia 1 %), then dropped
+  body --fit [<mdl>]
+               a body fitted to a GMod model (ROADMAP M11; default male_07): its build against the SDK on its own dump,
+               then on the bench its native body (no NM) against it as Homer's is, then dropped
   behaviour --source [names]
                the scenarios on the bench server (dms-ctl run) -> golden/out/source/<name>.rec, against the
                Playroom's golden/out/<name>.rec: COM, speed, lowest parts, command steps
@@ -607,6 +610,22 @@ fn run_one(ctx: &Ctx, path: &Path, name: &str) -> Result<String, String> {
 
 /// `golden body`: the three steps of `body.rs`; the game's only if the bench is up (or `--no-game`).
 fn body_check(ctx: &Ctx, args: &[String]) -> Result<(), String> {
+    if let Some(i) = args.iter().position(|a| a == "--fit") {
+        let model = args.get(i + 1).filter(|m| !m.starts_with("--")).cloned().unwrap_or_else(|| "models/humans/group01/male_07.mdl".into());
+        let theirs = ctx.out.join("homer.nmdump");
+        if !theirs.is_file() {
+            dump(ctx)?;
+        }
+        // fred.xrt into the SDK first (Homer's body and pairs, its masses).
+        ours(ctx)?;
+        let (b, frames) = dms_game::Game::open(ctx.game()?)?.homer()?;
+        return if body::fitted(&model, (&b, &frames), &read_text(&theirs)?)? {
+            println!("golden: body --fit {model} OK");
+            Ok(())
+        } else {
+            Err(format!("body --fit {model}: off"))
+        };
+    }
     let gmod = args.iter().position(|a| a == "--gmod").and_then(|i| args.get(i + 1)).map(PathBuf::from)
         .or_else(|| std::env::var_os("DMS_GMOD_DIR").map(PathBuf::from)).or_else(dms_homer::steam_gmod)
         .ok_or("Garry's Mod not found: pass --gmod <GarrysMod folder>")?;
