@@ -1,0 +1,440 @@
+room 0.00 weaponinfo.xml: 20 weapons
+2026-10-27T02:34:38.067253Z  INFO bevy_render::renderer: AdapterInfo { name: "NVIDIA GeForce GTX 650", vendor: 4318, device: 4038, device_type: DiscreteGpu, driver: "NVIDIA", driver_info: "475.14", backend: Vulkan }
+2026-10-27T02:34:38.296523Z  INFO bevy_render::batching::gpu_preprocessing: GPU preprocessing is fully supported on this device.
+2026-10-27T02:34:38.300552Z  INFO bevy_egui::render: Using bindless_mode_array_size 16 (Device maximum 1048576)
+2026-10-27T02:34:38.300877Z  INFO bevy_winit::system: Creating new window Delirium Physics Playroom (0v0)
+room 0.00 ours  get-up: muscles
+room 0.00 ours  get-up: off
+room 0.00 room  balance
+room 0.00 ours  MSG bodyBalance start=true
+room 0.02 ours  FB balance slot 12
+room 0.02 ours  FB balance slot 20
+room 0.03 ours  FB balance slot 12
+room 0.03 ours  FB balance slot 20
+room 0.05 ours  FB balance slot 12
+room 0.05 ours  FB balance slot 20
+room 0.07 ours  FB balance slot 12
+room 0.07 ours  FB balance slot 20
+room 0.08 ours  FB balance slot 20
+room 0.10 ours  FB balance slot 20
+room 0.12 ours  FB balance slot 20
+room 0.13 ours  FB balance slot 20
+room 0.15 ours  FB balance slot 20
+room 0.17 ours  FB balance slot 20
+room 0.18 ours  FB balance slot 20
+room 0.20 ours  FB balance slot 20
+room 0.22 ours  FB balance slot 20
+room 0.23 ours  FB balance slot 20
+room 0.25 ours  FB balance slot 20
+room 0.27 ours  FB balance slot 20
+room 0.28 ours  FB balance slot 20
+room 0.30 ours  FB balance slot 20
+room 0.32 ours  FB balance slot 20
+room 0.33 ours  FB balance slot 20
+room 0.35 ours  FB balance slot 20
+room 0.37 ours  FB balance slot 20
+room 0.38 ours  FB balance slot 20
+room 0.40 ours  FB balance slot 12
+room 0.40 ours  FB balance slot 20
+room 0.42 ours  FB balance slot 20
+room 0.43 ours  FB balance slot 20
+room 0.45 ours  FB balance slot 20
+room 0.47 ours  FB balance slot 20
+room 0.48 ours  FB balance slot 20
+room 0.50 ours  FB balance slot 20
+room 0.52 ours  FB balance slot 20
+room 0.53 ours  FB balance slot 20
+room 0.55 ours  FB balance slot 20
+room 0.57 ours  FB balance slot 20
+room 0.58 ours  FB balance slot 12
+room 0.58 ours  FB balance slot 20
+room 0.60 ours  FB balance slot 12
+room 0.60 ours  FB balance slot 20
+room 0.62 ours  FB balance slot 12
+room 0.62 ours  FB balance slot 20
+room 0.63 ours  FB balance slot 12
+room 0.63 ours  FB balance slot 20
+room 0.65 ours  FB balance slot 12
+room 0.65 ours  FB balance slot 20
+room 0.67 ours  FB balance slot 12
+room 0.67 ours  FB balance slot 20
+room 0.68 ours  FB balance slot 12
+room 0.68 ours  FB balance slot 20
+room 0.70 ours  FB balance slot 12
+room 0.70 ours  FB balance slot 20
+room 0.72 ours  FB balance slot 12
+room 0.72 ours  FB balance slot 20
+room 0.73 ours  FB balance slot 12
+room 0.73 ours  FB balance slot 20
+room 0.75 ours  FB balance slot 12
+room 0.75 ours  FB balance slot 20
+room 0.77 ours  FB balance slot 12
+room 0.77 ours  FB balance slot 20
+room 0.78 ours  FB balance slot 12
+room 0.78 ours  FB balance slot 20
+room 0.80 ours  FB balance slot 12
+room 0.80 ours  FB balance slot 20
+room 0.82 ours  FB balance slot 12
+room 0.82 ours  FB balance slot 20
+room 0.83 ours  FB balance slot 12
+room 0.83 ours  FB balance slot 20
+room 0.85 ours  FB balance slot 12
+room 0.85 ours  FB balance slot 20
+room 0.87 ours  FB balance slot 12
+room 0.87 ours  FB balance slot 20
+room 0.88 ours  FB balance slot 12
+room 0.88 ours  FB balance slot 20
+room 0.90 ours  FB balance slot 12
+room 0.90 ours  FB balance slot 20
+room 0.92 ours  FB balance slot 12
+room 0.92 ours  FB balance slot 20
+room 0.93 ours  FB balance slot 12
+room 0.93 ours  FB balance slot 20
+room 0.95 ours  FB balance slot 12
+room 0.95 ours  FB balance slot 20
+room 0.97 ours  FB balance slot 12
+room 0.97 ours  FB balance slot 20
+room 0.98 ours  FB balance slot 12
+room 0.98 ours  FB balance slot 20
+room 1.00 ours  FB balance slot 12
+room 1.00 ours  FB balance slot 20
+room 1.02 ours  FB balance slot 12
+room 1.02 ours  FB balance slot 20
+room 1.03 ours  FB balance slot 12
+room 1.03 ours  FB balance slot 20
+room 1.05 ours  FB balance slot 12
+room 1.05 ours  FB balance slot 20
+room 1.07 ours  FB balance slot 12
+room 1.07 ours  FB balance slot 20
+room 1.08 ours  FB balance slot 12
+room 1.08 ours  FB balance slot 20
+room 1.10 ours  FB balance slot 12
+room 1.10 ours  FB balance slot 20
+room 1.12 ours  FB balance slot 12
+room 1.12 ours  FB balance slot 20
+room 1.13 ours  FB balance slot 12
+room 1.13 ours  FB balance slot 20
+room 1.15 ours  FB balance slot 12
+room 1.15 ours  FB balance slot 20
+room 1.17 ours  FB balance slot 12
+room 1.17 ours  FB balance slot 20
+room 1.18 ours  FB balance slot 12
+room 1.18 ours  FB balance slot 20
+room 1.20 ours  FB balance slot 12
+room 1.20 ours  FB balance slot 20
+room 1.22 ours  FB balance slot 12
+room 1.22 ours  FB balance slot 20
+room 1.23 ours  FB balance slot 12
+room 1.23 ours  FB balance slot 20
+room 1.25 ours  FB balance slot 12
+room 1.25 ours  FB balance slot 20
+room 1.27 ours  FB balance slot 12
+room 1.27 ours  FB balance slot 20
+room 1.28 ours  FB balance slot 12
+room 1.28 ours  FB balance slot 20
+room 1.30 ours  FB balance slot 12
+room 1.30 ours  FB balance slot 20
+room 1.32 ours  FB balance slot 12
+room 1.32 ours  FB balance slot 20
+room 1.33 ours  FB balance slot 12
+room 1.33 ours  FB balance slot 20
+room 1.35 ours  FB balance slot 12
+room 1.35 ours  FB balance slot 20
+room 1.37 ours  FB balance slot 12
+room 1.37 ours  FB balance slot 20
+room 1.38 ours  FB balance slot 12
+room 1.38 ours  FB balance slot 20
+room 1.40 ours  FB balance slot 12
+room 1.40 ours  FB balance slot 20
+room 1.42 ours  FB balance slot 12
+room 1.42 ours  FB balance slot 20
+room 1.43 ours  FB balance slot 12
+room 1.43 ours  FB balance slot 20
+room 1.45 ours  FB balance slot 12
+room 1.45 ours  FB balance slot 20
+room 1.47 ours  FB balance slot 12
+room 1.47 ours  FB balance slot 20
+room 1.48 ours  FB balance slot 12
+room 1.48 ours  FB balance slot 20
+room 1.50 ours  FB balance slot 12
+room 1.50 ours  FB balance slot 20
+room 1.52 ours  FB balance slot 12
+room 1.52 ours  FB balance slot 20
+room 1.53 ours  FB balance slot 12
+room 1.53 ours  FB balance slot 20
+room 1.55 ours  FB balance slot 12
+room 1.55 ours  FB balance slot 20
+room 1.57 ours  FB balance slot 12
+room 1.57 ours  FB balance slot 20
+room 1.58 ours  FB balance slot 12
+room 1.58 ours  FB balance slot 20
+room 1.60 ours  FB balance slot 12
+room 1.60 ours  FB balance slot 20
+room 1.62 ours  FB balance slot 12
+room 1.62 ours  FB balance slot 20
+room 1.63 ours  FB balance slot 12
+room 1.63 ours  FB balance slot 20
+room 1.65 ours  FB balance slot 12
+room 1.65 ours  FB balance slot 20
+room 1.67 ours  FB balance slot 12
+room 1.67 ours  FB balance slot 20
+room 1.68 ours  FB balance slot 12
+room 1.68 ours  FB balance slot 20
+room 1.70 ours  FB balance slot 12
+room 1.70 ours  FB balance slot 20
+room 1.72 ours  FB balance slot 12
+room 1.72 ours  FB balance slot 20
+room 1.73 ours  FB balance slot 12
+room 1.73 ours  FB balance slot 20
+room 1.75 ours  FB balance slot 12
+room 1.75 ours  FB balance slot 20
+room 1.77 ours  FB balance slot 12
+room 1.77 ours  FB balance slot 20
+room 1.78 ours  FB balance slot 12
+room 1.78 ours  FB balance slot 20
+room 1.80 ours  FB balance slot 12
+room 1.80 ours  FB balance slot 20
+room 1.82 ours  FB balance slot 12
+room 1.82 ours  FB balance slot 20
+room 1.83 ours  FB balance slot 12
+room 1.83 ours  FB balance slot 20
+room 1.85 ours  FB balance slot 12
+room 1.85 ours  FB balance slot 20
+room 1.87 ours  FB balance slot 12
+room 1.87 ours  FB balance slot 20
+room 1.87 room  blast: 1.5 m from him: -177 -> health 23
+room 1.87 ours  MSG applyImpulse partIndex=0 hitPoint=0.001,-0.049,0.914 impulse=0.079,81.285,78.495
+room 1.87 ours  MSG applyImpulse partIndex=1 hitPoint=0.124,-0.084,0.694 impulse=5.498,62.642,50.048
+room 1.87 ours  MSG applyImpulse partIndex=2 hitPoint=0.138,-0.048,0.277 impulse=3.607,38.070,18.528
+room 1.87 ours  MSG applyImpulse partIndex=3 hitPoint=0.146,-0.076,0.036 impulse=1.677,16.304,5.306
+room 1.87 ours  MSG applyImpulse partIndex=4 hitPoint=-0.118,-0.064,0.700 impulse=-5.126,62.301,49.780
+room 1.87 ours  MSG applyImpulse partIndex=5 hitPoint=-0.132,-0.016,0.277 impulse=-3.367,37.755,18.372
+room 1.87 ours  MSG applyImpulse partIndex=6 hitPoint=-0.154,-0.038,0.036 impulse=-1.693,16.103,5.314
+room 1.87 ours  MSG applyImpulse partIndex=7 hitPoint=0.001,-0.060,0.985 impulse=0.035,49.826,51.301
+room 1.87 ours  MSG applyImpulse partIndex=8 hitPoint=-0.002,-0.064,1.087 impulse=-0.049,40.347,45.110
+room 1.87 ours  MSG applyImpulse partIndex=9 hitPoint=-0.007,-0.059,1.202 impulse=-0.144,31.451,38.225
+room 1.87 ours  MSG applyImpulse partIndex=10 hitPoint=-0.015,-0.052,1.381 impulse=-0.238,22.578,30.958
+room 1.87 ours  MSG applyImpulse partIndex=11 hitPoint=-0.025,-0.102,1.548 impulse=-0.087,4.802,7.503
+room 1.87 ours  MSG applyImpulse partIndex=12 hitPoint=-0.028,-0.131,1.637 impulse=-0.491,23.728,39.744
+room 1.87 ours  MSG applyImpulse partIndex=13 hitPoint=0.100,-0.063,1.430 impulse=0.854,12.288,17.488
+room 1.87 ours  MSG applyImpulse partIndex=14 hitPoint=0.214,-0.035,1.304 impulse=2.054,14.068,18.230
+room 1.87 ours  MSG applyImpulse partIndex=15 hitPoint=0.270,-0.044,1.044 impulse=1.381,7.436,8.030
+room 1.87 ours  MSG applyImpulse partIndex=16 hitPoint=0.274,-0.077,0.835 impulse=0.582,3.023,2.778
+room 1.87 ours  MSG applyImpulse partIndex=17 hitPoint=-0.135,-0.047,1.416 impulse=-1.154,12.390,17.349
+room 1.87 ours  MSG applyImpulse partIndex=18 hitPoint=-0.240,-0.030,1.274 impulse=-2.329,14.289,18.111
+room 1.87 ours  MSG applyImpulse partIndex=19 hitPoint=-0.275,-0.053,1.007 impulse=-1.440,7.584,7.989
+room 1.87 ours  MSG applyImpulse partIndex=20 hitPoint=-0.266,-0.065,0.793 impulse=-0.573,3.085,2.717
+room 1.87 ours  MSG stopAllBehaviours
+room 1.87 ours  MSG pedalLegs start=true backPedal=false legStiffness=0 pedalLeftLeg=true pedalRightLeg=true radius=0 angularSpeed
+room 1.87 ours  MSG bodyRollUp start=true mask=fb stiffness=0 legPush=0 armReachAmount=0 useArmToSlowDown=0 asymmetricalLegs=0
+room 4.62 ours  FB Roll Up slot 12
+room 4.63 ours  FB Roll Up slot 12
+room 4.65 ours  FB Roll Up slot 12
+room 4.67 ours  FB Roll Up slot 12
+room 4.68 ours  FB Roll Up slot 12
+room 4.70 ours  FB Roll Up slot 12
+room 4.72 ours  FB Roll Up slot 12
+room 4.73 ours  FB Roll Up slot 12
+room 4.75 ours  FB Roll Up slot 12
+room 4.77 ours  FB Roll Up slot 12
+room 4.78 ours  FB Roll Up slot 12
+room 4.80 ours  FB Roll Up slot 12
+room 4.82 ours  FB Roll Up slot 12
+room 4.83 ours  FB Roll Up slot 12
+room 4.85 ours  FB Roll Up slot 12
+room 4.87 ours  FB Roll Up slot 12
+room 4.88 ours  FB Roll Up slot 12
+room 4.90 ours  FB Roll Up slot 12
+room 4.92 ours  FB Roll Up slot 12
+room 4.93 ours  FB Roll Up slot 12
+room 4.95 ours  FB Roll Up slot 12
+room 4.97 ours  FB Roll Up slot 12
+room 4.98 ours  FB Roll Up slot 12
+room 5.00 ours  FB Roll Up slot 12
+room 5.02 ours  FB Roll Up slot 12
+room 5.03 ours  FB Roll Up slot 12
+room 5.05 ours  FB Roll Up slot 12
+room 5.07 ours  FB Roll Up slot 12
+room 5.08 ours  FB Roll Up slot 12
+room 5.10 ours  FB Roll Up slot 12
+room 5.12 ours  FB Roll Up slot 12
+room 5.13 ours  FB Roll Up slot 12
+room 5.15 ours  FB Roll Up slot 12
+room 5.17 ours  FB Roll Up slot 12
+room 5.18 ours  FB Roll Up slot 12
+room 5.20 ours  FB Roll Up slot 12
+room 5.22 ours  FB Roll Up slot 12
+room 5.23 ours  FB Roll Up slot 12
+room 5.25 ours  FB Roll Up slot 12
+room 5.27 ours  FB Roll Up slot 12
+room 5.28 ours  FB Roll Up slot 12
+room 5.30 ours  FB Roll Up slot 12
+room 5.32 ours  FB Roll Up slot 12
+room 5.33 ours  FB Roll Up slot 12
+room 5.35 ours  FB Roll Up slot 12
+room 5.37 ours  FB Roll Up slot 12
+room 5.38 ours  FB Roll Up slot 12
+room 5.40 ours  FB Roll Up slot 12
+room 5.42 ours  FB Roll Up slot 12
+room 5.43 ours  FB Roll Up slot 12
+room 5.45 ours  FB Roll Up slot 12
+room 5.47 ours  FB Roll Up slot 12
+room 5.48 ours  FB Roll Up slot 12
+room 5.50 ours  FB Roll Up slot 12
+room 5.52 ours  FB Roll Up slot 12
+room 5.53 ours  FB Roll Up slot 12
+room 5.55 ours  FB Roll Up slot 12
+room 5.57 ours  FB Roll Up slot 12
+room 5.58 ours  FB Roll Up slot 12
+room 5.60 ours  FB Roll Up slot 12
+room 5.62 ours  FB Roll Up slot 12
+room 5.63 ours  FB Roll Up slot 12
+room 5.65 ours  FB Roll Up slot 12
+room 5.67 ours  FB Roll Up slot 12
+room 5.68 ours  FB Roll Up slot 12
+room 5.70 ours  FB Roll Up slot 12
+room 5.72 ours  FB Roll Up slot 12
+room 5.73 ours  FB Roll Up slot 12
+room 5.75 ours  FB Roll Up slot 12
+room 5.77 ours  FB Roll Up slot 12
+room 5.78 ours  FB Roll Up slot 12
+room 5.80 ours  FB Roll Up slot 12
+room 5.82 ours  FB Roll Up slot 12
+room 5.83 ours  FB Roll Up slot 12
+room 5.85 ours  FB Roll Up slot 12
+room 5.87 ours  FB Roll Up slot 12
+room 5.88 ours  FB Roll Up slot 12
+room 5.90 ours  FB Roll Up slot 12
+room 5.92 ours  FB Roll Up slot 12
+room 5.93 ours  FB Roll Up slot 12
+room 5.95 ours  FB Roll Up slot 12
+room 5.97 ours  FB Roll Up slot 12
+room 5.98 ours  FB Roll Up slot 12
+room 6.00 ours  FB Roll Up slot 12
+room 6.02 ours  FB Roll Up slot 12
+room 6.03 ours  FB Roll Up slot 12
+room 6.05 ours  FB Roll Up slot 12
+room 6.07 ours  FB Roll Up slot 12
+room 6.08 ours  FB Roll Up slot 12
+room 6.10 ours  FB Roll Up slot 12
+room 6.12 ours  FB Roll Up slot 12
+room 6.13 ours  FB Roll Up slot 12
+room 6.15 ours  FB Roll Up slot 12
+room 6.17 ours  FB Roll Up slot 12
+room 6.18 ours  FB Roll Up slot 12
+room 6.20 ours  FB Roll Up slot 12
+room 6.22 ours  FB Roll Up slot 12
+room 6.23 ours  FB Roll Up slot 12
+room 6.25 ours  FB Roll Up slot 12
+room 6.27 ours  FB Roll Up slot 12
+room 6.28 ours  FB Roll Up slot 12
+room 6.30 ours  FB Roll Up slot 12
+room 6.32 ours  FB Roll Up slot 12
+room 6.33 ours  FB Roll Up slot 12
+room 6.35 ours  FB Roll Up slot 12
+room 6.37 ours  FB Roll Up slot 12
+room 6.38 ours  FB Roll Up slot 12
+room 6.40 ours  FB Roll Up slot 12
+room 6.42 ours  FB Roll Up slot 12
+room 6.43 ours  FB Roll Up slot 12
+room 6.45 ours  FB Roll Up slot 12
+room 6.47 ours  FB Roll Up slot 12
+room 6.48 ours  FB Roll Up slot 12
+room 6.50 ours  FB Roll Up slot 12
+room 6.52 ours  FB Roll Up slot 12
+room 6.53 ours  FB Roll Up slot 12
+room 6.55 ours  FB Roll Up slot 12
+room 6.57 ours  FB Roll Up slot 12
+room 6.58 ours  FB Roll Up slot 12
+room 6.60 ours  FB Roll Up slot 12
+room 6.62 ours  FB Roll Up slot 12
+room 6.63 ours  FB Roll Up slot 12
+room 6.65 ours  FB Roll Up slot 12
+room 6.67 ours  FB Roll Up slot 12
+room 6.68 ours  FB Roll Up slot 12
+room 6.70 ours  FB Roll Up slot 12
+room 6.72 ours  FB Roll Up slot 12
+room 6.73 ours  FB Roll Up slot 12
+room 6.75 ours  FB Roll Up slot 12
+room 6.77 ours  FB Roll Up slot 12
+room 6.78 ours  FB Roll Up slot 12
+room 6.80 ours  FB Roll Up slot 12
+room 6.82 ours  FB Roll Up slot 12
+room 6.83 ours  FB Roll Up slot 12
+room 6.85 ours  FB Roll Up slot 12
+room 6.87 ours  FB Roll Up slot 12
+room 6.88 ours  FB Roll Up slot 12
+room 6.90 ours  FB Roll Up slot 12
+room 6.92 ours  FB Roll Up slot 12
+room 6.93 ours  FB Roll Up slot 12
+room 6.95 ours  FB Roll Up slot 12
+room 6.97 ours  FB Roll Up slot 12
+room 6.98 ours  FB Roll Up slot 12
+room 7.00 ours  FB Roll Up slot 12
+room 7.02 ours  FB Roll Up slot 12
+room 7.03 ours  FB Roll Up slot 12
+room 7.05 ours  FB Roll Up slot 12
+room 7.07 ours  FB Roll Up slot 12
+room 7.08 ours  FB Roll Up slot 12
+room 7.10 ours  FB Roll Up slot 12
+room 7.12 ours  FB Roll Up slot 12
+room 7.13 ours  FB Roll Up slot 12
+room 7.15 ours  FB Roll Up slot 12
+room 7.17 ours  FB Roll Up slot 12
+room 7.18 ours  FB Roll Up slot 12
+room 7.20 ours  FB Roll Up slot 12
+room 7.22 ours  FB Roll Up slot 12
+room 7.23 ours  FB Roll Up slot 12
+room 7.25 ours  FB Roll Up slot 12
+room 7.27 ours  FB Roll Up slot 12
+room 7.28 ours  FB Roll Up slot 12
+room 7.30 ours  FB Roll Up slot 12
+room 7.32 ours  FB Roll Up slot 12
+room 7.33 ours  FB Roll Up slot 12
+room 7.35 ours  FB Roll Up slot 12
+room 7.37 ours  FB Roll Up slot 12
+room 7.38 ours  FB Roll Up slot 12
+room 7.40 ours  FB Roll Up slot 12
+room 7.42 ours  FB Roll Up slot 12
+room 7.43 ours  FB Roll Up slot 12
+room 7.45 ours  FB Roll Up slot 12
+room 7.47 ours  FB Roll Up slot 12
+room 7.48 ours  FB Roll Up slot 12
+room 7.50 ours  FB Roll Up slot 12
+room 7.52 ours  FB Roll Up slot 12
+room 7.53 ours  FB Roll Up slot 12
+room 7.55 ours  FB Roll Up slot 12
+room 7.57 ours  FB Roll Up slot 12
+room 7.58 ours  FB Roll Up slot 12
+room 7.60 ours  FB Roll Up slot 12
+room 7.62 ours  FB Roll Up slot 12
+room 7.63 ours  FB Roll Up slot 12
+room 7.65 ours  FB Roll Up slot 12
+room 7.67 ours  FB Roll Up slot 12
+room 7.68 ours  FB Roll Up slot 12
+room 7.70 ours  FB Roll Up slot 12
+room 7.72 ours  FB Roll Up slot 12
+room 7.73 ours  FB Roll Up slot 12
+room 7.75 ours  FB Roll Up slot 12
+room 7.77 ours  FB Roll Up slot 12
+room 7.78 ours  FB Roll Up slot 12
+room 7.80 ours  FB Roll Up slot 12
+room 7.82 ours  FB Roll Up slot 12
+room 7.83 ours  FB Roll Up slot 12
+room 7.85 ours  FB Roll Up slot 12
+room 7.87 ours  FB Roll Up slot 12
+room 7.88 ours  FB Roll Up slot 12
+room 7.90 ours  FB Roll Up slot 12
+room 7.92 ours  FB Roll Up slot 12
+room 7.93 ours  FB Roll Up slot 12
+room 7.95 ours  FB Roll Up slot 12
+room 7.97 ours  FB Roll Up slot 12
+room 7.98 ours  FB Roll Up slot 12
+room 8.00 ours  FB Roll Up slot 12
+room 8.02 ours  FB Roll Up slot 12
+room 8.03 ours  FB Roll Up slot 12
+room 8.05 ours  FB Roll Up slot 12
+room 8.07 ours  FB Roll Up slot 12
+room 8.08 ours  FB Roll Up slot 12
+room 8.10 ours  FB Roll Up slot 12
+room 8.12 ours  FB Roll Up slot 12

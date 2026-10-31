@@ -1,0 +1,57 @@
+room 0.00 room  balance
+room 0.00 ours  MSG bodyBalance start=true
+room 0.00 ours  get-up: muscles
+room 0.00 ours  get-up: off
+room 0.00 room  relax
+room 0.00 ours  MSG bodyRelax start=true
+room 0.02 ours  FB balance slot 12
+room 0.02 ours  FB balance slot 20
+room 0.03 ours  FB balance slot 12
+room 0.03 ours  FB balance slot 20
+room 0.05 ours  FB balance slot 12
+room 0.05 ours  FB balance slot 20
+room 0.07 ours  FB balance slot 20
+room 0.08 ours  FB balance slot 20
+room 0.10 ours  FB balance slot 20
+room 0.12 ours  FB balance slot 12
+room 0.12 ours  FB balance slot 20
+room 0.13 ours  FB balance slot 20
+room 0.15 ours  FB balance slot 20
+room 0.17 ours  FB balance slot 20
+room 0.18 ours  FB balance slot 20
+room 0.20 ours  FB balance slot 20
+room 0.22 ours  FB balance slot 20
+room 0.23 ours  FB balance slot 20
+room 0.25 ours  FB balance slot 20
+room 0.27 ours  FB balance slot 20
+room 0.28 ours  FB balance slot 20
+room 0.30 ours  FB balance slot 20
+room 0.32 ours  FB balance slot 20
+room 0.33 ours  FB balance slot 20
+room 0.35 ours  FB balance slot 20
+room 0.37 ours  FB balance slot 20
+room 0.38 ours  FB balance slot 20
+room 0.40 ours  FB balance slot 20
+room 0.42 ours  FB balance slot 20
+room 0.43 ours  FB balance slot 20
+room 0.45 ours  FB balance slot 20
+room 0.47 ours  FB balance slot 20
+room 0.48 ours  FB balance slot 20
+room 0.50 ours  FB balance slot 20
+room 0.52 ours  FB balance slot 20
+room 0.53 ours  FB balance slot 20
+room 0.55 ours  FB balance slot 20
+room 0.57 ours  FB balance slot 20
+room 0.58 ours  FB balance slot 20
+room 0.60 ours  FB balance slot 20
+room 0.62 ours  FB balance slot 20
+room 0.63 ours  FB balance slot 20
+room 0.65 ours  FB balance slot 20
+0.00 room balance
+0.00 MSG ours bodyBalance start=true
+0.00 ours get-up: muscles
+0.00 ours get-up: off
+0.00 room relax
+0.00 MSG ours bodyRelax start=true
+0.12 FB ours balance slot 12
+0.65 FB ours balance slot 20

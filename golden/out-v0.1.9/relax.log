@@ -1,0 +1,9 @@
+room 0.00 weaponinfo.xml: 20 weapons
+2026-10-21T16:11:13.163668Z  INFO bevy_render::renderer: AdapterInfo { name: "NVIDIA GeForce GTX 650", vendor: 4318, device: 4038, device_type: DiscreteGpu, driver: "NVIDIA", driver_info: "475.14", backend: Vulkan }
+2026-10-21T16:11:13.385171Z  INFO bevy_render::batching::gpu_preprocessing: GPU preprocessing is fully supported on this device.
+2026-10-21T16:11:13.389384Z  INFO bevy_egui::render: Using bindless_mode_array_size 16 (Device maximum 1048576)
+2026-10-21T16:11:13.389702Z  INFO bevy_winit::system: Creating new window Delirium Physics Playroom (0v0)
+room 0.00 ours  get-up: muscles
+room 0.00 ours  get-up: off
+room 0.00 room  relax
+room 0.00 ours  MSG bodyRelax start=true
